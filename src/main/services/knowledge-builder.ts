@@ -73,8 +73,8 @@ const MARKITDOWN_VERSION = '0.1.6'
 // OCR 组件：RapidOCR 与 PaddleOCR 使用同源 PP-OCR 模型（ONNX 版），wheel 内置默认模型，离线可用
 const OCR_PACKAGES = [
   'rapidocr==3.9.2',
-  // onnxruntime 1.23 起放弃 Python 3.10，收紧范围以同时覆盖 3.10-3.13
-  'onnxruntime>=1.20,<1.23',
+  // 不设上限：pip 按各 Python 版本的 requires_python 自动选择（3.10 → 1.22，3.14 → 1.24+）
+  'onnxruntime>=1.20',
   'pypdfium2>=4.30,<7'
 ]
 
