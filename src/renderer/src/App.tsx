@@ -5,8 +5,7 @@ import {
   MessageBar,
   MessageBarActions,
   MessageBarBody,
-  Spinner,
-  Tooltip
+  Spinner
 } from '@fluentui/react-components'
 import {
   BrainIcon,
@@ -29,7 +28,7 @@ import {
   StethoscopeIcon,
   TargetIcon
 } from '@phosphor-icons/react'
-import { NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom'
+import { NavLink, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { darkTheme, lightTheme } from './theme'
 import { useAppStore } from './store'
 import { LoadingState } from './components/ui'
@@ -139,6 +138,7 @@ const groups: Array<{ label: string; items: NavItem[] }> = [
 function AppShell(): React.JSX.Element {
   const { data, loading, error, initialize, clearError } = useAppStore()
   const location = useLocation()
+  const navigate = useNavigate()
 
   useEffect(() => {
     void initialize()
@@ -211,16 +211,14 @@ function AppShell(): React.JSX.Element {
               {data.vault.questionCount} 题 · {data.vault.documentCount} 文档
             </small>
           </div>
-          <Tooltip content="知识库设置" relationship="label">
-            <Button
-              as="a"
-              href="#/settings"
-              appearance="subtle"
-              size="small"
-              icon={<GearIcon />}
-              aria-label="知识库设置"
-            />
-          </Tooltip>
+          <Button
+            appearance="subtle"
+            size="small"
+            icon={<GearIcon />}
+            aria-label="知识库设置"
+            title="知识库设置"
+            onClick={() => navigate('/settings')}
+          />
         </div>
       </aside>
       <main className="workspace" id="main-content">

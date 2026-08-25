@@ -36,7 +36,7 @@ function createWindow(): void {
     minWidth: 1060,
     minHeight: 700,
     show: false,
-    backgroundColor: '#111714',
+    backgroundColor: '#141210',
     title: '砺知考公工作台',
     autoHideMenuBar: true,
     webPreferences: {
