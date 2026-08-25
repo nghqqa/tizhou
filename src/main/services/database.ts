@@ -404,6 +404,12 @@ export class DatabaseService {
     return this.mapVault(row)
   }
 
+  clearActiveVaultWarnings(): void {
+    this.db
+      .prepare("UPDATE vault_registry SET warnings_json='[]' WHERE active=1")
+      .run()
+  }
+
   private mapVault(row: Row): VaultInfo {
     return {
       id: String(row.id),

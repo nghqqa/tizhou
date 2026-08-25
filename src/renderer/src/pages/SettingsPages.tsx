@@ -354,6 +354,7 @@ export function SettingsPage(): React.JSX.Element {
   const [vaults, setVaults] = useState<VaultInfo[]>([])
   const [snapshots, setSnapshots] = useState<VaultSnapshotInfo[]>([])
   const [busy, setBusy] = useState(false)
+  const [showWarnings, setShowWarnings] = useState(false)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
   useEffect(() => {
@@ -364,6 +365,19 @@ export function SettingsPage(): React.JSX.Element {
       params: { vaultId: data!.vault.id }
     }).then(setSnapshots)
   }, [])
+
+  async function clearVaultWarnings(): Promise<void> {
+    setBusy(true)
+    setError('')
+    try {
+      await invoke({ method: 'vault.clearWarnings' })
+      await initialize()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : '清除警告失败')
+    } finally {
+      setBusy(false)
+    }
+  }
 
   async function exportMigration(): Promise<void> {
     setBusy(true)
@@ -672,11 +686,43 @@ export function SettingsPage(): React.JSX.Element {
               <span>{formatFullDate(data!.vault.lastIndexedAt)}</span>
             </li>
           </ul>
-          {data!.vault.warnings.map((warning) => (
-            <div className="answer-panel" key={warning}>
-              <p className="warning">{warning}</p>
+          {data!.vault.warnings.length > 0 && (
+            <div className="answer-panel" style={{ marginBottom: 12 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <p className="warning" style={{ margin: 0, flex: 1 }}>
+                  ⚠ {data!.vault.warnings.length} 条索引警告（重复 ID 等不影响使用，重新索引后刷新）
+                </p>
+                <Button
+                  size="small"
+                  onClick={() => setShowWarnings(!showWarnings)}
+                >
+                  {showWarnings ? '收起' : '查看'}
+                </Button>
+                <Button
+                  size="small"
+                  appearance="subtle"
+                  disabled={busy}
+                  onClick={() => void clearVaultWarnings()}
+                >
+                  清除
+                </Button>
+              </div>
+              {showWarnings && (
+                <div className="data-list-scroll" style={{ marginTop: 8 }}>
+                  {data!.vault.warnings.slice(0, 20).map((warning) => (
+                    <p key={warning} className="warning" style={{ margin: '4px 0', fontSize: 11 }}>
+                      {warning}
+                    </p>
+                  ))}
+                  {data!.vault.warnings.length > 20 && (
+                    <p className="muted" style={{ fontSize: 11 }}>
+                      …还有 {data!.vault.warnings.length - 20} 条
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
-          ))}
+          )}
           <div className="button-row" style={{ marginTop: 16 }}>
             <Button
               appearance="primary"

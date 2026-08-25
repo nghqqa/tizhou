@@ -522,6 +522,7 @@ export type WorkbenchRequest =
   | { method: 'vault.reindex'; params?: undefined }
   | { method: 'vault.list'; params?: undefined }
   | { method: 'vault.switch'; params: { id: string } }
+  | { method: 'vault.clearWarnings'; params?: undefined }
   | { method: 'vault.snapshots'; params: { vaultId: string } }
   | { method: 'vault.rollback'; params: { snapshotId: string } }
   | { method: 'vault.search'; params: QuestionFilter }

@@ -230,6 +230,9 @@ async function initialize(): Promise<void> {
         return database!.listVaults()
       case 'vault.switch':
         return database!.switchVault(request.params.id)
+      case 'vault.clearWarnings':
+        database!.clearActiveVaultWarnings()
+        return database!.getActiveVault()
       case 'vault.snapshots':
         return database!.listVaultSnapshots(request.params.vaultId)
       case 'vault.rollback':
