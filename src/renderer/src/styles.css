@@ -1050,6 +1050,42 @@ a { color: inherit; }
   font-size: var(--tz-text-sm);
 }
 
+/* 极简空状态：一行文字 + 一个链接操作 */
+.empty-compact {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 0;
+  color: var(--tz-ink-3);
+  font-size: var(--tz-text-sm);
+}
+.empty-compact > span { flex: 1; }
+.empty-compact strong { display: block; color: var(--tz-ink); font-size: var(--tz-text-base); }
+.empty-compact p { margin: 2px 0 0; font-size: var(--tz-text-xs); }
+
+/* 训练节奏日期轴 */
+.calendar-axis {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 4px;
+  color: var(--tz-ink-3);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+}
+.calendar-cell-day {
+  position: absolute;
+  bottom: -14px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 8px;
+  color: var(--tz-ink-3);
+  line-height: 1;
+  pointer-events: none;
+}
+.calendar-cell { position: relative; }
+.calendar-strip { margin-bottom: 18px; }
+
 /* ================================================================
    Reduced Motion
    ================================================================ */

@@ -98,7 +98,7 @@ function TrainingRhythm({ dashboard }: { dashboard: DashboardData }): React.JSX.
   return (
     <Section
       title="训练节奏"
-      description={`连续学习 ${dashboard.studyStreak} 天${lastTrained ? ` · 最近训练 ${lastTrained.attempts} 题` : ' · 尚未开始'}`}
+      description={`连续 ${dashboard.studyStreak} 天${lastTrained ? ` · 最近 ${lastTrained.attempts} 题` : ' · 尚未开始'}`}
     >
       <div className="calendar-strip" role="img" aria-label="近14天训练节奏">
         {cells.map((cell) => {
@@ -112,19 +112,25 @@ function TrainingRhythm({ dashboard }: { dashboard: DashboardData }): React.JSX.
               key={cell.date}
               className={cls}
               style={cell.attempts > 0 && !cell.isToday ? { opacity: intensity } : undefined}
-              title={`${cell.date.slice(5)} · ${cell.attempts} 题${cell.accuracy ? ` · 正确率 ${cell.accuracy}%` : ''}`}
+              title={`${cell.date} · ${cell.attempts} 题${cell.accuracy ? ` · 正确率 ${cell.accuracy}%` : ' · 未训练'}`}
             >
               <span className="calendar-cell-num">{cell.attempts || ''}</span>
+              <span className="calendar-cell-day">{Number(cell.date.slice(8))}</span>
             </div>
           )
         })}
       </div>
+      <div className="calendar-axis">
+        <span>14 天前</span>
+        <span>7 天前</span>
+        <span>今天</span>
+      </div>
       {!hasData && (
-        <div className="calendar-empty">
-          <span>完成第一组训练后开始记录节奏</span>
-          <Button size="small" onClick={() => navigate('/practice')}>
-            开始第一组训练
-          </Button>
+        <div className="empty-compact" style={{ marginTop: 8 }}>
+          <span>完成第一组训练后开始记录</span>
+          <button type="button" className="mastery-action" onClick={() => navigate('/practice')}>
+            开始 <ArrowRightIcon size={12} />
+          </button>
         </div>
       )}
     </Section>
@@ -145,15 +151,15 @@ function SubjectMastery({ dashboard }: { dashboard: DashboardData }): React.JSX.
   if (!hasData) {
     return (
       <Section title="科目掌握" description="能力画像来自真实作答">
-        <div className="mastery-guide">
-          <TargetIcon size={28} className="muted" />
+        <div className="empty-compact">
+          <TargetIcon size={22} className="muted" />
           <div>
-            <strong>完成一组训练，开始建立能力画像</strong>
-            <p>系统根据正确率、用时和错题自动生成各科目掌握度。</p>
+            <strong>完成第一组训练，开始建立能力画像</strong>
+            <p>系统根据正确率和错题自动生成各科目掌握度。</p>
           </div>
-          <Button appearance="primary" size="small" onClick={() => navigate('/practice')}>
-            开始第一组训练
-          </Button>
+          <button type="button" className="mastery-action" onClick={() => navigate('/practice')}>
+            开始第一组训练 <ArrowRightIcon size={12} />
+          </button>
         </div>
       </Section>
     )
@@ -335,11 +341,8 @@ export function DashboardPage(): React.JSX.Element {
               </button>
             </div>
           ) : (
-            <div className="mastery-guide">
-              <div>
-                <strong>今天还没有训练记录</strong>
-                <p>完成第一组训练后，这里会显示未完成任务。</p>
-              </div>
+            <div className="empty-compact">
+              <span>今天还没有训练记录</span>
               <button type="button" className="mastery-action" onClick={() => navigate('/practice')}>
                 开始训练 <ArrowRightIcon size={12} />
               </button>
@@ -369,13 +372,10 @@ export function DashboardPage(): React.JSX.Element {
               ))}
             </ul>
           ) : (
-            <div className="mastery-guide">
-              <div>
-                <strong>暂无作答记录</strong>
-                <p>完成一道题后，这里会保留你的错题和笔记。</p>
-              </div>
+            <div className="empty-compact">
+              <span>完成一道题后，这里会保留你的错题和笔记</span>
               <button type="button" className="mastery-action" onClick={() => navigate('/practice')}>
-                开始训练 <ArrowRightIcon size={12} />
+                开始 <ArrowRightIcon size={12} />
               </button>
             </div>
           )}
