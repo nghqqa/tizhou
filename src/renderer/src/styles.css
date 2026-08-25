@@ -213,13 +213,19 @@ a {
   width: min(1180px, 100%);
   margin: 0 auto;
 }
+/* 页头吸顶：滚动时标题和操作按钮保持在视口内 */
 .page-header {
+  position: sticky;
+  z-index: 10;
+  top: -28px; /* 抵消 workspace padding-top */
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
   gap: 24px;
   min-height: 72px;
   margin-bottom: 24px;
+  padding-top: 28px; /* 补偿 sticky 偏移 */
+  background: var(--colorNeutralBackground1);
 }
 .page-header h1 {
   margin: 2px 0 0;
@@ -339,6 +345,22 @@ a {
   margin: 0;
   padding: 0;
   list-style: none;
+}
+/* 可增长列表限高内部滚动：防止设置/环境页多区块把整页撑到需要外层长滚动 */
+.data-list-scroll {
+  max-height: 360px;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+.table-scroll {
+  max-height: 360px;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+.section-scroll {
+  max-height: 420px;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 .data-row {
   display: grid;

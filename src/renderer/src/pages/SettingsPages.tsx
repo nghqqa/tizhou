@@ -329,6 +329,7 @@ export function EnvironmentPage(): React.JSX.Element {
       </Section>
       {diagnostic && (
         <Section title="诊断结果" description={formatFullDate(diagnostic.generatedAt)}>
+          <div className="section-scroll">
           {diagnostic.checks.map((check) => (
             <div className="check-row" key={check.id}>
               <StatusDot status={check.status} />
@@ -339,6 +340,7 @@ export function EnvironmentPage(): React.JSX.Element {
               {check.action && <span className="pill">{check.action}</span>}
             </div>
           ))}
+          </div>
         </Section>
       )}
     </div>
@@ -691,7 +693,7 @@ export function SettingsPage(): React.JSX.Element {
           {vaults.length > 1 && (
             <div style={{ marginTop: 18 }}>
               <strong style={{ fontSize: 12 }}>已连接知识库</strong>
-              <ul className="data-list">
+              <ul className="data-list data-list-scroll">
                 {vaults.map((vault) => (
                   <li className="data-row" key={vault.id}>
                     <div>
@@ -719,7 +721,7 @@ export function SettingsPage(): React.JSX.Element {
           {snapshots.length > 0 && (
             <div style={{ marginTop: 18 }}>
               <strong style={{ fontSize: 12 }}>历史索引快照</strong>
-              <ul className="data-list">
+              <ul className="data-list data-list-scroll">
                 {snapshots.map((snapshot) => (
                   <li className="data-row" key={snapshot.id}>
                     <div>
@@ -755,6 +757,7 @@ export function SettingsPage(): React.JSX.Element {
         {!backups ? (
           <Spinner label="正在读取备份" />
         ) : backups.length ? (
+          <div className="table-scroll">
           <table className="report-table">
             <thead>
               <tr>
@@ -790,6 +793,7 @@ export function SettingsPage(): React.JSX.Element {
               ))}
             </tbody>
           </table>
+          </div>
         ) : (
           <EmptyState
             title="尚无备份"
