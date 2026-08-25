@@ -20,12 +20,14 @@ import {
   HouseIcon,
   LightbulbFilamentIcon,
   ListChecksIcon,
+  MoonIcon,
   NotePencilIcon,
   RobotIcon,
   SlidersHorizontalIcon,
   SparkleIcon,
   SquaresFourIcon,
   StethoscopeIcon,
+  SunIcon,
   TargetIcon
 } from '@phosphor-icons/react'
 import { NavLink, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
@@ -136,9 +138,19 @@ const groups: Array<{ label: string; items: NavItem[] }> = [
 ]
 
 function AppShell(): React.JSX.Element {
-  const { data, loading, error, initialize, clearError } = useAppStore()
+  const { data, loading, error, initialize, clearError, updateSettings } = useAppStore()
   const location = useLocation()
   const navigate = useNavigate()
+  const isDark =
+    data?.settings.theme === 'light'
+      ? false
+      : data?.settings.theme === 'system'
+        ? window.matchMedia('(prefers-color-scheme: dark)').matches
+        : true
+
+  const toggleTheme = (): void => {
+    void updateSettings({ theme: isDark ? 'light' : 'dark' })
+  }
 
   useEffect(() => {
     void initialize()
@@ -203,6 +215,18 @@ function AppShell(): React.JSX.Element {
             </div>
           ))}
         </nav>
+        <div className="sidebar-footer">
+          <Button
+            appearance="subtle"
+            size="small"
+            icon={isDark ? <SunIcon size={16} /> : <MoonIcon size={16} />}
+            aria-label={isDark ? '切换到浅色模式' : '切换到深色模式'}
+            title={isDark ? '切换到浅色模式（白天）' : '切换到深色模式（夜间）'}
+            onClick={toggleTheme}
+          >
+            {isDark ? '浅色模式' : '深色模式'}
+          </Button>
+        </div>
         <div className="vault-summary">
           <StatusIndicator builtin={data.vault.isBuiltin} />
           <div>

@@ -212,6 +212,12 @@ a { color: inherit; }
 }
 
 /* 知识库摘要 */
+.sidebar-footer {
+  display: flex;
+  align-items: center;
+  padding: 8px 14px;
+  border-top: 1px solid var(--tz-border);
+}
 .vault-summary {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
