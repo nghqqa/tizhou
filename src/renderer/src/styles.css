@@ -988,6 +988,62 @@ a { color: inherit; }
   border-top: 1px solid var(--tz-border);
 }
 
+/* 空状态紧凑引导区（替代大图标+大空白） */
+.mastery-guide {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0;
+}
+.mastery-guide > div { flex: 1; min-width: 0; }
+.mastery-guide strong {
+  display: block;
+  font-size: var(--tz-text-base);
+  color: var(--tz-ink);
+}
+.mastery-guide p {
+  margin: 3px 0 0;
+  color: var(--tz-ink-3);
+  font-size: var(--tz-text-sm);
+  line-height: 1.5;
+}
+
+/* 文字链接操作（替代按钮，减少视觉噪音） */
+.mastery-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 4px 8px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--tz-vermillion);
+  font-size: var(--tz-text-sm);
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 120ms ease;
+  white-space: nowrap;
+}
+.mastery-action:hover { background: var(--tz-vermillion-bg); }
+.mastery-action:active { background: var(--tz-vermillion-bg); }
+
+/* 训练节奏空态行 */
+.calendar-empty {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--tz-border);
+  border-radius: var(--tz-radius);
+  background: var(--tz-surface-2);
+}
+.calendar-empty span {
+  color: var(--tz-ink-3);
+  font-size: var(--tz-text-sm);
+}
+
 /* ================================================================
    Reduced Motion
    ================================================================ */
