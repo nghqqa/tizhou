@@ -33,7 +33,7 @@
 
 ## 下载安装
 
-在 [GitHub Releases](https://github.com/mingruiy270-debug/lizhi-kaogong-workbench/releases/latest) 下载 Windows x64 安装包，并使用同页的 `SHA256SUMS.txt` 校验文件完整性。
+在 [GitHub Releases](https://github.com/nghqqa/kaogong-workbench-x/releases/latest) 下载 Windows x64 安装包，并使用同页的 `SHA256SUMS.txt` 校验文件完整性。
 
 安装后可以直接使用内置示例知识库体验训练、模考、申论和报告功能。模型与自定义资料均为可选配置。
 
