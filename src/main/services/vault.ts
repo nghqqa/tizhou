@@ -311,7 +311,7 @@ export class VaultService {
     if (active) return active
     const vault: VaultInfo = {
       id: 'builtin-vault',
-      name: '砺知入门题库',
+      name: '题舟入门题库',
       path: 'builtin://starter',
       connectedAt: timestamp(),
       lastIndexedAt: timestamp(),
