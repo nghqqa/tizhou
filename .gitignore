@@ -20,3 +20,4 @@ coverage/
 *.p12
 runtime/
 .zcode/
+.impeccable/
