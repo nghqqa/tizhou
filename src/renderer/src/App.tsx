@@ -178,7 +178,7 @@ function AppShell(): React.JSX.Element {
             <ListChecksIcon size={22} weight="bold" aria-hidden />
           </div>
           <div>
-            <strong>砺知考公</strong>
+            <strong>题舟</strong>
             <span>本地学习工作台</span>
           </div>
         </div>

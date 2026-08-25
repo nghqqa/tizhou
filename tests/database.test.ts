@@ -10,7 +10,7 @@ describe('DatabaseService learning loop', () => {
   let database: DatabaseService
 
   beforeEach(() => {
-    directory = mkdtempSync(join(tmpdir(), 'lizhi-database-'))
+    directory = mkdtempSync(join(tmpdir(), 'tizhou-database-'))
     database = new DatabaseService(
       join(directory, 'workbench.sqlite'),
       directory,

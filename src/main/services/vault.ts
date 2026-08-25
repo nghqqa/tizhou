@@ -129,7 +129,7 @@ const BUILTIN_QUESTION_DATA: Array<Omit<Question, 'contentHash'>> = [
     explanation:
       '合作 4 天完成 4×(1/12+1/18)=5/9，剩余 4/9。甲每天完成 1/12，因此还需 (4/9)÷(1/12)=16/3 天。',
     difficulty: 2,
-    source: '砺知自编示例',
+    source: '题舟内置示例',
     tags: ['工程问题', '效率']
   },
   {
@@ -147,7 +147,7 @@ const BUILTIN_QUESTION_DATA: Array<Omit<Question, 'contentHash'>> = [
     answer: ['C'],
     explanation: '文段通过“不在于……而在于……”突出群众具体需要，因此主旨是坚持需求导向。',
     difficulty: 1,
-    source: '砺知自编示例',
+    source: '题舟内置示例',
     tags: ['主旨概括']
   },
   {
@@ -166,7 +166,7 @@ const BUILTIN_QUESTION_DATA: Array<Omit<Question, 'contentHash'>> = [
     explanation:
       '“参加培训”是“完成测评”的充分条件。小周没有完成测评，根据逆否命题可得小周没有参加培训。',
     difficulty: 2,
-    source: '砺知自编示例',
+    source: '题舟内置示例',
     tags: ['翻译推理', '逆否命题']
   },
   {
@@ -184,7 +184,7 @@ const BUILTIN_QUESTION_DATA: Array<Omit<Question, 'contentHash'>> = [
     answer: ['C'],
     explanation: '本年人数为 800×(1+12.5%)=800+100=900 万人次。',
     difficulty: 1,
-    source: '砺知自编示例',
+    source: '题舟内置示例',
     tags: ['增长率']
   },
   {
@@ -202,7 +202,7 @@ const BUILTIN_QUESTION_DATA: Array<Omit<Question, 'contentHash'>> = [
     answer: ['A'],
     explanation: '公众参与体现民主，专家论证和风险评估体现科学，规范程序体现依法决策。',
     difficulty: 1,
-    source: '砺知自编示例',
+    source: '题舟内置示例',
     tags: ['行政决策']
   },
   {
@@ -220,7 +220,7 @@ const BUILTIN_QUESTION_DATA: Array<Omit<Question, 'contentHash'>> = [
     answer: ['A', 'B', 'D'],
     explanation: '清晰中性的表述、逻辑校验和预测试都有助于质量控制。选择性保留样本会引入偏差。',
     difficulty: 3,
-    source: '砺知自编示例',
+    source: '题舟内置示例',
     tags: ['数据质量', '多选']
   },
   {
@@ -236,7 +236,7 @@ const BUILTIN_QUESTION_DATA: Array<Omit<Question, 'contentHash'>> = [
     answer: ['A'],
     explanation: '在抽样设计合理、其他条件相近时，增大样本量通常可以降低随机抽样误差。',
     difficulty: 1,
-    source: '砺知自编示例',
+    source: '题舟内置示例',
     tags: ['统计常识']
   },
   {
@@ -250,7 +250,7 @@ const BUILTIN_QUESTION_DATA: Array<Omit<Question, 'contentHash'>> = [
     explanation:
       '参考要点：搭建议事平台，吸纳居民参与；围绕实际诉求分类建账；明确责任主体与办理时限；反馈结果，形成治理闭环。',
     difficulty: 2,
-    source: '砺知自编示例',
+    source: '题舟内置示例',
     tags: ['基层治理', '概括题']
   }
 ]

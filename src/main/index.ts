@@ -37,7 +37,7 @@ function createWindow(): void {
     minHeight: 700,
     show: false,
     backgroundColor: '#141210',
-    title: '砺知考公工作台',
+    title: '题舟',
     autoHideMenuBar: true,
     webPreferences: {
       preload: join(currentDirectory, '../preload/index.cjs'),
@@ -376,7 +376,7 @@ async function initialize(): Promise<void> {
         const report = database!.getReport(request.params.range)
         const selected = await dialog.showSaveDialog(mainWindow!, {
           title: '导出学习报告',
-          defaultPath: `砺知学习报告-${new Date().toISOString().slice(0, 10)}.json`,
+          defaultPath: `题舟学习报告-${new Date().toISOString().slice(0, 10)}.json`,
           filters: [{ name: 'JSON', extensions: ['json'] }]
         })
         if (selected.canceled || !selected.filePath) return undefined
@@ -465,7 +465,7 @@ async function initialize(): Promise<void> {
         const report = diagnostics.run()
         const selected = await dialog.showSaveDialog(mainWindow!, {
           title: '导出诊断报告',
-          defaultPath: `砺知诊断-${new Date().toISOString().slice(0, 10)}.json`,
+          defaultPath: `题舟诊断-${new Date().toISOString().slice(0, 10)}.json`,
           filters: [{ name: 'JSON', extensions: ['json'] }]
         })
         if (selected.canceled || !selected.filePath) return undefined

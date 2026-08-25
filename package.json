@@ -1,16 +1,16 @@
 {
-  "name": "lizhi-kaogong-workbench",
-  "version": "0.5.0",
+  "name": "tizhou",
+  "version": "0.6.0",
   "private": true,
   "license": "MIT",
-  "description": "砺知考公工作台，本地优先的公考学习桌面应用",
+  "description": "题舟，题海行舟 · 本地优先的考试学习工作台",
   "repository": {
     "type": "git",
-    "url": "https://github.com/mingruiy270-debug/lizhi-kaogong-workbench.git"
+    "url": "https://github.com/nghqqa/tizhou.git"
   },
-  "homepage": "https://github.com/mingruiy270-debug/lizhi-kaogong-workbench#readme",
+  "homepage": "https://github.com/nghqqa/tizhou#readme",
   "bugs": {
-    "url": "https://github.com/mingruiy270-debug/lizhi-kaogong-workbench/issues"
+    "url": "https://github.com/nghqqa/tizhou/issues"
   },
   "main": "out/main/index.js",
   "type": "module",
@@ -53,8 +53,8 @@
     "vitest": "4.1.10"
   },
   "build": {
-    "appId": "com.local.lizhi.kaogong",
-    "productName": "砺知考公工作台",
+    "appId": "com.tizhou.app",
+    "productName": "题舟",
     "directories": {
       "output": "dist"
     },

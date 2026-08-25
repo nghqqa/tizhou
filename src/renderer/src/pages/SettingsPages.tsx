@@ -397,7 +397,7 @@ export function SettingsPage(): React.JSX.Element {
       if (!source) return
       const vaultTarget = await invoke<string | undefined>({
         method: 'folder.pick',
-        params: { title: '选择知识库在新机器的存放位置（如 E:\\kaogong-vaults）' }
+        params: { title: '选择知识库在新机器的存放位置（如 E:\\tizhou-vaults）' }
       })
       if (!vaultTarget) return
       if (

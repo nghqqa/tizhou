@@ -174,8 +174,8 @@ describe('question import parsers', () => {
 
 describe('knowledge builder direct mode', () => {
   it('imports a question book and solution file without any model calls', async () => {
-    const data = temporaryDirectory('lizhi-kb-direct-data-')
-    const source = temporaryDirectory('lizhi-kb-direct-source-')
+    const data = temporaryDirectory('tizhou-kb-direct-data-')
+    const source = temporaryDirectory('tizhou-kb-direct-source-')
     writeFileSync(join(source, '题本.md'), `${TIBEN.filter((line) => line !== '参考答案' && line !== '1-2:AB').join('\n')}\n`, 'utf8')
     writeFileSync(
       join(source, '解析.md'),
@@ -278,8 +278,8 @@ describe('knowledge builder direct mode', () => {
   }, 35_000)
 
   it('re-importing the same book dedupes against the active vault (idempotent)', async () => {
-    const data = temporaryDirectory('lizhi-kb-idem-data-')
-    const source = temporaryDirectory('lizhi-kb-idem-source-')
+    const data = temporaryDirectory('tizhou-kb-idem-data-')
+    const source = temporaryDirectory('tizhou-kb-idem-source-')
     writeFileSync(
       join(source, '题本.md'),
       `${TIBEN.filter((line) => line !== '参考答案' && line !== '1-2:AB').join('\n')}\n`,
@@ -377,8 +377,8 @@ describe('knowledge builder direct mode', () => {
   }, 35_000)
 
   it('aborts a whole book when question and solution sets are misaligned', async () => {
-    const data = temporaryDirectory('lizhi-kb-mis-data-')
-    const source = temporaryDirectory('lizhi-kb-mis-source-')
+    const data = temporaryDirectory('tizhou-kb-mis-data-')
+    const source = temporaryDirectory('tizhou-kb-mis-source-')
     // 12 题题本(两套各6题),题干与解析册重印完全不一致 → 整书拦截
     const bookLines: string[] = ['练习题01套']
     const solutionLines: string[] = ['练习题01套']

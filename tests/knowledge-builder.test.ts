@@ -67,8 +67,8 @@ afterEach(() => {
 
 describe('knowledge builder', () => {
   it('scans supported files and explains unsafe or unsupported files', () => {
-    const data = temporaryDirectory('lizhi-kb-data-')
-    const source = temporaryDirectory('lizhi-kb-source-')
+    const data = temporaryDirectory('tizhou-kb-data-')
+    const source = temporaryDirectory('tizhou-kb-source-')
     mkdirSync(join(source, '资料'), { recursive: true })
     writeFileSync(join(source, '资料', '讲义.pdf'), 'pdf placeholder')
     writeFileSync(join(source, '图片.png'), 'image placeholder')
@@ -93,8 +93,8 @@ describe('knowledge builder', () => {
   })
 
   it('converts a local text file without sending it to a model', async () => {
-    const data = temporaryDirectory('lizhi-kb-data-')
-    const source = temporaryDirectory('lizhi-kb-source-')
+    const data = temporaryDirectory('tizhou-kb-data-')
+    const source = temporaryDirectory('tizhou-kb-source-')
     writeFileSync(
       join(source, '方法.txt'),
       '资料分析训练方法。先识别基期与现期，再确定增长量或增长率。列式后检查单位与数量级。计算结束后回到题干核对时间、范围和统计口径，并用近似值判断结果是否合理。'
@@ -135,8 +135,8 @@ describe('knowledge builder', () => {
   }, 35_000)
 
   it('falls back to OCR when a scanned PDF yields too little text', async () => {
-    const data = temporaryDirectory('lizhi-kb-data-')
-    const source = temporaryDirectory('lizhi-kb-source-')
+    const data = temporaryDirectory('tizhou-kb-data-')
+    const source = temporaryDirectory('tizhou-kb-source-')
     writeFileSync(join(source, '扫描题本.pdf'), 'pdf placeholder')
     const service = new KnowledgeBuilderService(
       data,
@@ -175,8 +175,8 @@ describe('knowledge builder', () => {
   }, 35_000)
 
   it('explains the OCR component when text extraction fails without it', async () => {
-    const data = temporaryDirectory('lizhi-kb-data-')
-    const source = temporaryDirectory('lizhi-kb-source-')
+    const data = temporaryDirectory('tizhou-kb-data-')
+    const source = temporaryDirectory('tizhou-kb-source-')
     writeFileSync(join(source, '扫描题本.pdf'), 'pdf placeholder')
     const service = new KnowledgeBuilderService(
       data,
@@ -213,8 +213,8 @@ describe('knowledge builder', () => {
   }, 35_000)
 
   it('salvages complete items from truncated model JSON', async () => {
-    const data = temporaryDirectory('lizhi-kb-data-')
-    const source = temporaryDirectory('lizhi-kb-source-')
+    const data = temporaryDirectory('tizhou-kb-data-')
+    const source = temporaryDirectory('tizhou-kb-source-')
     writeFileSync(
       join(source, '题本.txt'),
       '资料分析练习。先识别基期与现期，再确定增长量或增长率。列式后检查单位与数量级，计算结束回到题干核对时间范围与统计口径，并用近似值判断结果合理性，避免把累计值当成当期值使用。'
@@ -313,8 +313,8 @@ describe('knowledge builder', () => {
   })
 
   it('keeps AI output staged until approval and then publishes compatible Markdown', async () => {
-    const data = temporaryDirectory('lizhi-kb-data-')
-    const source = temporaryDirectory('lizhi-kb-source-')
+    const data = temporaryDirectory('tizhou-kb-data-')
+    const source = temporaryDirectory('tizhou-kb-source-')
     writeFileSync(
       join(source, '资料分析方法.txt'),
       '先识别基期与现期，再确定题目要求的是增长量、增长率还是基期量。列式后统一单位，并用数量级快速检查结果。遇到复杂表格时，先定位行列，再读取数据，避免把累计值当成当期值。'
