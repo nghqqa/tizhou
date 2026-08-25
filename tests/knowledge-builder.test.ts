@@ -373,7 +373,19 @@ describe('knowledge builder', () => {
       warnings: []
     }))
     const service = new KnowledgeBuilderService(data, process.cwd(), fakeAi, {
-      connect
+      connect,
+      ensureBuiltinVault: () => ({
+        id: 'builtin',
+        name: '内置示例库',
+        path: 'C:/builtin-vault',
+        connectedAt: '',
+        lastIndexedAt: '',
+        questionCount: 0,
+        documentCount: 0,
+        warnings: [],
+        isBuiltin: true
+      }),
+      questionSignatures: () => new Set<string>()
     } as unknown as VaultService)
     useFakeConversionEngine(service)
     const scan = service.scan(source)

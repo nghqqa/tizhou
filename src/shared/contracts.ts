@@ -540,6 +540,7 @@ export type WorkbenchRequest =
   | { method: 'knowledgeBuilder.job.get'; params: { id: string } }
   | { method: 'knowledgeBuilder.job.cancel'; params: { id: string } }
   | { method: 'knowledgeBuilder.job.retry'; params: { id: string; sourceIds?: string[] } }
+  | { method: 'knowledgeBuilder.job.revert'; params: { id: string } }
   | { method: 'knowledgeBuilder.artifact.get'; params: { jobId: string; artifactId: string } }
   | {
       method: 'knowledgeBuilder.artifact.review'

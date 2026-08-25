@@ -265,6 +265,8 @@ async function initialize(): Promise<void> {
         return knowledgeBuilder.cancelJob(request.params.id)
       case 'knowledgeBuilder.job.retry':
         return knowledgeBuilder.retryJob(request.params.id, request.params.sourceIds)
+      case 'knowledgeBuilder.job.revert':
+        return knowledgeBuilder.revertImport(request.params.id)
       case 'knowledgeBuilder.artifact.get':
         return knowledgeBuilder.getArtifact(request.params.jobId, request.params.artifactId)
       case 'knowledgeBuilder.artifact.review':

@@ -9,6 +9,7 @@ import {
   realpathSync,
   renameSync,
   statSync,
+  unlinkSync,
   writeFileSync
 } from 'node:fs'
 import { basename, extname, isAbsolute, join, relative, resolve } from 'node:path'
@@ -654,10 +655,20 @@ export class KnowledgeBuilderService {
       .map((id) => this.loadArtifact(job, id))
       .filter((artifact) => artifact.status === 'approved')
     if (!approved.length) throw new Error('没有已批准且尚未发布的产物')
+    // 直导任务发布到目标库的「直导题库」子目录（活动用户库原位；内置示例库回退应用自管库）
+    const isDirect = job.options.mode === 'direct'
+    const activeVault = this.vaults.ensureBuiltinVault()
+    const directToUserVault = isDirect && !activeVault.isBuiltin
+    const targetRoot = directToUserVault ? activeVault.path : this.managedVaultDirectory
     const staged: Array<{ artifact: StoredArtifact; target: string; content: string }> = []
     for (const artifact of approved) {
-      const group = artifact.kind === 'question' ? '题库' : '知识'
-      const directory = join(this.managedVaultDirectory, group, artifact.subject)
+      const directory = isDirect
+        ? join(targetRoot, '直导题库')
+        : join(
+            this.managedVaultDirectory,
+            artifact.kind === 'question' ? '题库' : '知识',
+            artifact.subject
+          )
       mkdirSync(directory, { recursive: true })
       const target = join(directory, `${safeTitle(artifact.title, artifact.id)}-${artifact.id}.md`)
       const content = artifact.markdown.replace(
@@ -667,16 +678,50 @@ export class KnowledgeBuilderService {
       staged.push({ artifact, target, content })
     }
     for (const item of staged) this.atomicWrite(item.target, item.content)
-    const result = this.vaults.connect(this.managedVaultDirectory)
+    const result = this.vaults.connect(targetRoot)
     for (const item of staged) {
       item.artifact.status = 'published'
       this.saveArtifact(job, item.artifact)
     }
     job.status = 'completed'
-    job.message = `已发布 ${staged.length} 个产物并切换到应用管理知识库`
+    job.message = isDirect
+      ? `已发布 ${staged.length} 题到${directToUserVault ? '当前题库' : '应用管理知识库'}的「直导题库」目录并完成重索引`
+      : `已发布 ${staged.length} 个产物并切换到应用管理知识库`
     job.updatedAt = now()
     this.saveJob(job)
     return result
+  }
+
+  /** 撤销一次直导导入：删除该任务发布的题目文件并重索引（事后兜底） */
+  revertImport(jobId: string): { removed: number } {
+    const job = this.loadJob(jobId)
+    if (job.options.mode !== 'direct') throw new Error('仅直导任务支持撤销导入')
+    if (['queued', 'running', 'cancelling'].includes(job.status))
+      throw new Error('任务运行中不能撤销')
+    const published = job.artifactIds
+      .map((id) => this.loadArtifact(job, id))
+      .filter((artifact) => artifact.status === 'published')
+    if (!published.length) throw new Error('该任务没有已发布的产物可撤销')
+    const activeVault = this.vaults.ensureBuiltinVault()
+    const targetRoot = activeVault.isBuiltin ? this.managedVaultDirectory : activeVault.path
+    const importDirectory = join(targetRoot, '直导题库')
+    let removed = 0
+    for (const artifact of published) {
+      const file = join(importDirectory, `${safeTitle(artifact.title, artifact.id)}-${artifact.id}.md`)
+      if (existsSync(file)) {
+        unlinkSync(file)
+        removed += 1
+      }
+      artifact.status = 'rejected'
+      artifact.warnings = [...artifact.warnings, '已撤销导入：文件已从题库移除']
+      this.saveArtifact(job, artifact)
+    }
+    this.vaults.connect(targetRoot)
+    job.status = 'completed'
+    job.message = `已撤销本次导入：移除 ${removed} 个题目文件并重新索引`
+    job.updatedAt = now()
+    this.saveJob(job)
+    return { removed }
   }
 
   private async runJob(id: string): Promise<void> {
@@ -793,19 +838,21 @@ export class KnowledgeBuilderService {
         job.status = 'cancelled'
         job.message = '任务已取消，已完成的转换和审核产物仍被保留'
       } else if (job.options.mode === 'direct') {
-        let published = 0
+        // 两段式：先切题+配对校验生成待审核产物（不落库），抽查后经「全部批准→发布」入库
+        let staged = 0
         let skippedNoAnswer = 0
         let skippedIncomplete = 0
+        let skippedMisaligned = 0
         let skippedDuplicate = 0
+        let abortedBooks = 0
         const subject = job.options.subject === 'auto' ? 'xingce' : job.options.subject
         const subjectLabel =
           subject === 'xingce' ? '行测' : subject === 'shenlun' ? '申论' : '公共知识'
-        // 直导目标：当前活动用户库（原位增补、不切换活动库）；仅内置示例库时回退应用自管库
+        // 去重基准：当前活动题库（发布目标与之一致）
         const activeVault = this.vaults.ensureBuiltinVault()
         const targetRoot = activeVault.isBuiltin ? this.managedVaultDirectory : activeVault.path
         const existingSignatures = this.vaults.questionSignatures(targetRoot)
         const batchSeen = new Set<string>()
-        const importDirectory = join(targetRoot, '直导题库')
         for (const book of directBooks) {
           const merged = mergeDirectQuestions(book.questions, directSolutions, book.groups, {
             subject,
@@ -813,10 +860,20 @@ export class KnowledgeBuilderService {
             sourceFile: book.relativePath,
             tags: job.options.tags
           })
+          const bookFile = job.files.find((file) => file.sourceId === book.sourceId)
+          if (merged.aborted) {
+            // 整书对齐率过低：题本与解析册疑似套号错位，拦截防止题目批量配错答案
+            abortedBooks += 1
+            if (bookFile) {
+              bookFile.state = 'failed'
+              bookFile.message = `配对校验拦截：${merged.verifiable} 题可验证中对齐率过低（剔除 ${merged.skippedMisaligned} 题），题本与解析疑似套号错位，请核对两册的套号是否一致`
+            }
+            continue
+          }
           skippedNoAnswer += merged.skippedNoAnswer
           skippedIncomplete += merged.skippedIncomplete
-          const bookFile = job.files.find((file) => file.sourceId === book.sourceId)
-          let bookPublished = 0
+          skippedMisaligned += merged.skippedMisaligned
+          let bookStaged = 0
           for (const item of merged.items) {
             const signature = directSignature(item.stem, '', item.options[0]?.text ?? '')
             if (existingSignatures.has(signature) || batchSeen.has(signature)) {
@@ -836,37 +893,33 @@ export class KnowledgeBuilderService {
               title: safeTitle(item.stem.slice(0, 60), '未命名题目'),
               category: item.category,
               confidence: 1,
-              status: 'approved',
+              status: 'pending',
               warnings: [],
               preview: item.stem.slice(0, 180),
               markdown,
               evidenceExcerpt: item.stem.slice(0, 80)
             }
-            // 确定性转换直接发布，reviewStatus 在落盘时置为 approved
-            mkdirSync(importDirectory, { recursive: true })
-            const target = join(
-              importDirectory,
-              `${safeTitle(artifact.title, artifact.id)}-${artifact.id}.md`
-            )
-            this.atomicWrite(
-              target,
-              markdown.replace('reviewStatus: "pending"', 'reviewStatus: "approved"')
-            )
-            artifact.status = 'published'
             this.saveArtifact(job, artifact)
             if (!job.artifactIds.includes(artifact.id)) job.artifactIds.push(artifact.id)
-            published += 1
-            bookPublished += 1
+            staged += 1
+            bookStaged += 1
           }
-          if (bookFile) bookFile.artifactCount = bookPublished
+          if (bookFile) {
+            bookFile.state = 'ready'
+            bookFile.artifactCount = bookStaged
+            bookFile.message = `切出 ${bookStaged} 题${
+              merged.verifiable ? `，配对校验 ${merged.verifiable - merged.skippedMisaligned}/${merged.verifiable} 通过` : ''
+            }`
+          }
         }
-        if (published > 0) this.vaults.connect(targetRoot)
-        job.status = 'completed'
-        job.message = published
-          ? `直导完成：发布 ${published} 题（写入当前题库），去重跳过 ${skippedDuplicate} 题，剔除无答案 ${skippedNoAnswer} 题、不完整 ${skippedIncomplete} 题`
+        job.status = staged > 0 ? 'review' : 'completed'
+        job.message = staged
+          ? `已切出 ${staged} 题（配对验证 ${skippedMisaligned} 题疑似错位已剔除、无答案 ${skippedNoAnswer}、不完整 ${skippedIncomplete}、与现有题库重复 ${skippedDuplicate}）——请抽查后「全部批准」并「发布」入库${abortedBooks ? `；${abortedBooks} 本书因疑似套号错位被拦截` : ''}`
           : skippedDuplicate
-            ? `直导完成：${skippedDuplicate} 题与现有题库重复，未写入新题`
-            : '直导完成：未生成题目（未切出题目或全部缺少答案）'
+            ? `直导完成：${skippedDuplicate} 题与现有题库重复，未生成新题${abortedBooks ? `；${abortedBooks} 本书因疑似套号错位被拦截` : ''}`
+            : abortedBooks
+              ? `直导完成：全部题本被配对校验拦截（疑似套号错位），未生成产物`
+              : '直导完成：未切出题目（未识别出题目或全部缺少答案）'
       } else {
         const artifacts = job.artifactIds.map((artifactId) => this.loadArtifact(job, artifactId))
         job.status = artifacts.some((artifact) => artifact.status === 'pending')

@@ -275,6 +275,28 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
     }
   }
 
+  async function revertImport(): Promise<void> {
+    if (!job) return
+    if (
+      !window.confirm(
+        '确认撤销本次导入？将从当前题库删除该任务发布的全部题目文件并重新索引（不影响其他题目）。'
+      )
+    )
+      return
+    setBusy('publish')
+    setError('')
+    try {
+      await invoke({ method: 'knowledgeBuilder.job.revert', params: { id: job.id } })
+      await initialize()
+      setJob(await invoke({ method: 'knowledgeBuilder.job.get', params: { id: job.id } }))
+      setArtifact(undefined)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : '撤销导入失败')
+    } finally {
+      setBusy('')
+    }
+  }
+
   async function approveAll(): Promise<void> {
     if (!job) return
     const pendingIds = job.artifacts
@@ -621,6 +643,17 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
                   发布 {job.approvedArtifacts} 项
                 </Button>
               )}
+              {job.options.mode === 'direct' &&
+                !RUNNING_STATES.has(job.status) &&
+                job.artifacts.some((item) => item.status === 'published') && (
+                  <Button
+                    icon={<ArrowClockwiseIcon />}
+                    disabled={busy === 'publish'}
+                    onClick={() => void revertImport()}
+                  >
+                    撤销本次导入
+                  </Button>
+                )}
             </div>
           }
         >

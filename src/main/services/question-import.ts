@@ -21,6 +21,8 @@ export interface ParsedSolution {
   answer: string
   qtype: string
   explanation: string
+  /** 解析册在【参考答案】前重印的题干开头，用于配对一致性校验 */
+  stemExcerpt?: string
   origin?: { year: number; region: string; rate: number }
 }
 
@@ -153,6 +155,7 @@ export function parseSolutionBook(lines: string[]): Map<string, ParsedSolution> 
   let expected = 1
   let inExplanation = false
   let lastLineWasHeader = false
+  let excerptLines: string[] = []
   for (const line of lines) {
     if (NOISE.test(line)) continue
     const setTitle = line.match(SET_TITLE)
@@ -181,25 +184,52 @@ export function parseSolutionBook(lines: string[]): Map<string, ParsedSolution> 
           }
         : undefined
       if (current && num === expected) {
-        current = { set: setNo, num, answer: '', qtype: '', explanation: '', origin: originData }
+        current = {
+          set: setNo,
+          num,
+          answer: '',
+          qtype: '',
+          explanation: '',
+          stemExcerpt: undefined,
+          origin: originData
+        }
         solutions.set(`${setNo}-${num}`, current)
         inExplanation = false
+        excerptLines = []
         expected = num + 1
         continue
       }
       if (num === 1 && !current) {
         if (setNo === 0) setNo = 1
-        current = { set: setNo, num: 1, answer: '', qtype: '', explanation: '', origin: originData }
+        current = {
+          set: setNo,
+          num: 1,
+          answer: '',
+          qtype: '',
+          explanation: '',
+          stemExcerpt: undefined,
+          origin: originData
+        }
         solutions.set(`${setNo}-1`, current)
         inExplanation = false
+        excerptLines = []
         expected = 2
         continue
       }
       if (num === 1 && current && current.num >= 5) {
         setNo += 1
-        current = { set: setNo, num: 1, answer: '', qtype: '', explanation: '', origin: originData }
+        current = {
+          set: setNo,
+          num: 1,
+          answer: '',
+          qtype: '',
+          explanation: '',
+          stemExcerpt: undefined,
+          origin: originData
+        }
         solutions.set(`${setNo}-1`, current)
         inExplanation = false
+        excerptLines = []
         expected = 2
         continue
       }
@@ -207,6 +237,9 @@ export function parseSolutionBook(lines: string[]): Map<string, ParsedSolution> 
     if (!current) continue
     const answer = line.match(ANSWER_MARK)
     if (answer) {
+      // 【参考答案】前的重印文本冻结为配对校验依据
+      current.stemExcerpt = excerptLines.join('').slice(0, 160)
+      excerptLines = []
       current.answer = answer[1] ?? ''
       inExplanation = false
       continue
@@ -222,6 +255,7 @@ export function parseSolutionBook(lines: string[]): Map<string, ParsedSolution> 
       continue
     }
     if (inExplanation) current.explanation += (current.explanation ? '\n' : '') + line
+    else excerptLines.push(line)
   }
   return solutions
 }
@@ -263,10 +297,20 @@ export function mergeDirectQuestions(
   solutions: Map<string, ParsedSolution>,
   answerGroups: Map<string, string>,
   options: { subject: string; category: string; sourceFile: string; tags: string[] }
-): { items: DirectQuestion[]; skippedNoAnswer: number; skippedIncomplete: number } {
+): {
+  items: DirectQuestion[]
+  skippedNoAnswer: number
+  skippedIncomplete: number
+  skippedMisaligned: number
+  verifiable: number
+  aborted: boolean
+} {
   const items: DirectQuestion[] = []
   let skippedNoAnswer = 0
   let skippedIncomplete = 0
+  let skippedMisaligned = 0
+  let verifiable = 0
+  const scores: number[] = []
   for (const question of questions) {
     if (!question.stem || question.stem.length < 8 || question.options.length < 2) {
       skippedIncomplete += 1
@@ -279,6 +323,16 @@ export function mergeDirectQuestions(
     if (!answerText) {
       skippedNoAnswer += 1
       continue
+    }
+    // 配对校验：解析册重印题干与题本题干不匹配 → 疑似套号错位，剔除该题
+    if (solution?.stemExcerpt) {
+      verifiable += 1
+      const score = alignmentScore(question.stem, solution.stemExcerpt)
+      scores.push(score)
+      if (score < ALIGNMENT_THRESHOLD) {
+        skippedMisaligned += 1
+        continue
+      }
     }
     const rate = solution?.origin?.rate
     const difficulty =
@@ -306,7 +360,10 @@ export function mergeDirectQuestions(
       explanation
     })
   }
-  return { items, skippedNoAnswer, skippedIncomplete }
+  // 整书对齐率过低 → 题本与解析册疑似套号错位，中止该书导入（防止题目配错答案整批入库）
+  const aborted =
+    verifiable >= ALIGNMENT_MIN_VERIFIABLE && skippedMisaligned / verifiable > ALIGNMENT_ABORT_RATE
+  return { items, skippedNoAnswer, skippedIncomplete, skippedMisaligned, verifiable, aborted }
 }
 
 function yamlQuote(value: string): string {
@@ -319,6 +376,33 @@ export function directSignature(stem: string, material: string, firstOption: str
     .replace(/\s+/g, '')
     .slice(0, 50)}`
 }
+
+// ---- 配对一致性校验：解析册重印题干 vs 题本题干的字符二元组包含度 ----
+
+function normalizeForAlignment(value: string): string {
+  return String(value ?? '')
+    .replace(/[\s\p{P}\p{S}]/gu, '')
+    .slice(0, 140)
+}
+
+export function alignmentScore(stem: string, stemExcerpt: string | undefined): number {
+  if (!stemExcerpt) return 1 // 无重印可比（如书尾分组答案），不参与对齐判定
+  const query = normalizeForAlignment(stem)
+  const target = normalizeForAlignment(stemExcerpt)
+  if (query.length < 4 || target.length < 4) return 0
+  const queryGrams = new Set<string>()
+  for (let index = 0; index + 1 < query.length; index += 1)
+    queryGrams.add(query.slice(index, index + 2))
+  let hit = 0
+  for (let index = 0; index + 1 < target.length; index += 1) {
+    if (queryGrams.has(target.slice(index, index + 2))) hit += 1
+  }
+  return hit / queryGrams.size
+}
+
+export const ALIGNMENT_THRESHOLD = 0.55
+export const ALIGNMENT_ABORT_RATE = 0.4
+export const ALIGNMENT_MIN_VERIFIABLE = 10
 
 export function directQuestionMarkdown(question: DirectQuestion): string {
   const frontmatter = [

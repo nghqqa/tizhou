@@ -254,8 +254,13 @@ describe('knowledge builder direct mode', () => {
       job = service.getJob(started.id)
     }
 
+    // 两段式：切题进入待审核，抽查后批准并发布
+    expect(job.status).toBe('review')
+    expect(job.message).toContain('已切出 3 题')
+    for (const artifact of job.artifacts) service.reviewArtifact(job.id, artifact.id, 'approved')
+    service.publish(job.id)
+    job = service.getJob(started.id)
     expect(job.status).toBe('completed')
-    expect(job.message).toContain('发布 3 题')
     expect(connect).toHaveBeenCalled()
     const managedRoot = connect.mock.calls[0]![0]
     const files = readdirSync(join(managedRoot, '直导题库'), { recursive: true })
@@ -265,6 +270,11 @@ describe('knowledge builder direct mode', () => {
     const first = matter(readFileSync(join(managedRoot, '直导题库', files[0]!), 'utf8'))
     expect(first.data.answer).toHaveLength(1)
     expect(first.data.reviewStatus).toBe('approved')
+
+    // 撤销导入：文件移除、产物标记拒绝
+    const reverted = service.revertImport(job.id)
+    expect(reverted.removed).toBe(3)
+    expect(readdirSync(join(managedRoot, '直导题库')).filter((name) => name.endsWith('.md'))).toHaveLength(0)
   }, 35_000)
 
   it('re-importing the same book dedupes against the active vault (idempotent)', async () => {
@@ -344,11 +354,18 @@ describe('knowledge builder direct mode', () => {
         await new Promise((resolve) => setTimeout(resolve, 100))
         job = service.getJob(started.id)
       }
+      // 两段式：自动批准并发布，模拟用户「全部批准 → 发布」
+      if (job.status === 'review') {
+        for (const artifact of job.artifacts)
+          service.reviewArtifact(job.id, artifact.id, 'approved')
+        service.publish(job.id)
+        job = service.getJob(started.id)
+      }
       return job
     }
     const firstRun = await runOnce()
     expect(firstRun.status).toBe('completed')
-    expect(firstRun.message).toContain('发布 7 题')
+    expect(firstRun.message).toContain('已发布 7 题')
     const importDirectory = join(data, 'knowledge-builder', 'managed-vault', '直导题库')
     expect(readdirSync(importDirectory).filter((name) => name.endsWith('.md'))).toHaveLength(7)
 
@@ -357,5 +374,82 @@ describe('knowledge builder direct mode', () => {
     expect(secondRun.message).toContain('7 题与现有题库重复')
     expect(readdirSync(importDirectory).filter((name) => name.endsWith('.md'))).toHaveLength(7)
     database.close()
+  }, 35_000)
+
+  it('aborts a whole book when question and solution sets are misaligned', async () => {
+    const data = temporaryDirectory('lizhi-kb-mis-data-')
+    const source = temporaryDirectory('lizhi-kb-mis-source-')
+    // 12 题题本(两套各6题),题干与解析册重印完全不一致 → 整书拦截
+    const bookLines: string[] = ['练习题01套']
+    const solutionLines: string[] = ['练习题01套']
+    const stems = [
+      '甲地推进基层治理数字化转型遇到的问题与对策研究',
+      '乙省乡村振兴人才引进政策的实施效果分析',
+      '丙市老旧小区改造中的居民参与机制探讨',
+      '丁县农产品电商平台发展的困境与出路研究',
+      '戊区中小学课后服务供给模式的创新实践分析',
+      '己市产业园区绿色低碳转型的路径选择研究',
+      '庚省养老服务体系建设中的政府职责边界探讨',
+      '辛市新就业形态劳动者权益保障的难点分析',
+      '壬县文化遗产保护与旅游开发的平衡机制研究',
+      '癸市社区卫生服务能力建设的现状与对策分析',
+      '子省营商环境优化的关键指标与推进举措研究',
+      '丑市科技创新与产业创新深度融合的路径分析'
+    ]
+    stems.forEach((stem, index) => {
+      if (index === 6) {
+        bookLines.push('练习题02套')
+        solutionLines.push('练习题02套')
+      }
+      bookLines.push(`${(index % 6) + 1}. ${stem}。`, 'A. 选项甲', 'B. 选项乙', 'C. 选项丙', 'D. 选项丁')
+      solutionLines.push(
+        `${(index % 6) + 1}. (2021年广东省考 60%)`,
+        `与题干毫无关系的重印文本第${index}号，内容完全不同便于区分。`,
+        '【参考答案】A',
+        '【实战解析】解析正文。'
+      )
+    })
+    writeFileSync(join(source, '题本.md'), `${bookLines.join('\n')}\n`, 'utf8')
+    writeFileSync(join(source, '解析.md'), `${solutionLines.join('\n')}\n`, 'utf8')
+    const service = new KnowledgeBuilderService(data, process.cwd(), {} as AiService, {
+      connect: vi.fn(),
+      ensureBuiltinVault: () => ({
+        id: 'builtin', name: '内置示例库', path: 'C:/builtin-vault', connectedAt: '', lastIndexedAt: '',
+        questionCount: 0, documentCount: 0, warnings: [], isBuiltin: true
+      }),
+      questionSignatures: () => new Set<string>()
+    } as unknown as VaultService)
+    vi.spyOn(service, 'engineStatus').mockResolvedValue({
+      available: true, installing: false, version: 'test', pythonPath: 'test-python',
+      ocrAvailable: false, message: 'ready', supportedExtensions: ['.md']
+    })
+    const conversionTarget = service as unknown as {
+      convert: (python: string, worker: string, source: string, output: string) => Promise<void>
+    }
+    vi.spyOn(conversionTarget, 'convert').mockImplementation(
+      async (_python, _worker, sourcePath, outputPath) => {
+        writeFileSync(outputPath, readFileSync(sourcePath, 'utf8'), 'utf8')
+      }
+    )
+    const scan = service.scan(source)
+    const started = await service.startJob({
+      sourcePath: source,
+      fileIds: scan.files.filter((file) => file.eligible).map((file) => file.id),
+      options: {
+        mode: 'direct', quality: 'standard', subject: 'auto', tags: [], instruction: '',
+        rightsConfirmed: true
+      }
+    })
+    let job = started
+    const deadline = Date.now() + 30_000
+    while (['queued', 'running', 'cancelling'].includes(job.status) && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      job = service.getJob(started.id)
+    }
+    expect(job.status).toBe('completed')
+    expect(job.message).toContain('套号错位')
+    expect(job.artifacts).toHaveLength(0)
+    const failed = job.files.find((file) => file.state === 'failed')
+    expect(failed?.message).toContain('配对校验拦截')
   }, 35_000)
 })
