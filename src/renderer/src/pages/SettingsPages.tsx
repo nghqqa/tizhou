@@ -745,6 +745,7 @@ export function SettingsPage(): React.JSX.Element {
           )}
         </Section>
       </div>
+      <div className="grid two">
       <Section
         title="数据备份"
         description="恢复前会自动创建 pre-restore 快照，避免误操作造成不可逆丢失。"
@@ -804,17 +805,8 @@ export function SettingsPage(): React.JSX.Element {
         )}
       </Section>
       <Section
-        title="Markdown 格式提示"
-        description="frontmatter 字段允许中英文值，路径变化不会改变基于内容生成的稳定题号。"
-      >
-        <pre
-          className="markdown"
-          style={{ whiteSpace: 'pre-wrap' }}
-        >{`---\nid: my-question-001\nkind: question\nsubject: xingce\ncategory: 判断推理\ntype: single\nanswer: A\ndifficulty: 2\ntags: [逻辑, 充分条件]\n---\n# 题目标题\n\n题干内容\n\nA. 选项一\nB. 选项二\n\n## 解析\n\n解析内容`}</pre>
-      </Section>
-      <Section
         title="跨机迁移"
-        description="把学习记录与全部用户知识库打包到另一台电脑：先在旧机器导出迁移包，拷贝后在 新机器导入。API Key 系统加密不随包携带，导入后需重新填写。"
+        description="把学习记录与全部用户知识库打包到另一台电脑。API Key 需在新机器重新填写。"
       >
         <div className="button-row">
           <Button icon={<FolderOpenIcon />} disabled={busy} onClick={() => void exportMigration()}>
@@ -825,6 +817,36 @@ export function SettingsPage(): React.JSX.Element {
           </Button>
         </div>
       </Section>
+      </div>
+      <div className="grid two">
+      <Section
+        title="Markdown 格式提示"
+        description="frontmatter 字段允许中英文值，路径变化不会改变基于内容生成的稳定题号。"
+      >
+        <pre
+          className="markdown"
+          style={{ whiteSpace: 'pre-wrap' }}
+        >{`---
+id: my-question-001
+kind: question
+subject: xingce
+category: 判断推理
+type: single
+answer: A
+difficulty: 2
+tags: [逻辑, 充分条件]
+---
+# 题目标题
+
+题干内容
+
+A. 选项一
+B. 选项二
+
+## 解析
+
+解析内容`}</pre>
+      </Section>
       <Section
         title="危险操作"
         description="只清空学习证据，不删除知识库目录、模型凭据和应用设置。操作前自动创建本地快照。"
@@ -833,6 +855,7 @@ export function SettingsPage(): React.JSX.Element {
           清空学习数据
         </Button>
       </Section>
+      </div>
     </div>
   )
 }
