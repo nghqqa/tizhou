@@ -28,9 +28,13 @@
   --tz-shadow-md: 0 2px 8px rgba(40, 37, 32, 0.06);
 
   /* 字体令牌 */
-  --tz-font-body: 'Segoe UI', 'Microsoft YaHei UI', 'PingFang SC', 'Noto Sans SC', sans-serif;
-  --tz-font-serif: 'Noto Serif SC', 'SimSun', 'STSong', serif;
-  --tz-font-mono: 'Cascadia Mono', 'JetBrains Mono', monospace;
+  --tz-font-ui: 'Source Han Sans SC', 'Noto Sans CJK SC', 'Microsoft YaHei UI', 'PingFang SC', sans-serif;
+  --tz-font-display: 'Source Han Serif SC', 'Noto Serif CJK SC', 'STSong', 'SimSun', serif;
+  --tz-font-code: 'JetBrains Mono', 'Source Code Pro', 'Cascadia Mono', monospace;
+  /* 向后兼容别名 */
+  --tz-font-body: var(--tz-font-ui);
+  --tz-font-serif: var(--tz-font-display);
+  --tz-font-mono: var(--tz-font-code);
 
   /* 间距与圆角 */
   --tz-radius: 6px;
@@ -48,8 +52,8 @@
   --tz-text-md: 14px;
   --tz-text-lg: 16px;
   --tz-text-xl: 20px;
-  --tz-text-2xl: 24px;
-  --tz-text-3xl: 28px;
+  --tz-text-2xl: 28px;
+  --tz-text-3xl: 34px;
 
   color-scheme: dark;
   font-family: var(--tz-font-body);
@@ -494,6 +498,7 @@ a { color: inherit; }
   margin-bottom: 6px;
   color: var(--tz-ink-3);
   font-size: var(--tz-text-xs);
+  font-variant-numeric: tabular-nums;
 }
 .question-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 5px; }
 .question-number { min-width: 0 !important; }
@@ -517,13 +522,18 @@ a { color: inherit; }
   max-height: 320px;
   overflow-y: auto;
   margin: 0 0 14px;
-  padding: 12px 16px;
+  padding: 14px 18px;
   border: 1px solid var(--tz-border);
   border-radius: var(--tz-radius);
   background: var(--tz-surface);
   scrollbar-gutter: stable;
+  font-size: var(--tz-text-lg);
+  line-height: 1.85;
+  max-width: 720px;
 }
-.essay-material h3 { margin: 0 0 6px; font-size: var(--tz-text-sm); color: var(--tz-ink-3); letter-spacing: 0.06em; }
+.essay-material h3 { margin: 0 0 8px; font-size: var(--tz-text-sm); color: var(--tz-ink-3); letter-spacing: 0.06em; }
+.essay-material p { margin: 0 0 14px; }
+.essay-material p:last-child { margin-bottom: 0; }
 
 /* ================================================================
    Knowledge & Reading
@@ -899,6 +909,7 @@ a { color: inherit; }
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   cursor: default;
+  position: relative;
 }
 .calendar-cell-today {
   background: var(--tz-vermillion);
@@ -1084,7 +1095,7 @@ a { color: inherit; }
   line-height: 1;
   pointer-events: none;
 }
-.calendar-cell { position: relative; }
+/* calendar-cell position: relative is in the main rule */
 .calendar-strip { margin-bottom: 18px; }
 
 /* ================================================================
