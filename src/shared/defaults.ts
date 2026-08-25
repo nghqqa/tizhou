@@ -1,7 +1,7 @@
 import type { AiConfigView, AppSettings, IntegrationConfig } from './contracts'
 
 export const DEFAULT_SETTINGS: AppSettings = {
-  theme: 'dark',
+  theme: 'light',
   dailyTarget: 30,
   defaultPracticeCount: 10,
   defaultExamMinutes: 120,

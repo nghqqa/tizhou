@@ -174,12 +174,12 @@ function AppShell(): React.JSX.Element {
     <div className="app-shell">
       <aside className="sidebar">
         <div className="brand">
-          <div className="brand-mark">
-            <ListChecksIcon size={22} weight="bold" aria-hidden />
+          <div className="brand-mark" aria-hidden>
+            题
           </div>
           <div>
             <strong>题舟</strong>
-            <span>本地学习工作台</span>
+            <span>题海行舟 · 终将上岸</span>
           </div>
         </div>
         <nav className="main-nav" aria-label="主导航">
