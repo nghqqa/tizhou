@@ -113,6 +113,7 @@ export interface KnowledgeEngineStatus {
   ocrAvailable: boolean
   message: string
   supportedExtensions: string[]
+  installProgress?: { phase: string; percent: number }
 }
 
 export interface KnowledgeBuildOptions {

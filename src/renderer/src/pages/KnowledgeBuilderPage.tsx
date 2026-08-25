@@ -128,11 +128,17 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
   async function installEngine(): Promise<void> {
     setBusy('engine')
     setError('')
+    const poll = window.setInterval(() => {
+      void invoke<KnowledgeEngineStatus>({ method: 'knowledgeBuilder.engine.status' })
+        .then(setEngine)
+        .catch(() => undefined)
+    }, 1200)
     try {
       setEngine(await invoke({ method: 'knowledgeBuilder.engine.install' }))
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '转换引擎安装失败')
     } finally {
+      window.clearInterval(poll)
       setBusy('')
     }
   }
@@ -375,7 +381,18 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
               </small>
             </div>
           </div>
-          {busy === 'engine' && <ProgressBar />}
+          {busy === 'engine' && (
+            <div style={{ display: 'grid', gap: 6, marginTop: 10 }}>
+              <ProgressBar
+                value={engine.installProgress ? engine.installProgress.percent / 100 : undefined}
+              />
+              <small className="muted-copy">
+                {engine.installProgress
+                  ? `${engine.installProgress.phase}… ${engine.installProgress.percent}%`
+                  : '正在准备安装…'}
+              </small>
+            </div>
+          )}
         </div>
       </Section>
 
@@ -549,7 +566,11 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
               }
               onClick={() => void startJob()}
             >
-              {busy === 'start' ? '正在创建批次' : `开始处理 ${selected.size} 个文件`}
+              {busy === 'start'
+                ? '正在创建批次'
+                : mode === 'direct'
+                  ? `开始导入 ${selected.size} 个文件（完成后自动入库）`
+                  : `开始处理 ${selected.size} 个文件`}
             </Button>
             <span className="muted-copy">
               原文件保持不变，任务可取消，单个失败不会中断整个批次。

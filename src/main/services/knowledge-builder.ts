@@ -270,6 +270,7 @@ export class KnowledgeBuilderService {
   private runningJobId?: string
   private runningChild?: ReturnType<typeof spawn>
   private installing = false
+  private installProgress?: { phase: string; percent: number }
   private engineCache?: KnowledgeEngineStatus
 
   constructor(
@@ -354,12 +355,13 @@ export class KnowledgeBuilderService {
   }
 
   async engineStatus(): Promise<KnowledgeEngineStatus> {
+    const progress = this.installing ? this.installProgress : undefined
     if (
       this.engineCache?.available &&
       this.engineCache.pythonPath &&
       existsSync(this.engineCache.pythonPath)
     )
-      return { ...this.engineCache, installing: this.installing }
+      return { ...this.engineCache, installing: this.installing, installProgress: progress }
     const candidates = this.pythonCandidates()
     for (const pythonPath of candidates) {
       if (!existsSync(pythonPath)) continue
@@ -374,7 +376,7 @@ export class KnowledgeBuilderService {
           message: `MarkItDown ${version} 已就绪`,
           supportedExtensions: [...SUPPORTED_EXTENSIONS]
         }
-        return { ...this.engineCache }
+        return { ...this.engineCache, installProgress: progress }
       }
     }
     return {
@@ -382,7 +384,8 @@ export class KnowledgeBuilderService {
       installing: this.installing,
       ocrAvailable: false,
       message: '尚未安装独立 MarkItDown 转换环境',
-      supportedExtensions: [...SUPPORTED_EXTENSIONS]
+      supportedExtensions: [...SUPPORTED_EXTENSIONS],
+      installProgress: progress
     }
   }
 
@@ -394,6 +397,7 @@ export class KnowledgeBuilderService {
       const launcher = await this.findPythonLauncher()
       const environment = join(this.engineDirectory, '.venv')
       const pythonPath = this.managedPythonPath()
+      this.installProgress = { phase: '定位 Python 并创建独立环境', percent: 4 }
       if (!existsSync(pythonPath)) {
         mkdirSync(this.engineDirectory, { recursive: true })
         await execFileAsync(launcher.command, [...launcher.args, '-m', 'venv', environment], {
@@ -402,32 +406,90 @@ export class KnowledgeBuilderService {
           maxBuffer: 2 * 1024 * 1024
         })
       }
-      await execFileAsync(
+      // 分组件安装并解析 pip 输出推进进度：大块是 OCR 模型与推理运行时
+      await this.pipInstallWithProgress(
         pythonPath,
-        [
-          '-m',
-          'pip',
-          'install',
-          '--disable-pip-version-check',
-          `markitdown[pdf,docx,pptx,xlsx,xls,outlook]==${MARKITDOWN_VERSION}`,
-          ...OCR_PACKAGES
-        ],
-        {
-          timeout: 20 * 60_000,
-          windowsHide: true,
-          maxBuffer: 10 * 1024 * 1024,
-          env: { ...process.env, PIP_NO_INPUT: '1', PYTHONUTF8: '1' }
-        }
+        `markitdown[pdf,docx,pptx,xlsx,xls,outlook]==${MARKITDOWN_VERSION}`,
+        5,
+        25,
+        '安装文档转换组件 MarkItDown'
       )
+      await this.pipInstallWithProgress(pythonPath, OCR_PACKAGES[0]!, 30, 20, '安装 OCR 组件 RapidOCR（含识别模型）')
+      await this.pipInstallWithProgress(pythonPath, OCR_PACKAGES[1]!, 50, 38, '安装推理运行时 onnxruntime（体积较大）')
+      await this.pipInstallWithProgress(pythonPath, OCR_PACKAGES[2]!, 88, 8, '安装 PDF 渲染组件 pypdfium2')
+      this.installProgress = { phase: '验证安装结果', percent: 97 }
       this.engineCache = undefined
       const status = await this.engineStatus()
       if (!status.available) throw new Error('安装命令已结束，但 MarkItDown 无法导入')
+      this.installProgress = { phase: '安装完成', percent: 100 }
       return status
     } catch (error) {
       throw new Error(`转换引擎安装失败：${error instanceof Error ? error.message : '未知错误'}`)
     } finally {
       this.installing = false
     }
+  }
+
+  // 逐包安装并按 pip 输出行(Collecting/Downloading/Successfully)估算完成度，驱动安装进度条
+  private async pipInstallWithProgress(
+    pythonPath: string,
+    spec: string,
+    base: number,
+    span: number,
+    phase: string
+  ): Promise<void> {
+    this.installProgress = { phase, percent: base }
+    await new Promise<void>((resolvePromise, reject) => {
+      const child = spawn(
+        pythonPath,
+        ['-m', 'pip', 'install', '--disable-pip-version-check', spec],
+        {
+          windowsHide: true,
+          shell: false,
+          env: { ...process.env, PIP_NO_INPUT: '1', PYTHONUTF8: '1' }
+        }
+      )
+      let stderr = ''
+      let buffer = ''
+      let collected = 0
+      let finished = 0
+      const timer = setTimeout(() => child.kill(), 20 * 60_000)
+      const update = (): void => {
+        const fraction = collected > 0 ? Math.min(1, finished / collected) : 0
+        this.installProgress = {
+          phase,
+          percent: Math.max(base, Math.min(base + span, Math.round(base + span * fraction)))
+        }
+      }
+      child.stdout.setEncoding('utf8')
+      child.stdout.on('data', (chunk: string) => {
+        buffer += chunk
+        const lines = buffer.split('\n')
+        buffer = lines.pop() ?? ''
+        for (const line of lines) {
+          if (/^Collecting /.test(line)) collected += 1
+          else if (/^(Downloading |Using cached )/.test(line)) {
+            finished += 1
+            update()
+          } else if (/^Successfully installed /.test(line)) {
+            finished = collected
+            update()
+          }
+        }
+      })
+      child.stderr.on('data', (chunk) => {
+        stderr = `${stderr}${String(chunk)}`.slice(-20_000)
+      })
+      child.once('error', (error) => {
+        clearTimeout(timer)
+        reject(error)
+      })
+      child.once('close', (code) => {
+        clearTimeout(timer)
+        if (code === 0) resolvePromise()
+        else reject(new Error(stderr.trim() || `pip 进程退出码 ${code ?? '未知'}`))
+      })
+    })
   }
 
   async startJob(input: {
@@ -623,7 +685,10 @@ export class KnowledgeBuilderService {
     try {
       let job = this.loadJob(id)
       job.status = 'running'
-      job.message = undefined
+      job.message =
+        job.options.mode === 'direct'
+          ? '文件处理中——批次完成后自动配对、去重并写入当前题库'
+          : undefined
       job.updatedAt = now()
       this.saveJob(job)
       const engine = await this.engineStatus()
