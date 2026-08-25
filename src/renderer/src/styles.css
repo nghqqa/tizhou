@@ -62,28 +62,28 @@
   color-scheme: light;
 }
 
-/* 深色主题令牌覆盖 */
+/* 深色主题令牌覆盖：四层表面 + 可读性优先 */
 :root:not([data-theme='light']) {
-  --tz-bg: #1C1A17;
-  --tz-surface: #24211D;
-  --tz-surface-2: #2C2823;
-  --tz-surface-3: #353029;
-  --tz-ink: #EDE9E0;
-  --tz-ink-2: #C8C2B6;
-  --tz-ink-3: #928B7E;
-  --tz-vermillion: #D4584A;
-  --tz-vermillion-deep: #B84432;
-  --tz-vermillion-bg: rgba(212, 88, 74, 0.12);
-  --tz-vermillion-border: rgba(212, 88, 74, 0.30);
-  --tz-pine: #6B9280;
-  --tz-pine-bg: rgba(107, 146, 128, 0.12);
-  --tz-amber: #D4A24E;
-  --tz-amber-bg: rgba(212, 162, 78, 0.12);
-  --tz-border: rgba(237, 233, 224, 0.10);
-  --tz-border-strong: rgba(237, 233, 224, 0.18);
-  --tz-sidebar-bg: #181613;
-  --tz-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.15);
-  --tz-shadow-md: 0 2px 8px rgba(0, 0, 0, 0.20);
+  --tz-bg: #1B1917;                        /* 工作区背景 */
+  --tz-surface: #24211E;                   /* 普通内容区域 */
+  --tz-surface-2: #2B2521;                 /* 浮起/重点区域 */
+  --tz-surface-3: #332C27;                 /* 三级面板 */
+  --tz-ink: #F0EAE1;                       /* 主标题 */
+  --tz-ink-2: #D1C8BC;                     /* 正文 */
+  --tz-ink-3: #A49A8E;                     /* 次级 */
+  --tz-vermillion: #C65B43;
+  --tz-vermillion-deep: #A84A38;
+  --tz-vermillion-bg: rgba(198, 91, 67, 0.14);
+  --tz-vermillion-border: rgba(198, 91, 67, 0.32);
+  --tz-pine: #739181;
+  --tz-pine-bg: rgba(115, 145, 129, 0.14);
+  --tz-amber: #B68B4B;
+  --tz-amber-bg: rgba(182, 139, 75, 0.14);
+  --tz-border: rgba(235, 223, 208, 0.10);
+  --tz-border-strong: rgba(235, 223, 208, 0.16);
+  --tz-sidebar-bg: #151412;               /* 侧栏（最暗） */
+  --tz-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.20);
+  --tz-shadow-md: 0 2px 8px rgba(0, 0, 0, 0.25);
 }
 
 /* ================================================================
@@ -370,8 +370,9 @@ a { color: inherit; }
 .empty-state {
   display: grid;
   justify-items: center;
-  min-height: 200px;
-  padding: 32px;
+  min-height: 160px;
+  max-height: 220px;
+  padding: 24px;
   text-align: center;
 }
 .empty-icon {

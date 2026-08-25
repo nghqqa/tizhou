@@ -36,7 +36,7 @@ function createWindow(): void {
     minWidth: 1060,
     minHeight: 700,
     show: false,
-    backgroundColor: '#F5F1E8',
+    backgroundColor: '#1B1917',
     title: '题舟',
     autoHideMenuBar: true,
     webPreferences: {

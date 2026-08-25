@@ -28,31 +28,35 @@ const brand: BrandVariants = {
 // 浅色主题：宣纸白 · 案牍秩序
 export const lightTheme: Theme = {
   ...createLightTheme(brand),
-  colorNeutralBackground1: '#F5F1E8',    // 宣纸白·环境底色
-  colorNeutralBackground2: '#FBF9F4',   // 绢白·内容卡片
-  colorNeutralBackground3: '#F0ECE2',   // 淡茶·次级面板
-  colorNeutralBackground4: '#EAE5D9',   // 旧纸·三级面板
+  colorNeutralBackground1: '#F5F1E8',
+  colorNeutralBackground2: '#FBF9F4',
+  colorNeutralBackground3: '#F0ECE2',
+  colorNeutralBackground4: '#EAE5D9',
   colorNeutralBackground5: '#E3DED2',
   colorNeutralBackground6: '#DBD5C8',
-  colorNeutralStroke1: '#D5CFC2',       // 淡墨边框
-  colorNeutralStroke2: '#E2DDD2',       // 更淡的边框
-  colorNeutralForeground1: '#282520',   // 墨黑·主文字
-  colorNeutralForeground2: '#4A443C',   // 深墨·次级文字
-  colorNeutralForeground3: '#746E64'    // 烟灰·辅助文字
+  colorNeutralStroke1: '#D5CFC2',
+  colorNeutralStroke2: '#E2DDD2',
+  colorNeutralForeground1: '#282520',
+  colorNeutralForeground2: '#4A443C',
+  colorNeutralForeground3: '#746E64'
 }
 
-// 深色主题：墨黑 · 灯下案牍
+// 深色主题：墨黑 · 灯下案牍（四层表面 + 可读性优先）
 export const darkTheme: Theme = {
   ...createDarkTheme(brand),
-  colorNeutralBackground1: '#1C1A17',   // 墨黑·环境
-  colorNeutralBackground2: '#24211D',   // 炭灰·内容
-  colorNeutralBackground3: '#2C2823',   // 深炭·次级面板
-  colorNeutralBackground4: '#353029',
-  colorNeutralBackground5: '#3E3830',
-  colorNeutralBackground6: '#484139',
-  colorNeutralStroke1: '#3E3830',       // 暗淡墨
-  colorNeutralStroke2: '#322E27',
-  colorNeutralForeground1: '#EDE9E0',   // 米白·主文字
-  colorNeutralForeground2: '#C8C2B6',   // 浅灰·次级
-  colorNeutralForeground3: '#928B7E'    // 烟灰·辅助
+  // 四层表面层级
+  colorNeutralBackground1: '#151412',   // 应用背景（最暗，侧栏/外框）
+  colorNeutralBackground2: '#1B1917',   // 工作区背景
+  colorNeutralBackground3: '#24211E',   // 普通内容区域
+  colorNeutralBackground4: '#2B2521',   // 浮起/重点区域
+  colorNeutralBackground5: '#332C27',
+  colorNeutralBackground6: '#3C342E',
+  // 边框
+  colorNeutralStroke1: 'rgba(235, 223, 208, 0.14)',
+  colorNeutralStroke2: 'rgba(235, 223, 208, 0.08)',
+  // 文字四层
+  colorNeutralForeground1: '#F0EAE1',   // 主标题
+  colorNeutralForeground2: '#D1C8BC',   // 正文
+  colorNeutralForeground3: '#A49A8E',   // 次级
+  colorNeutralForegroundDisabled: '#766F67'
 }
