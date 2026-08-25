@@ -30,6 +30,7 @@ import { FEATURE_PROMPTS, sourceEnvelope, taskDataEnvelope } from '../../shared/
 import { AiService } from './ai'
 import {
   directQuestionMarkdown,
+  directSignature,
   mergeDirectQuestions,
   parseAnswerGroups,
   parseQuestionBook,
@@ -730,9 +731,16 @@ export class KnowledgeBuilderService {
         let published = 0
         let skippedNoAnswer = 0
         let skippedIncomplete = 0
+        let skippedDuplicate = 0
         const subject = job.options.subject === 'auto' ? 'xingce' : job.options.subject
         const subjectLabel =
           subject === 'xingce' ? '行测' : subject === 'shenlun' ? '申论' : '公共知识'
+        // 直导目标：当前活动用户库（原位增补、不切换活动库）；仅内置示例库时回退应用自管库
+        const activeVault = this.vaults.ensureBuiltinVault()
+        const targetRoot = activeVault.isBuiltin ? this.managedVaultDirectory : activeVault.path
+        const existingSignatures = this.vaults.questionSignatures(targetRoot)
+        const batchSeen = new Set<string>()
+        const importDirectory = join(targetRoot, '直导题库')
         for (const book of directBooks) {
           const merged = mergeDirectQuestions(book.questions, directSolutions, book.groups, {
             subject,
@@ -743,8 +751,14 @@ export class KnowledgeBuilderService {
           skippedNoAnswer += merged.skippedNoAnswer
           skippedIncomplete += merged.skippedIncomplete
           const bookFile = job.files.find((file) => file.sourceId === book.sourceId)
-          if (bookFile) bookFile.artifactCount = merged.items.length
+          let bookPublished = 0
           for (const item of merged.items) {
+            const signature = directSignature(item.stem, '', item.options[0]?.text ?? '')
+            if (existingSignatures.has(signature) || batchSeen.has(signature)) {
+              skippedDuplicate += 1
+              continue
+            }
+            batchSeen.add(signature)
             const markdown = directQuestionMarkdown(item)
             const artifact: StoredArtifact = {
               id: item.id,
@@ -764,9 +778,11 @@ export class KnowledgeBuilderService {
               evidenceExcerpt: item.stem.slice(0, 80)
             }
             // 确定性转换直接发布，reviewStatus 在落盘时置为 approved
-            const directory = join(this.managedVaultDirectory, '题库', subject)
-            mkdirSync(directory, { recursive: true })
-            const target = join(directory, `${safeTitle(artifact.title, artifact.id)}-${artifact.id}.md`)
+            mkdirSync(importDirectory, { recursive: true })
+            const target = join(
+              importDirectory,
+              `${safeTitle(artifact.title, artifact.id)}-${artifact.id}.md`
+            )
             this.atomicWrite(
               target,
               markdown.replace('reviewStatus: "pending"', 'reviewStatus: "approved"')
@@ -775,13 +791,17 @@ export class KnowledgeBuilderService {
             this.saveArtifact(job, artifact)
             if (!job.artifactIds.includes(artifact.id)) job.artifactIds.push(artifact.id)
             published += 1
+            bookPublished += 1
           }
+          if (bookFile) bookFile.artifactCount = bookPublished
         }
-        if (published > 0) this.vaults.connect(this.managedVaultDirectory)
+        if (published > 0) this.vaults.connect(targetRoot)
         job.status = 'completed'
         job.message = published
-          ? `直导完成：发布 ${published} 题，剔除无答案 ${skippedNoAnswer} 题、不完整 ${skippedIncomplete} 题`
-          : '直导完成：未生成题目（未切出题目或全部缺少答案）'
+          ? `直导完成：发布 ${published} 题（写入当前题库），去重跳过 ${skippedDuplicate} 题，剔除无答案 ${skippedNoAnswer} 题、不完整 ${skippedIncomplete} 题`
+          : skippedDuplicate
+            ? `直导完成：${skippedDuplicate} 题与现有题库重复，未写入新题`
+            : '直导完成：未生成题目（未切出题目或全部缺少答案）'
       } else {
         const artifacts = job.artifactIds.map((artifactId) => this.loadArtifact(job, artifactId))
         job.status = artifacts.some((artifact) => artifact.status === 'pending')

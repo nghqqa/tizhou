@@ -32,6 +32,7 @@ import {
   REVIEW_MASTERED_STREAK,
   REVIEW_WRONG_DELAY_DAYS
 } from '../../shared/defaults'
+import { directSignature } from './question-import'
 
 type SqlValue = string | number | bigint | Uint8Array | null
 export type Row = Record<string, SqlValue>
@@ -653,6 +654,21 @@ export class DatabaseService {
     return [...papers]
       .map(([paper, info]) => ({ paper, count: info.count, year: info.year }))
       .sort((a, b) => (b.year ?? 0) - (a.year ?? 0) || b.count - a.count)
+  }
+
+  /** 轻量去重签名：只取题干/材料/选项列，供题库导入前比对（8k+ 题秒级） */
+  listQuestionSignatures(vaultId: string): string[] {
+    const rows = this.db
+      .prepare('SELECT stem, material, options_json FROM questions WHERE vault_id = ?')
+      .all(vaultId) as Row[]
+    return rows.map((row) => {
+      const options = parseJson(row.options_json, []) as Array<{ text?: string }>
+      return directSignature(
+        String(row.stem ?? ''),
+        row.material == null ? '' : String(row.material),
+        options[0]?.text ?? ''
+      )
+    })
   }
 
   listDocuments(filter: { subject?: string; kind?: string; query?: string }): KnowledgeDocument[] {

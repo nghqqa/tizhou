@@ -76,7 +76,7 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
   const [sourcePath, setSourcePath] = useState('')
   const [query, setQuery] = useState('')
   const [selected, setSelected] = useState<Set<string>>(new Set())
-  const [mode, setMode] = useState<KnowledgeBuildMode>('auto')
+  const [mode, setMode] = useState<KnowledgeBuildMode>('direct')
   const [quality, setQuality] = useState<KnowledgeBuildQuality>('high')
   const [subject, setSubject] = useState<Subject | 'common' | 'auto'>('auto')
   const [tags, setTags] = useState('')
@@ -472,7 +472,7 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
       {scan && (
         <Section
           title="整理策略"
-          description="直导模式不调用模型：题本与解析/答案册放同一批次，按套号题号自动配对并直接入库；其余模式由模型提取后逐项审核。"
+          description="直导题库：题本与解析/答案册放同一批次，自动配对、与当前题库去重后写入（零 API）；AI 模式：由模型提取知识后逐项审核。"
         >
           <div className="builder-options">
             <Field label="产物类型">
@@ -487,16 +487,18 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
                 <option value="direct">直导题库（题本+解析/答案，零 API）</option>
               </Select>
             </Field>
-            <Field label="质量流程">
-              <Select
-                value={quality}
-                disabled={mode === 'convert-only' || mode === 'direct'}
-                onChange={(_, data) => setQuality(data.value as KnowledgeBuildQuality)}
-              >
-                <option value="high">高质量，两阶段审校</option>
-                <option value="standard">标准，单阶段提取</option>
-              </Select>
-            </Field>
+            {mode !== 'direct' && (
+              <Field label="质量流程">
+                <Select
+                  value={quality}
+                  disabled={mode === 'convert-only'}
+                  onChange={(_, data) => setQuality(data.value as KnowledgeBuildQuality)}
+                >
+                  <option value="high">高质量，两阶段审校</option>
+                  <option value="standard">标准，单阶段提取</option>
+                </Select>
+              </Field>
+            )}
             <Field label="默认科目">
               <Select
                 value={subject}
@@ -516,17 +518,19 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
               />
             </Field>
           </div>
-          <Field
-            label="自定义整理要求"
-            hint="例如：优先提取数量关系公式与典型陷阱。要求只影响内容侧重点，不能绕过证据和审核规则。"
-          >
-            <Textarea
-              value={instruction}
-              resize="vertical"
-              onChange={(_, data) => setInstruction(data.value)}
-              placeholder="可留空，使用默认公考知识编辑规则"
-            />
-          </Field>
+          {mode !== 'direct' && (
+            <Field
+              label="自定义整理要求"
+              hint="例如：优先提取数量关系公式与典型陷阱。要求只影响内容侧重点，不能绕过证据和审核规则。"
+            >
+              <Textarea
+                value={instruction}
+                resize="vertical"
+                onChange={(_, data) => setInstruction(data.value)}
+                placeholder="可留空，使用默认公考知识编辑规则"
+              />
+            </Field>
+          )}
           <Checkbox
             checked={rightsConfirmed}
             onChange={(_, data) => setRightsConfirmed(data.checked === true)}

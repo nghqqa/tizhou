@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Field, Input } from '@fluentui/react-components'
 import { MagnifyingGlassIcon } from '@phosphor-icons/react'
+import { useNavigate } from 'react-router-dom'
 import type { KnowledgeDocument, Subject } from '@shared/contracts'
 import { invoke } from '../api'
 import { MarkdownContent } from '../components/MarkdownContent'
@@ -12,6 +13,7 @@ interface KnowledgePageProps {
 }
 
 export function KnowledgePage({ subject, kind }: KnowledgePageProps): React.JSX.Element {
+  const navigate = useNavigate()
   const [documents, setDocuments] = useState<KnowledgeDocument[]>()
   const [selectedId, setSelectedId] = useState('')
   const [query, setQuery] = useState('')
@@ -63,7 +65,9 @@ export function KnowledgePage({ subject, kind }: KnowledgePageProps): React.JSX.
       ) : !documents.length ? (
         <EmptyState
           title="当前分类没有文档"
-          description="在知识库 Markdown frontmatter 中设置 subject 与 kind 后重新索引。"
+          description="在知识库 Markdown frontmatter 中设置 subject 与 kind 后重新索引，或到知识构建导入本地资料。"
+          actionLabel="去知识构建导入"
+          onAction={() => navigate('/knowledge-builder')}
         />
       ) : (
         <Section className="document-layout">

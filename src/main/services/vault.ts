@@ -386,6 +386,13 @@ export class VaultService {
     return { vault, ...changes, skipped, warnings: vault.warnings }
   }
 
+  /** 目标目录对应知识库的既有题目去重签名集合（目录未注册时为空集） */
+  questionSignatures(directory: string): Set<string> {
+    const root = realpathSync(resolve(directory))
+    const vault = this.database.listVaults().find((item) => item.path === root)
+    return new Set(vault ? this.database.listQuestionSignatures(vault.id) : [])
+  }
+
   reindex(): VaultIndexResult {
     const vault = this.database.getActiveVault() ?? this.ensureBuiltinVault()
     if (vault.isBuiltin) {

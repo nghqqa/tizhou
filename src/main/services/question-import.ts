@@ -313,6 +313,13 @@ function yamlQuote(value: string): string {
   return JSON.stringify(String(value ?? ''))
 }
 
+// 去重签名：题干+材料全量归一化 + 首选项前缀，跨来源按精确匹配（OCR 与网络文本的标点差异不保证命中）
+export function directSignature(stem: string, material: string, firstOption: string): string {
+  return `${String(stem ?? '').replace(/\s+/g, '')}|${String(material ?? '').replace(/\s+/g, '')}|${String(firstOption ?? '')
+    .replace(/\s+/g, '')
+    .slice(0, 50)}`
+}
+
 export function directQuestionMarkdown(question: DirectQuestion): string {
   const frontmatter = [
     '---',

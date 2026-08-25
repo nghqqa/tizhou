@@ -4,6 +4,8 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import matter from 'gray-matter'
 import { KnowledgeBuilderService } from '../src/main/services/knowledge-builder'
+import { DatabaseService } from '../src/main/services/database'
+import { VaultService } from '../src/main/services/vault'
 import {
   directQuestionMarkdown,
   mergeDirectQuestions,
@@ -201,7 +203,19 @@ describe('knowledge builder direct mode', () => {
       warnings: []
     }))
     const service = new KnowledgeBuilderService(data, process.cwd(), {} as AiService, {
-      connect
+      connect,
+      ensureBuiltinVault: () => ({
+        id: 'builtin',
+        name: '内置示例库',
+        path: 'C:/builtin-vault',
+        connectedAt: '',
+        lastIndexedAt: '',
+        questionCount: 0,
+        documentCount: 0,
+        warnings: [],
+        isBuiltin: true
+      }),
+      questionSignatures: () => new Set<string>()
     } as unknown as VaultService)
     vi.spyOn(service, 'engineStatus').mockResolvedValue({
       available: true,
@@ -244,12 +258,104 @@ describe('knowledge builder direct mode', () => {
     expect(job.message).toContain('发布 3 题')
     expect(connect).toHaveBeenCalled()
     const managedRoot = connect.mock.calls[0]![0]
-    const files = readdirSync(join(managedRoot, '题库', 'xingce'), { recursive: true })
+    const files = readdirSync(join(managedRoot, '直导题库'), { recursive: true })
       .map(String)
       .filter((name) => name.endsWith('.md'))
     expect(files.length).toBe(3)
-    const first = matter(readFileSync(join(managedRoot, '题库', 'xingce', files[0]!), 'utf8'))
+    const first = matter(readFileSync(join(managedRoot, '直导题库', files[0]!), 'utf8'))
     expect(first.data.answer).toHaveLength(1)
     expect(first.data.reviewStatus).toBe('approved')
+  }, 35_000)
+
+  it('re-importing the same book dedupes against the active vault (idempotent)', async () => {
+    const data = temporaryDirectory('lizhi-kb-idem-data-')
+    const source = temporaryDirectory('lizhi-kb-idem-source-')
+    writeFileSync(
+      join(source, '题本.md'),
+      `${TIBEN.filter((line) => line !== '参考答案' && line !== '1-2:AB').join('\n')}\n`,
+      'utf8'
+    )
+    writeFileSync(
+      join(source, '解析.md'),
+      [
+        '练习题01套',
+        '1. (2019年安徽省考 62%)',
+        '【参考答案】A',
+        '【实战解析】第一题解析。',
+        '2. (2019年安徽省考 58%)',
+        '【参考答案】B',
+        '【实战解析】第二题解析。',
+        '3. (2019年安徽省考 55%)',
+        '【参考答案】C',
+        '【实战解析】第三题解析。',
+        '4. (2019年安徽省考 51%)',
+        '【参考答案】D',
+        '【实战解析】第四题解析。',
+        '5. (2019年安徽省考 48%)',
+        '【参考答案】A',
+        '【实战解析】第五题解析。',
+        '6. (2019年安徽省考 45%)',
+        '【参考答案】B',
+        '【实战解析】第六题解析。',
+        '练习题02套',
+        '1. (2020年北京市考 71%)',
+        '【参考答案】C',
+        '【实战解析】新套第一题解析。'
+      ].join('\n') + '\n',
+      'utf8'
+    )
+    const database = new DatabaseService(join(data, 'workbench.sqlite'), data, join(data, 'backups'))
+    const vaults = new VaultService(database)
+    const service = new KnowledgeBuilderService(data, process.cwd(), {} as AiService, vaults)
+    vi.spyOn(service, 'engineStatus').mockResolvedValue({
+      available: true,
+      installing: false,
+      version: 'test',
+      pythonPath: 'test-python',
+      ocrAvailable: false,
+      message: 'ready',
+      supportedExtensions: ['.md']
+    })
+    const conversionTarget = service as unknown as {
+      convert: (python: string, worker: string, source: string, output: string) => Promise<void>
+    }
+    vi.spyOn(conversionTarget, 'convert').mockImplementation(
+      async (_python, _worker, sourcePath, outputPath) => {
+        writeFileSync(outputPath, readFileSync(sourcePath, 'utf8'), 'utf8')
+      }
+    )
+    const runOnce = async () => {
+      const scan = service.scan(source)
+      const started = await service.startJob({
+        sourcePath: source,
+        fileIds: scan.files.filter((file) => file.eligible).map((file) => file.id),
+        options: {
+          mode: 'direct',
+          quality: 'standard',
+          subject: 'auto',
+          tags: [],
+          instruction: '',
+          rightsConfirmed: true
+        }
+      })
+      let job = started
+      const deadline = Date.now() + 30_000
+      while (['queued', 'running', 'cancelling'].includes(job.status) && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 100))
+        job = service.getJob(started.id)
+      }
+      return job
+    }
+    const firstRun = await runOnce()
+    expect(firstRun.status).toBe('completed')
+    expect(firstRun.message).toContain('发布 7 题')
+    const importDirectory = join(data, 'knowledge-builder', 'managed-vault', '直导题库')
+    expect(readdirSync(importDirectory).filter((name) => name.endsWith('.md'))).toHaveLength(7)
+
+    const secondRun = await runOnce()
+    expect(secondRun.status).toBe('completed')
+    expect(secondRun.message).toContain('7 题与现有题库重复')
+    expect(readdirSync(importDirectory).filter((name) => name.endsWith('.md'))).toHaveLength(7)
+    database.close()
   }, 35_000)
 })
