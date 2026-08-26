@@ -365,6 +365,20 @@ function isHintLine(line: string): boolean {
   return /^[，、；：,]/.test(line)
 }
 
+const CJK_CHAR = /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/
+// 全角区（CJK 标点、全角字母数字），空格同样视为断字噪声
+const WIDE_CHAR = /[\u3000-\u303f\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff00-\uffef]/
+// OCR 断字噪声清理：影印件换行/分栏常在词中间留空格（如「F银 行」「需求一提 出」「求 ：」）。
+// 删除全角字符之间及全角与汉字之间的空白；中英混排的正常空格（AI 批改、rapidocr 快速）原样保留。
+export function normalizeOcrText(value: string): string {
+  return String(value ?? '')
+    .replace(/\u3000/g, ' ')
+    .replace(new RegExp(`(${WIDE_CHAR.source})[ \\t]+(?=${CJK_CHAR.source})`, 'g'), '$1')
+    .replace(new RegExp(`(${CJK_CHAR.source})[ \\t]+(?=${WIDE_CHAR.source})`, 'g'), '$1')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim()
+}
+
 interface EssayUnitEntry {
   chapter: string
   title: string
@@ -475,13 +489,15 @@ export function parseEssayBook(lines: string[]): ParsedEssayBook {
   const entries: EssayUnitEntry[] = []
   let chapter = ''
   for (const rawLine of lines) {
-    if (isEssayNoiseLine(rawLine)) continue
-    const chapterMatch = rawLine.match(ESSAY_CHAPTER_MARK)
+    // OCR 断字噪声在收集入口统一清洗：后续所有标记匹配、题干、材料、解析都继承干净文本
+    const line = normalizeOcrText(rawLine)
+    if (!line || isEssayNoiseLine(line)) continue
+    const chapterMatch = line.match(ESSAY_CHAPTER_MARK)
     if (chapterMatch) {
       chapter = cleanEssayTitle(chapterMatch[1] ?? '')
       continue
     }
-    const unitMatch = rawLine.match(ESSAY_UNIT_MARK)
+    const unitMatch = line.match(ESSAY_UNIT_MARK)
     if (unitMatch) {
       // 目录页会先印一遍单元标题（无正文）；同名单元取最后一次出现（带正文的那个）
       const entry: EssayUnitEntry = {
@@ -497,7 +513,7 @@ export function parseEssayBook(lines: string[]): ParsedEssayBook {
       continue
     }
     const last = entries[entries.length - 1]
-    if (last) last.body.push(rawLine)
+    if (last) last.body.push(line)
   }
 
   const units: ParsedEssayUnit[] = []

@@ -9,6 +9,7 @@ import { VaultService } from '../src/main/services/vault'
 import {
   directQuestionMarkdown,
   mergeDirectQuestions,
+  normalizeOcrText,
   parseAnswerGroups,
   parseEssayBook,
   parseQuestionBook,
@@ -178,6 +179,36 @@ describe('question import parsers', () => {
 })
 
 describe('essay book parsing', () => {
+  it('normalizes OCR mid-word spaces but preserves latin word spacing', () => {
+    expect(normalizeOcrText('2020年3月，M市F银 行召开了普惠金 融战略启动大会，需求一提 出。')).toBe(
+      '2020年3月，M市F银行召开了普惠金融战略启动大会，需求一提出。'
+    )
+    expect(normalizeOcrText('要求 ：全面、准确，不超　过250字。'.replace('　', '\u3000'))).toBe(
+      '要求：全面、准确，不超过250字。'
+    )
+    // 中英混排的正常空格保留
+    expect(normalizeOcrText('可在申论作答页配合 AI 批改练习')).toBe(
+      '可在申论作答页配合 AI 批改练习'
+    )
+  })
+
+  it('carries cleaned text through units so material has no OCR gaps', () => {
+    const book = parseEssayBook(
+      toLines(
+        [
+          '第一章 归纳概括',
+          '【训练一】普惠金融案例',
+          '资料4',
+          'M市F银 行召开了普惠金 融战略启动大会，宣布加大对中小微企业的服务力度，企业无需再人工提交资料。',
+          '谈谈你对普惠金 融惠及小微企业的看法。',
+          '要求：观点明确，不超过200字。'
+        ].join('\n')
+      )
+    )
+    const unit = book.units[0]!
+    expect(unit.material).toContain('F银行召开了普惠金融战略启动大会')
+    expect(unit.stem).toContain('普惠金融惠及小微企业')
+  })
   const KUAKUA_UNIT = [
     '第一章 归纳概括',
     '【训练一】提升基层社会治理水平经验做法',
