@@ -85,6 +85,9 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
   const [job, setJob] = useState<KnowledgeBuildJob>()
   const [artifact, setArtifact] = useState<KnowledgeArtifactDetail>()
   const [busy, setBusy] = useState('')
+  const [filterStatus, setFilterStatus] = useState<'all' | 'pending' | 'approved' | 'rejected' | 'warnings'>('all')
+  const [reviewPage, setReviewPage] = useState(0)
+  const PAGE_SIZE = 50
   const [error, setError] = useState('')
 
   const visibleFiles = useMemo(() => {
@@ -111,6 +114,13 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
       })
       .catch((cause) => setError(cause instanceof Error ? cause.message : '知识库工坊初始化失败'))
   }, [])
+
+  // 任务进入审核状态时，自动选中第一条待审核产物
+  useEffect(() => {
+    if (!job || job.status !== 'review' || artifact) return
+    const first = job.artifacts.find((item) => item.status === 'pending')
+    if (first) void openArtifact(first.id)
+  }, [job?.status])
 
   useEffect(() => {
     if (!job || !RUNNING_STATES.has(job.status)) return
@@ -353,6 +363,20 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
   }
 
   if (!engine) return <LoadingState label="正在检查知识转换环境" />
+
+  // 审核列表筛选 + 分页
+  const filteredArtifacts = (job?.artifacts ?? []).filter((item) => {
+    switch (filterStatus) {
+      case 'pending': return item.status === 'pending'
+      case 'approved': return item.status === 'approved'
+      case 'rejected': return item.status === 'rejected'
+      case 'warnings': return item.warnings.length > 0
+      default: return true
+    }
+  })
+  const totalPages = Math.max(1, Math.ceil(filteredArtifacts.length / PAGE_SIZE))
+  const safePage = Math.min(reviewPage, totalPages - 1)
+  const paginatedArtifacts = filteredArtifacts.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE)
 
   return (
     <div className="page knowledge-builder-page">
@@ -686,7 +710,24 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
           {job.artifacts.length > 0 && (
             <div className="builder-review-layout">
               <div className="builder-artifact-list" aria-label="待审核知识产物">
-                {job.artifacts.map((item) => (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, padding: '8px 10px', borderBottom: '1px solid var(--tz-border)', position: 'sticky', top: 0, background: 'var(--tz-surface)', zIndex: 1 }}>
+                  {(['all', 'pending', 'approved', 'rejected', 'warnings'] as const).map((f) => (
+                    <button
+                      key={f}
+                      type="button"
+                      className={`pill ${filterStatus === f ? 'pill-active' : ''}`}
+                      style={{ cursor: 'pointer', border: filterStatus === f ? '1px solid var(--tz-vermillion)' : '1px solid var(--tz-border)' }}
+                      onClick={() => { setFilterStatus(f); setReviewPage(0) }}
+                    >
+                      {f === 'all' ? `全部 ${job.artifacts.length}` :
+                       f === 'pending' ? `待审 ${job.pendingArtifacts}` :
+                       f === 'approved' ? `已批 ${job.approvedArtifacts}` :
+                       f === 'rejected' ? `已拒` :
+                       `有警告 ${job.artifacts.filter(a => a.warnings.length > 0).length}`}
+                    </button>
+                  ))}
+                </div>
+                {paginatedArtifacts.map((item) => (
                   <button
                     type="button"
                     key={item.id}
@@ -697,13 +738,25 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
                       <Badge appearance={statusAppearance(item.status)}>
                         {artifactStatusLabel(item.status)}
                       </Badge>
-                      <small>{item.kind === 'question' ? '题目' : '知识文档'}</small>
-                      <small>{Math.round(item.confidence * 100)}% 置信度</small>
+                      <small>{item.kind === 'question' ? '题目' : '知识'}</small>
+                      <small>置信度 {Math.round(item.confidence * 100)}%</small>
+                      {item.warnings.length > 0 && (
+                        <small className="warning">⚠ {item.warnings.length}</small>
+                      )}
                     </span>
                     <strong>{item.title}</strong>
                     <p>{item.preview}</p>
                   </button>
                 ))}
+                {totalPages > 1 && (
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '10px', borderTop: '1px solid var(--tz-border)' }}>
+                    <Button size="small" disabled={safePage === 0} onClick={() => setReviewPage(safePage - 1)}>上一页</Button>
+                    <span style={{ fontSize: 11, color: 'var(--tz-ink-3)' }}>
+                      {safePage + 1} / {totalPages} 页 · {filteredArtifacts.length} 条
+                    </span>
+                    <Button size="small" disabled={safePage >= totalPages - 1} onClick={() => setReviewPage(safePage + 1)}>下一页</Button>
+                  </div>
+                )}
               </div>
               <div className="builder-artifact-preview">
                 {busy === 'artifact' ? (
@@ -713,7 +766,11 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
                     <div className="builder-preview-head">
                       <div>
                         <strong>{artifact.title}</strong>
-                        <span>来源定位：{artifact.evidenceExcerpt || '模型未提供定位摘录'}</span>
+                        <span>
+                          内容置信度 {Math.round(artifact.confidence * 100)}%
+                          {artifact.warnings.length > 0 && ` · ${artifact.warnings.length} 条警告`}
+                          {' · '}来源：{artifact.evidenceExcerpt?.slice(0, 60) || '待核验'}
+                        </span>
                       </div>
                       {artifact.status !== 'published' && (
                         <div className="button-row">
@@ -746,10 +803,9 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
                     />
                   </>
                 ) : (
-                  <EmptyState
-                    title="选择一项开始审核"
-                    description="核对题干、答案、解析、来源定位和模型警告。批准不会立即发布。"
-                  />
+                  <div className="empty-compact" style={{ padding: '20px 0' }}>
+                    <span>从左侧选择一项产物开始审核，或点击「全部批准」批量处理</span>
+                  </div>
                 )}
               </div>
             </div>
