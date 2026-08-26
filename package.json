@@ -1,6 +1,6 @@
 {
   "name": "tizhou",
-  "version": "0.9.6",
+  "version": "0.9.7",
   "private": true,
   "license": "MIT",
   "author": "nghqqa",
@@ -56,6 +56,7 @@
   "build": {
     "appId": "com.tizhou.app",
     "productName": "题舟",
+    "artifactName": "tizhou-setup-${version}.${ext}",
     "directories": {
       "output": "dist"
     },
