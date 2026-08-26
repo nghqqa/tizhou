@@ -1,8 +1,8 @@
 import { fileURLToPath } from 'node:url'
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { cpSync, existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
-import { autoUpdater } from 'electron-updater'
 import type { LearningPlan, WorkbenchRequest } from '../shared/contracts'
 import { AiService } from './services/ai'
 import { DatabaseService } from './services/database'
@@ -12,6 +12,10 @@ import { KnowledgeBuilderService } from './services/knowledge-builder'
 import { MigrationService } from './services/migration'
 import { StudyService } from './services/study'
 import { VaultService } from './services/vault'
+
+// electron-updater 是 CommonJS 包，用 createRequire 兼容 ESM 主进程
+const nodeRequire = createRequire(import.meta.url)
+const { autoUpdater } = nodeRequire('electron-updater') as typeof import('electron-updater')
 
 const currentDirectory = dirname(fileURLToPath(import.meta.url))
 let mainWindow: BrowserWindow | null = null
@@ -610,15 +614,33 @@ function getUpdateStatus() {
   return { ...updateStatus, currentVersion: app.getVersion() }
 }
 
-app.whenReady().then(async () => {
-  migrateLegacyDataDirectory()
-  await initialize()
-  createWindow()
-  setupAutoUpdater()
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+// ── 启动烟雾测试：验证主进程可完整加载并初始化 ──
+const isSmokeTest = process.argv.includes('--smoke-test')
+
+if (isSmokeTest) {
+  app.whenReady().then(async () => {
+    try {
+      migrateLegacyDataDirectory()
+      await initialize()
+      setupAutoUpdater()
+      console.log('SMOKE_READY')
+      app.exit(0)
+    } catch (error) {
+      console.error(`SMOKE_FAIL: ${error instanceof Error ? error.message : String(error)}`)
+      app.exit(1)
+    }
   })
-})
+} else {
+  app.whenReady().then(async () => {
+    migrateLegacyDataDirectory()
+    await initialize()
+    createWindow()
+    setupAutoUpdater()
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    })
+  })
+}
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
