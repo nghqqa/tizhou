@@ -685,12 +685,12 @@ a { color: inherit; }
 .builder-file > small { grid-column: 3 / -1; color: var(--tz-ink-3); }
 
 .builder-options { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-bottom: 14px; }
-/* 开始操作栏：主按钮 + 元信息 + 风险说明 */
+/* 开始操作栏：主按钮 + 元信息 + 风险说明，左对齐不分散 */
 .builder-start-row {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 24px;
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: 20px;
   flex-wrap: wrap;
   margin-top: 20px;
 }
@@ -698,6 +698,7 @@ a { color: inherit; }
   display: flex;
   align-items: center;
   gap: 16px;
+  min-width: 0;
 }
 .builder-start-button {
   min-height: 38px;
@@ -723,9 +724,11 @@ a { color: inherit; }
   line-height: 1.4;
 }
 .builder-start-note {
-  font-size: var(--tz-text-sm);
+  max-width: 520px;
+  margin: 9px 0 0;
   color: var(--tz-ink-3);
-  line-height: 1.4;
+  font-size: var(--tz-text-sm);
+  line-height: 1.5;
 }
 
 /* 审核筛选栏 */
@@ -874,13 +877,12 @@ a { color: inherit; }
 }
 @media (max-width: 720px) {
   .builder-start-row {
-    align-items: flex-start;
+    align-items: stretch;
     flex-direction: column;
     gap: 10px;
   }
   .builder-start-main {
-    width: 100%;
-    align-items: flex-start;
+    align-items: stretch;
     flex-direction: column;
     gap: 8px;
   }
@@ -889,6 +891,10 @@ a { color: inherit; }
     align-items: flex-start;
     flex-direction: column;
     gap: 2px;
+  }
+  .builder-start-note {
+    max-width: none;
+    margin-top: 0;
   }
 }
 @media (max-width: 900px) {

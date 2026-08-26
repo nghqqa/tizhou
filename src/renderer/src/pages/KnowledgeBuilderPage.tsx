@@ -51,6 +51,14 @@ function jobStatusLabel(status: KnowledgeBuildJob['status']): string {
   }[status]
 }
 
+/** 综合状态+审核数量计算展示状态：全部处理完不再显示"等待审核" */
+function getDisplayJobStatus(job: KnowledgeBuildJob): string {
+  if (job.status === 'review' && job.pendingArtifacts === 0 && job.artifacts.length > 0) {
+    return '本批已处理'
+  }
+  return jobStatusLabel(job.status)
+}
+
 function artifactStatusLabel(status: KnowledgeArtifactStatus): string {
   return {
     pending: '待审核',
@@ -646,15 +654,21 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
                 {busy === 'start' ? '正在创建…' : mode === 'direct' ? '开始导入' : '开始处理'}
               </Button>
               <div className="builder-start-meta">
-                <strong>{selected.size} 个文件</strong>
+                <strong>
+                  {selected.size > 0 ? `${selected.size} 个文件` : '尚未选择文件'}
+                </strong>
                 <span>
-                  {mode === 'direct' ? '完成后需抽查并发布入库' : '由模型提取后逐项审核'}
+                  {selected.size > 0
+                    ? mode === 'direct'
+                      ? '完成后需抽查并发布入库'
+                      : '由模型提取后逐项审核'
+                    : '请先在上方列表选择需要处理的文件'}
                 </span>
               </div>
             </div>
-            <span className="builder-start-note">
+            <p className="builder-start-note">
               原文件保持不变 · 任务可取消 · 单个失败不中断整批
-            </span>
+            </p>
           </div>
         </Section>
       )}
@@ -744,7 +758,7 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
         >
           <div className="builder-job-head">
             <div>
-              <Badge appearance="filled">{jobStatusLabel(job.status)}</Badge>
+              <Badge appearance="filled">{getDisplayJobStatus(job)}</Badge>
               <strong>
                 {job.processedFiles}/{job.totalFiles} 文件
               </strong>
