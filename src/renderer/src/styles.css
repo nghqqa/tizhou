@@ -1319,16 +1319,19 @@ a {
 
 /* OCR 质量摘要（区别于文件状态和 AI 置信度） */
 .ocr-quality {
+  grid-column: 3 / -1;
   overflow: hidden;
   color: var(--tz-ink-3);
   font-size: 10px;
-  line-height: 1.4;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.5;
 }
 .ocr-quality-warning {
   color: var(--tz-amber);
   font-weight: 500;
+}
+.ocr-quality-detail {
+  white-space: normal;
+  word-break: break-all;
 }
 
 /* 审核完成引导 */

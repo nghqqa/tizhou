@@ -69,16 +69,21 @@ function OcrQualitySummary({ report }: { report: OcrQualityReport }): React.JSX.
     parts.push(`OCR 置信度 ${(report.averageConfidence * 100).toFixed(0)}%`)
   }
   if (report.emptyPages > 0) parts.push(`${report.emptyPages} 页空白`)
+  const lowConfRatio = report.ocrLineCount > 0 ? report.lowConfidenceLines / report.ocrLineCount : 0
   const hasWarning =
+    report.warnings.length > 0 ||
+    report.emptyPages > 0 ||
     (report.averageConfidence != null && report.averageConfidence < 0.72) ||
-    (report.ocrLineCount > 0 && report.lowConfidenceLines / report.ocrLineCount > 0.2)
+    lowConfRatio > 0.2
+  const warningTexts = [...new Set(report.warnings)].slice(0, 3).map((w) => w.slice(0, 80))
+  const title = report.warnings.length > 3 ? report.warnings.join('\n') : undefined
   return (
-    <span
-      className={hasWarning ? 'ocr-quality ocr-quality-warning' : 'ocr-quality'}
-      style={{ gridColumn: '3 / -1' }}
-    >
+    <span className={hasWarning ? 'ocr-quality ocr-quality-warning' : 'ocr-quality'} title={title}>
       {parts.join(' · ')}
-      {hasWarning && ' · 识别质量较低，请人工抽查'}
+      {hasWarning && warningTexts.length === 0 && ' · 识别质量较低，请人工抽查'}
+      {warningTexts.length > 0 && (
+        <span className="ocr-quality-detail"> · {warningTexts.join('；')}</span>
+      )}
     </span>
   )
 }
