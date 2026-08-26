@@ -264,7 +264,9 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
     }
   }
 
-  async function reviewArtifact(status: 'approved' | 'rejected'): Promise<void> {
+  async function reviewArtifact(
+    status: 'pending' | 'approved' | 'rejected'
+  ): Promise<void> {
     if (!job || !artifact) return
     setBusy('review')
     setError('')
@@ -280,6 +282,7 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
           params: { jobId: job.id, artifactId: artifact.id }
         })
       )
+      if (status === 'pending') setMessage('已恢复为待审核')
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '审核状态保存失败')
     } finally {
@@ -733,7 +736,8 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
             <div>
               <span>{job.pendingArtifacts} 待审核</span>
               <span>{job.approvedArtifacts} 已批准</span>
-              <span>{job.failedFiles} 失败</span>
+              <span>{job.artifacts.filter(a => a.status === 'rejected').length} 已拒绝</span>
+              {job.failedFiles > 0 && <span>{job.failedFiles} 失败</span>}
             </div>
           </div>
           <ProgressBar value={job.totalFiles ? job.processedFiles / job.totalFiles : 0} />
@@ -763,7 +767,7 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
                       {f === 'all' ? `全部 ${job.artifacts.length}` :
                        f === 'pending' ? `待审 ${job.pendingArtifacts}` :
                        f === 'approved' ? `已批 ${job.approvedArtifacts}` :
-                       f === 'rejected' ? `已拒` :
+                       f === 'rejected' ? `已拒 ${job.artifacts.filter(a => a.status === 'rejected').length}` :
                        `有警告 ${job.artifacts.filter(a => a.warnings.length > 0).length}`}
                     </button>
                   ))}
@@ -828,23 +832,51 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
                           {' · '}来源：{artifact.evidenceExcerpt?.slice(0, 60) || '待核验'}
                         </span>
                       </div>
-                      {artifact.status !== 'published' && (
+                      {artifact.status === 'pending' && (
                         <div className="button-row">
                           <Button
-                            appearance={artifact.status === 'rejected' ? 'primary' : 'secondary'}
                             disabled={busy === 'review'}
                             onClick={() => void reviewArtifact('rejected')}
                           >
                             拒绝
                           </Button>
                           <Button
-                            appearance={artifact.status === 'approved' ? 'primary' : 'secondary'}
+                            appearance="primary"
                             disabled={busy === 'review'}
                             onClick={() => void reviewArtifact('approved')}
                           >
                             批准
                           </Button>
                         </div>
+                      )}
+                      {artifact.status === 'rejected' && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <span className="pill">已拒绝</span>
+                          <Button
+                            appearance="subtle"
+                            size="small"
+                            disabled={busy === 'review'}
+                            onClick={() => void reviewArtifact('pending')}
+                          >
+                            恢复待审核
+                          </Button>
+                        </div>
+                      )}
+                      {artifact.status === 'approved' && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <span className="pill">已批准</span>
+                          <Button
+                            appearance="subtle"
+                            size="small"
+                            disabled={busy === 'review'}
+                            onClick={() => void reviewArtifact('pending')}
+                          >
+                            撤回批准
+                          </Button>
+                        </div>
+                      )}
+                      {artifact.status === 'published' && (
+                        <span className="pill">已发布</span>
                       )}
                     </div>
                     {artifact.warnings.length > 0 && (

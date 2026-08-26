@@ -633,7 +633,7 @@ export class KnowledgeBuilderService {
   reviewArtifact(
     jobId: string,
     artifactId: string,
-    status: Extract<KnowledgeArtifactStatus, 'approved' | 'rejected'>
+    status: Extract<KnowledgeArtifactStatus, 'pending' | 'approved' | 'rejected'>
   ): KnowledgeBuildJob {
     const job = this.loadJob(jobId)
     if (['queued', 'running', 'cancelling'].includes(job.status))
@@ -641,6 +641,9 @@ export class KnowledgeBuilderService {
     if (!job.artifactIds.includes(artifactId)) throw new Error('产物不属于该任务')
     const artifact = this.loadArtifact(job, artifactId)
     if (artifact.status === 'published') throw new Error('已发布产物不能改回审核状态')
+    // 恢复待审核只允许从已拒绝或已批准状态
+    if (status === 'pending' && artifact.status === 'pending')
+      throw new Error('该产物已处于待审核状态')
     artifact.status = status
     this.saveArtifact(job, artifact)
     job.updatedAt = now()

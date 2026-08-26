@@ -589,7 +589,11 @@ export type WorkbenchRequest =
   | { method: 'knowledgeBuilder.artifact.get'; params: { jobId: string; artifactId: string } }
   | {
       method: 'knowledgeBuilder.artifact.review'
-      params: { jobId: string; artifactId: string; status: 'approved' | 'rejected' }
+      params: {
+        jobId: string
+        artifactId: string
+        status: 'pending' | 'approved' | 'rejected'
+      }
     }
   | {
       method: 'knowledgeBuilder.artifacts.reviewMany'
