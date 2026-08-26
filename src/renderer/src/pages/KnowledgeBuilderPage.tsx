@@ -307,13 +307,14 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
     }
   }
 
-  async function approveAll(): Promise<void> {
+  async function reviewAll(status: 'approved' | 'rejected'): Promise<void> {
     if (!job) return
     const pendingIds = job.artifacts
       .filter((item) => item.status === 'pending')
       .map((item) => item.id)
     if (!pendingIds.length) return
-    if (!window.confirm(`确认批准全部 ${pendingIds.length} 个待审核产物？发布后将进入应用管理知识库。`))
+    const action = status === 'approved' ? '批准' : '拒绝'
+    if (!window.confirm(`确认${action}全部 ${pendingIds.length} 个待审核产物？`))
       return
     setBusy('review')
     setError('')
@@ -322,12 +323,12 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
       for (const artifactId of pendingIds) {
         updated = await invoke<KnowledgeBuildJob>({
           method: 'knowledgeBuilder.artifact.review',
-          params: { jobId: job.id, artifactId, status: 'approved' }
+          params: { jobId: job.id, artifactId, status }
         })
       }
       if (updated) setJob(updated)
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : '批量批准失败')
+      setError(cause instanceof Error ? cause.message : `批量${action}失败`)
     } finally {
       setBusy('')
     }
@@ -649,13 +650,22 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
                 </Button>
               )}
               {job.pendingArtifacts > 0 && !RUNNING_STATES.has(job.status) && (
-                <Button
-                  icon={<CheckCircleIcon />}
-                  disabled={busy === 'review'}
-                  onClick={() => void approveAll()}
-                >
-                  全部批准 {job.pendingArtifacts} 项
-                </Button>
+                <>
+                  <Button
+                    icon={<CheckCircleIcon />}
+                    disabled={busy === 'review'}
+                    onClick={() => void reviewAll('approved')}
+                  >
+                    全部批准 {job.pendingArtifacts} 项
+                  </Button>
+                  <Button
+                    icon={<ArrowClockwiseIcon />}
+                    disabled={busy === 'review'}
+                    onClick={() => void reviewAll('rejected')}
+                  >
+                    全部拒绝
+                  </Button>
+                </>
               )}
               {job.approvedArtifacts > 0 && !RUNNING_STATES.has(job.status) && (
                 <Button
