@@ -1,5 +1,15 @@
 # 更新日志
 
+## 1.0.3 - 2026-08-26
+
+### 学习报告导出（连接 Obsidian 工作流）
+
+- **导出到 Obsidian**：学习报告页新增主按钮——配置 Vault 后，报告以 Markdown 写入 Vault 的「学习报告」文件夹（文件名含日期与范围），在 Obsidian 中自动出现、可检索可双链；frontmatter 带 title/date/range/tags 属性。
+- **导出 Markdown**：原 JSON 导出替换为人可读的 Markdown（保存对话框自选位置），包含核心统计、科目掌握（按正确率降序）、错因分布、每日明细。
+- **覆盖保护**：重复导出同日同范围报告自动更新，但只覆盖带题舟生成标记（frontmatter `tz-source`）的文件，同名手写笔记会被拒绝覆盖。
+- 新增 `report-markdown.ts` 纯函数模块与 8 项单测（总计 91 项全过）。
+- 实机端到端验证：题舟导出 → Vault 落盘 → Obsidian 实时索引并渲染（属性面板 + 四个表格正常）。
+
 ## 1.0.2 - 2026-08-26
 
 ### Obsidian 检测修复（Issue #1）

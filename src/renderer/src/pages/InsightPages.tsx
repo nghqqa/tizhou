@@ -37,6 +37,14 @@ export function ReportsPage(): React.JSX.Element {
   const [range, setRange] = useState<ReportData['range']>('30d')
   const [report, setReport] = useState<ReportData>()
   const [error, setError] = useState('')
+  async function exportToObsidian(): Promise<void> {
+    try {
+      const target = await invoke<string>({ method: 'reports.exportObsidian', params: { range } })
+      window.alert(`已导出到 Obsidian：\n${target}\n\n可在 Vault 的「学习报告」文件夹查看。`)
+    } catch (cause) {
+      window.alert(`导出到 Obsidian 失败：${cause instanceof Error ? cause.message : '未知错误'}`)
+    }
+  }
   useEffect(() => {
     setReport(undefined)
     setError('')
@@ -60,8 +68,24 @@ export function ReportsPage(): React.JSX.Element {
               <option value="30d">最近 30 天</option>
               <option value="all">全部时间</option>
             </Select>
-            <Button onClick={() => void invoke({ method: 'reports.export', params: { range } })}>
-              导出报告
+            <Button
+              onClick={() =>
+                void invoke<string | undefined>({
+                  method: 'reports.exportMarkdown',
+                  params: { range }
+                }).catch((cause) =>
+                  window.alert(`导出失败：${cause instanceof Error ? cause.message : '未知错误'}`)
+                )
+              }
+            >
+              导出 Markdown
+            </Button>
+            <Button
+              appearance="primary"
+              icon={<ClipboardTextIcon />}
+              onClick={() => void exportToObsidian()}
+            >
+              导出到 Obsidian
             </Button>
           </>
         }

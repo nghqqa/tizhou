@@ -651,7 +651,8 @@ export type WorkbenchRequest =
   | { method: 'draft.get'; params: { id: string } }
   | { method: 'constructed.evaluate'; params: { promptId: string; title: string; content: string } }
   | { method: 'reports.get'; params: { range: ReportData['range'] } }
-  | { method: 'reports.export'; params: { range: ReportData['range'] } }
+  | { method: 'reports.exportMarkdown'; params: { range: ReportData['range'] } }
+  | { method: 'reports.exportObsidian'; params: { range: ReportData['range'] } }
   | { method: 'diagnosis.get'; params?: undefined }
   | {
       method: 'plan.preview'

@@ -14,10 +14,11 @@ import { randomUUID } from 'node:crypto'
 import { basename, join, resolve } from 'node:path'
 import { spawn } from 'node:child_process'
 import { shell } from 'electron'
-import type { IntegrationConfig, ObsidianBackupInfo } from '../../shared/contracts'
+import type { IntegrationConfig, ObsidianBackupInfo, ReportData } from '../../shared/contracts'
 import { DEFAULT_INTEGRATIONS } from '../../shared/defaults'
 import { DatabaseService } from './database'
 import { detectedObsidian } from './obsidian-detect'
+import { isTizhouGeneratedReport, renderReportMarkdown, reportFileName } from './report-markdown'
 
 interface StoredIntegrations {
   obsidianVaultPath: string
@@ -104,6 +105,20 @@ export class IntegrationService {
       return
     }
     await shell.openExternal(`obsidian://open?vault=${encodeURIComponent(vaultName)}`)
+  }
+
+  exportReportToVault(report: ReportData): string {
+    const { vaultPath } = this.obsidianPaths()
+    const targetDirectory = join(vaultPath, '学习报告')
+    mkdirSync(targetDirectory, { recursive: true })
+    const target = join(targetDirectory, reportFileName(report.range))
+    if (existsSync(target)) {
+      const existing = readFileSync(target, 'utf8')
+      if (!isTizhouGeneratedReport(existing))
+        throw new Error('目标文件已存在且不是题舟导出的报告，已拒绝覆盖')
+    }
+    writeFileSync(target, renderReportMarkdown(report), 'utf8')
+    return target
   }
 
   listObsidianBackups(): ObsidianBackupInfo[] {

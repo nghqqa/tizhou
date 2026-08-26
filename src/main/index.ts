@@ -10,6 +10,7 @@ import { DiagnosticService } from './services/diagnostics'
 import { IntegrationService } from './services/integrations'
 import { KnowledgeBuilderService } from './services/knowledge-builder'
 import { MigrationService } from './services/migration'
+import { renderReportMarkdown, reportFileName } from './services/report-markdown'
 import { StudyService } from './services/study'
 import { VaultService } from './services/vault'
 
@@ -416,17 +417,19 @@ async function initialize(): Promise<void> {
         return study.evaluateConstructed(request.params)
       case 'reports.get':
         return database!.getReport(request.params.range)
-      case 'reports.export': {
+      case 'reports.exportMarkdown': {
         const report = database!.getReport(request.params.range)
         const selected = await dialog.showSaveDialog(mainWindow!, {
           title: '导出学习报告',
-          defaultPath: `题舟学习报告-${new Date().toISOString().slice(0, 10)}.json`,
-          filters: [{ name: 'JSON', extensions: ['json'] }]
+          defaultPath: reportFileName(request.params.range),
+          filters: [{ name: 'Markdown', extensions: ['md'] }]
         })
         if (selected.canceled || !selected.filePath) return undefined
-        writeFileSync(selected.filePath, JSON.stringify(report, null, 2), 'utf8')
+        writeFileSync(selected.filePath, renderReportMarkdown(report), 'utf8')
         return selected.filePath
       }
+      case 'reports.exportObsidian':
+        return integrations.exportReportToVault(database!.getReport(request.params.range))
       case 'diagnosis.get':
         return study.getDiagnosis()
       case 'plan.preview':
