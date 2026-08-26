@@ -17,6 +17,7 @@ import { shell } from 'electron'
 import type { IntegrationConfig, ObsidianBackupInfo } from '../../shared/contracts'
 import { DEFAULT_INTEGRATIONS } from '../../shared/defaults'
 import { DatabaseService } from './database'
+import { detectedObsidian } from './obsidian-detect'
 
 interface StoredIntegrations {
   obsidianVaultPath: string
@@ -34,16 +35,6 @@ function parseStored(value: unknown): StoredIntegrations {
   } catch {
     return { ...DEFAULT_INTEGRATIONS }
   }
-}
-
-function detectedObsidian(): string {
-  const candidates = [
-    process.env.LOCALAPPDATA
-      ? join(process.env.LOCALAPPDATA, 'Programs', 'Obsidian', 'Obsidian.exe')
-      : '',
-    process.env.PROGRAMFILES ? join(process.env.PROGRAMFILES, 'Obsidian', 'Obsidian.exe') : ''
-  ]
-  return candidates.find((candidate) => candidate && existsSync(candidate)) ?? ''
 }
 
 function directorySize(path: string): number {

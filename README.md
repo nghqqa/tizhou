@@ -6,7 +6,7 @@
   <a href="https://github.com/nghqqa/tizhou/releases/latest"><img src="https://img.shields.io/github/v/release/nghqqa/tizhou?label=%E6%9C%80%E6%96%B0%E7%89%88%E6%9C%AC" alt="最新版本"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-2f855a.svg" alt="MIT License"></a>
   <img src="https://img.shields.io/badge/%E5%B9%B3%E5%8F%B0-Windows%2010%2F11-0078D4" alt="Windows 10/11">
-  <img src="https://img.shields.io/badge/%E6%B5%8B%E8%AF%95-76%20%E9%A1%B9-brightgreen" alt="76 项测试">
+  <img src="https://img.shields.io/badge/%E6%B5%8B%E8%AF%95-83%20%E9%A1%B9-brightgreen" alt="83 项测试">
 </p>
 
 **题舟** 是一个**本地优先**的开源考公学习工作台：学习数据存在你自己的电脑上，无广告、无推送、无遥测；题库由你自己导入，扫描版题本 PDF 也能一键转成结构化题库；AI 助教可选接入，不装模型也能完整刷题。
@@ -105,7 +105,7 @@ src/
 ├── shared/            类型契约、Prompt 协议、OCR 解析器
 └── preload/           IPC 桥
 tools/                 OCR worker（Python）、直导脚本、打包烟雾测试
-tests/                 Vitest 测试（76 项，含真实 OCR 集成测试）
+tests/                 Vitest 测试（83 项，含真实 OCR 集成测试）
 docs/                  用户手册、导入指南、UAT 清单、架构文档
 ```
 
@@ -114,7 +114,7 @@ docs/                  用户手册、导入指南、UAT 清单、架构文档
 ```bash
 npm install
 npm run dev            # 开发模式
-npm test               # 运行 76 项测试
+npm test               # 运行 83 项测试
 npm run typecheck      # 类型检查
 npm run format:check   # 代码格式检查
 npm run package        # 打包 Windows 安装包

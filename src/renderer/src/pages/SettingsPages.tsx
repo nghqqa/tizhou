@@ -286,6 +286,14 @@ export function EnvironmentPage(): React.JSX.Element {
           <Button disabled={busy || !status.obsidian.vaultReady} onClick={() => void safeMode()}>
             安全模式
           </Button>
+          <Button
+            icon={<ArrowClockwiseIcon />}
+            disabled={busy}
+            onClick={() => void load()}
+            title="安装或移动 Obsidian 后点击此处重新检测"
+          >
+            重新检测
+          </Button>
           <span className="pill">
             <StatusDot
               status={status.obsidian.detected && status.obsidian.vaultReady ? 'ok' : 'warning'}
