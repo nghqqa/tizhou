@@ -416,9 +416,27 @@ export class KnowledgeBuilderService {
         25,
         '安装文档转换组件 MarkItDown'
       )
-      await this.pipInstallWithProgress(pythonPath, OCR_PACKAGES[0]!, 30, 20, '安装 OCR 组件 RapidOCR（含识别模型）')
-      await this.pipInstallWithProgress(pythonPath, OCR_PACKAGES[1]!, 50, 38, '安装推理运行时 onnxruntime（体积较大）')
-      await this.pipInstallWithProgress(pythonPath, OCR_PACKAGES[2]!, 88, 8, '安装 PDF 渲染组件 pypdfium2')
+      await this.pipInstallWithProgress(
+        pythonPath,
+        OCR_PACKAGES[0]!,
+        30,
+        20,
+        '安装 OCR 组件 RapidOCR（含识别模型）'
+      )
+      await this.pipInstallWithProgress(
+        pythonPath,
+        OCR_PACKAGES[1]!,
+        50,
+        38,
+        '安装推理运行时 onnxruntime（体积较大）'
+      )
+      await this.pipInstallWithProgress(
+        pythonPath,
+        OCR_PACKAGES[2]!,
+        88,
+        8,
+        '安装 PDF 渲染组件 pypdfium2'
+      )
       this.installProgress = { phase: '验证安装结果', percent: 97 }
       this.engineCache = undefined
       const status = await this.engineStatus()
@@ -761,7 +779,10 @@ export class KnowledgeBuilderService {
     const importDirectory = join(targetRoot, '直导题库')
     let removed = 0
     for (const artifact of published) {
-      const file = join(importDirectory, `${safeTitle(artifact.title, artifact.id)}-${artifact.id}.md`)
+      const file = join(
+        importDirectory,
+        `${safeTitle(artifact.title, artifact.id)}-${artifact.id}.md`
+      )
       if (existsSync(file)) {
         unlinkSync(file)
         removed += 1
@@ -962,7 +983,9 @@ export class KnowledgeBuilderService {
             bookFile.state = 'ready'
             bookFile.artifactCount = bookStaged
             bookFile.message = `切出 ${bookStaged} 题${
-              merged.verifiable ? `，配对校验 ${merged.verifiable - merged.skippedMisaligned}/${merged.verifiable} 通过` : ''
+              merged.verifiable
+                ? `，配对校验 ${merged.verifiable - merged.skippedMisaligned}/${merged.verifiable} 通过`
+                : ''
             }`
           }
         }

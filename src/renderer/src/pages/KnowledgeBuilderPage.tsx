@@ -94,7 +94,9 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
   const [job, setJob] = useState<KnowledgeBuildJob>()
   const [artifact, setArtifact] = useState<KnowledgeArtifactDetail>()
   const [busy, setBusy] = useState('')
-  const [filterStatus, setFilterStatus] = useState<'all' | 'pending' | 'approved' | 'rejected' | 'warnings'>('all')
+  const [filterStatus, setFilterStatus] = useState<
+    'all' | 'pending' | 'approved' | 'rejected' | 'warnings'
+  >('all')
   const [reviewPage, setReviewPage] = useState(0)
   const PAGE_SIZE = 50
   const [error, setError] = useState('')
@@ -272,9 +274,7 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
     }
   }
 
-  async function reviewArtifact(
-    status: 'pending' | 'approved' | 'rejected'
-  ): Promise<void> {
+  async function reviewArtifact(status: 'pending' | 'approved' | 'rejected'): Promise<void> {
     if (!job || !artifact) return
     setBusy('review')
     setError('')
@@ -327,8 +327,7 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
       .map((item) => item.id)
     if (!pendingIds.length) return
     const action = status === 'approved' ? '批准' : '拒绝'
-    if (!window.confirm(`确认${action}全部 ${pendingIds.length} 个待审核产物？`))
-      return
+    if (!window.confirm(`确认${action}全部 ${pendingIds.length} 个待审核产物？`)) return
     setBusy('review')
     setError('')
     setMessage('')
@@ -352,7 +351,9 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
         }
       }
       if (result.failed > 0) {
-        setError(`已${action} ${result.processed} 项，${result.failed} 项失败${result.errors.length ? `：${result.errors[0]}` : ''}`)
+        setError(
+          `已${action} ${result.processed} 项，${result.failed} 项失败${result.errors.length ? `：${result.errors[0]}` : ''}`
+        )
       } else {
         setMessage(`已${action} ${result.processed} 项`)
       }
@@ -397,16 +398,24 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
   // 审核列表筛选 + 分页
   const filteredArtifacts = (job?.artifacts ?? []).filter((item) => {
     switch (filterStatus) {
-      case 'pending': return item.status === 'pending'
-      case 'approved': return item.status === 'approved'
-      case 'rejected': return item.status === 'rejected'
-      case 'warnings': return item.warnings.length > 0
-      default: return true
+      case 'pending':
+        return item.status === 'pending'
+      case 'approved':
+        return item.status === 'approved'
+      case 'rejected':
+        return item.status === 'rejected'
+      case 'warnings':
+        return item.warnings.length > 0
+      default:
+        return true
     }
   })
   const totalPages = Math.max(1, Math.ceil(filteredArtifacts.length / PAGE_SIZE))
   const safePage = Math.min(reviewPage, totalPages - 1)
-  const paginatedArtifacts = filteredArtifacts.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE)
+  const paginatedArtifacts = filteredArtifacts.slice(
+    safePage * PAGE_SIZE,
+    (safePage + 1) * PAGE_SIZE
+  )
 
   return (
     <div className="page knowledge-builder-page">
@@ -424,7 +433,9 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
       {error && <ErrorState message={error} onRetry={() => setError('')} />}
       {message && (
         <div className="answer-panel" style={{ marginBottom: 10 }}>
-          <p className="positive" style={{ margin: 0 }}>{message}</p>
+          <p className="positive" style={{ margin: 0 }}>
+            {message}
+          </p>
         </div>
       )}
 
@@ -439,11 +450,7 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
               disabled={busy === 'engine'}
               onClick={() => void installEngine()}
             >
-              {busy === 'engine'
-                ? '正在安装'
-                : engine.available
-                  ? '补装 OCR 组件'
-                  : '安装转换引擎'}
+              {busy === 'engine' ? '正在安装' : engine.available ? '补装 OCR 组件' : '安装转换引擎'}
             </Button>
           )
         }
@@ -458,7 +465,8 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
                   '需要本机已有 Python 3.10 或更高版本，安装内容位于应用数据目录'}
               </small>
               <small>
-                OCR 组件（扫描件识别）：{engine.ocrAvailable ? '已就绪' : '未安装，补装后可自动识别扫描式 PDF'}
+                OCR 组件（扫描件识别）：
+                {engine.ocrAvailable ? '已就绪' : '未安装，补装后可自动识别扫描式 PDF'}
               </small>
             </div>
           </div>
@@ -658,9 +666,7 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
                 {busy === 'start' ? '正在创建…' : mode === 'direct' ? '开始导入' : '开始处理'}
               </Button>
               <div className="builder-start-meta">
-                <strong>
-                  {selected.size > 0 ? `${selected.size} 个文件` : '尚未选择文件'}
-                </strong>
+                <strong>{selected.size > 0 ? `${selected.size} 个文件` : '尚未选择文件'}</strong>
                 <span>
                   {selected.size > 0
                     ? mode === 'direct'
@@ -670,9 +676,7 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
                 </span>
               </div>
             </div>
-            <p className="builder-start-note">
-              原文件保持不变 · 任务可取消 · 单个失败不中断整批
-            </p>
+            <p className="builder-start-note">原文件保持不变 · 任务可取消 · 单个失败不中断整批</p>
           </div>
         </Section>
       )}
@@ -683,7 +687,11 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
           description={job.message}
           actions={
             <div className="button-row">
-              <Button appearance="subtle" icon={<FolderOpenIcon />} onClick={() => void openOutput()}>
+              <Button
+                appearance="subtle"
+                icon={<FolderOpenIcon />}
+                onClick={() => void openOutput()}
+              >
                 任务目录
               </Button>
               {RUNNING_STATES.has(job.status) && (
@@ -771,7 +779,7 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
             <div>
               <span>{job.pendingArtifacts} 待审核</span>
               <span>{job.approvedArtifacts} 已批准</span>
-              <span>{job.artifacts.filter(a => a.status === 'rejected').length} 已拒绝</span>
+              <span>{job.artifacts.filter((a) => a.status === 'rejected').length} 已拒绝</span>
               {job.failedFiles > 0 && <span>{job.failedFiles} 失败</span>}
             </div>
           </div>
@@ -797,13 +805,20 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
                       type="button"
                       className="builder-filter-pill"
                       data-active={filterStatus === f}
-                      onClick={() => { setFilterStatus(f); setReviewPage(0) }}
+                      onClick={() => {
+                        setFilterStatus(f)
+                        setReviewPage(0)
+                      }}
                     >
-                      {f === 'all' ? `全部 ${job.artifacts.length}` :
-                       f === 'pending' ? `待审 ${job.pendingArtifacts}` :
-                       f === 'approved' ? `已批 ${job.approvedArtifacts}` :
-                       f === 'rejected' ? `已拒 ${job.artifacts.filter(a => a.status === 'rejected').length}` :
-                       `有警告 ${job.artifacts.filter(a => a.warnings.length > 0).length}`}
+                      {f === 'all'
+                        ? `全部 ${job.artifacts.length}`
+                        : f === 'pending'
+                          ? `待审 ${job.pendingArtifacts}`
+                          : f === 'approved'
+                            ? `已批 ${job.approvedArtifacts}`
+                            : f === 'rejected'
+                              ? `已拒 ${job.artifacts.filter((a) => a.status === 'rejected').length}`
+                              : `有警告 ${job.artifacts.filter((a) => a.warnings.length > 0).length}`}
                     </button>
                   ))}
                 </div>
@@ -845,9 +860,25 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
                 ))}
                 {totalPages > 1 && (
                   <div className="builder-pagination">
-                    <Button size="small" appearance="subtle" disabled={safePage === 0} onClick={() => setReviewPage(safePage - 1)}>上一页</Button>
-                    <span>{safePage + 1} / {totalPages} · {filteredArtifacts.length} 条</span>
-                    <Button size="small" appearance="subtle" disabled={safePage >= totalPages - 1} onClick={() => setReviewPage(safePage + 1)}>下一页</Button>
+                    <Button
+                      size="small"
+                      appearance="subtle"
+                      disabled={safePage === 0}
+                      onClick={() => setReviewPage(safePage - 1)}
+                    >
+                      上一页
+                    </Button>
+                    <span>
+                      {safePage + 1} / {totalPages} · {filteredArtifacts.length} 条
+                    </span>
+                    <Button
+                      size="small"
+                      appearance="subtle"
+                      disabled={safePage >= totalPages - 1}
+                      onClick={() => setReviewPage(safePage + 1)}
+                    >
+                      下一页
+                    </Button>
                   </div>
                 )}
               </div>
@@ -908,9 +939,7 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
                           </Button>
                         </div>
                       )}
-                      {artifact.status === 'published' && (
-                        <span className="pill">已发布</span>
-                      )}
+                      {artifact.status === 'published' && <span className="pill">已发布</span>}
                     </div>
                     {artifact.warnings.length > 0 && (
                       <div className="builder-warning-list">

@@ -360,7 +360,10 @@ async function initialize(): Promise<void> {
       case 'migration.export':
         return migration!.exportTo(request.params.targetPath)
       case 'migration.import': {
-        const result = migration!.importFrom(request.params.sourcePath, request.params.vaultTargetPath)
+        const result = migration!.importFrom(
+          request.params.sourcePath,
+          request.params.vaultTargetPath
+        )
         // 响应送达渲染进程后自动重启完成换库
         setTimeout(() => {
           app.relaunch()

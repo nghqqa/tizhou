@@ -40,7 +40,13 @@ interface TrainerInitial {
   feedbackMode?: 'immediate' | 'summary'
 }
 
-function Trainer({ review = false, initial }: { review?: boolean; initial?: TrainerInitial }): React.JSX.Element {
+function Trainer({
+  review = false,
+  initial
+}: {
+  review?: boolean
+  initial?: TrainerInitial
+}): React.JSX.Element {
   const refreshDashboard = useAppStore((state) => state.refreshDashboard)
   const ai = useAppStore((state) => state.data!.ai)
   const [categories, setCategories] = useState<Category[]>([])

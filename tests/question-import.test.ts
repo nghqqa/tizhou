@@ -146,13 +146,17 @@ describe('question import parsers', () => {
   })
 
   it('merges solutions into questions and emits vault-compatible markdown', () => {
-    const questions = parseQuestionBook(TIBEN.filter((line) => line !== '参考答案' && line !== '1-2:AB'))
+    const questions = parseQuestionBook(
+      TIBEN.filter((line) => line !== '参考答案' && line !== '1-2:AB')
+    )
     const solutions = new Map(
-      [...parseSolutionBook([
-        '1. (2019年安徽省考 62%)',
-        '【参考答案】A',
-        '【实战解析】完整解析正文。'
-      ])].map(([key, value]) => [key, value])
+      [
+        ...parseSolutionBook([
+          '1. (2019年安徽省考 62%)',
+          '【参考答案】A',
+          '【实战解析】完整解析正文。'
+        ])
+      ].map(([key, value]) => [key, value])
     )
     const merged = mergeDirectQuestions(questions, solutions, new Map(), {
       subject: 'xingce',
@@ -176,7 +180,11 @@ describe('knowledge builder direct mode', () => {
   it('imports a question book and solution file without any model calls', async () => {
     const data = temporaryDirectory('tizhou-kb-direct-data-')
     const source = temporaryDirectory('tizhou-kb-direct-source-')
-    writeFileSync(join(source, '题本.md'), `${TIBEN.filter((line) => line !== '参考答案' && line !== '1-2:AB').join('\n')}\n`, 'utf8')
+    writeFileSync(
+      join(source, '题本.md'),
+      `${TIBEN.filter((line) => line !== '参考答案' && line !== '1-2:AB').join('\n')}\n`,
+      'utf8'
+    )
     writeFileSync(
       join(source, '解析.md'),
       [
@@ -195,28 +203,43 @@ describe('knowledge builder direct mode', () => {
       'utf8'
     )
     const connect = vi.fn((path: string) => ({
-      vault: { id: 'managed', name: 'managed-vault', path, connectedAt: '', lastIndexedAt: '', questionCount: 3, documentCount: 0, warnings: [], isBuiltin: false },
+      vault: {
+        id: 'managed',
+        name: 'managed-vault',
+        path,
+        connectedAt: '',
+        lastIndexedAt: '',
+        questionCount: 3,
+        documentCount: 0,
+        warnings: [],
+        isBuiltin: false
+      },
       added: 3,
       updated: 0,
       removed: 0,
       skipped: 0,
       warnings: []
     }))
-    const service = new KnowledgeBuilderService(data, process.cwd(), {} as AiService, {
-      connect,
-      ensureBuiltinVault: () => ({
-        id: 'builtin',
-        name: '内置示例库',
-        path: 'C:/builtin-vault',
-        connectedAt: '',
-        lastIndexedAt: '',
-        questionCount: 0,
-        documentCount: 0,
-        warnings: [],
-        isBuiltin: true
-      }),
-      questionSignatures: () => new Set<string>()
-    } as unknown as VaultService)
+    const service = new KnowledgeBuilderService(
+      data,
+      process.cwd(),
+      {} as AiService,
+      {
+        connect,
+        ensureBuiltinVault: () => ({
+          id: 'builtin',
+          name: '内置示例库',
+          path: 'C:/builtin-vault',
+          connectedAt: '',
+          lastIndexedAt: '',
+          questionCount: 0,
+          documentCount: 0,
+          warnings: [],
+          isBuiltin: true
+        }),
+        questionSignatures: () => new Set<string>()
+      } as unknown as VaultService
+    )
     vi.spyOn(service, 'engineStatus').mockResolvedValue({
       available: true,
       installing: false,
@@ -274,7 +297,9 @@ describe('knowledge builder direct mode', () => {
     // 撤销导入：文件移除、产物标记拒绝
     const reverted = service.revertImport(job.id)
     expect(reverted.removed).toBe(3)
-    expect(readdirSync(join(managedRoot, '直导题库')).filter((name) => name.endsWith('.md'))).toHaveLength(0)
+    expect(
+      readdirSync(join(managedRoot, '直导题库')).filter((name) => name.endsWith('.md'))
+    ).toHaveLength(0)
   }, 35_000)
 
   it('re-importing the same book dedupes against the active vault (idempotent)', async () => {
@@ -314,7 +339,11 @@ describe('knowledge builder direct mode', () => {
       ].join('\n') + '\n',
       'utf8'
     )
-    const database = new DatabaseService(join(data, 'workbench.sqlite'), data, join(data, 'backups'))
+    const database = new DatabaseService(
+      join(data, 'workbench.sqlite'),
+      data,
+      join(data, 'backups')
+    )
     const vaults = new VaultService(database)
     const service = new KnowledgeBuilderService(data, process.cwd(), {} as AiService, vaults)
     vi.spyOn(service, 'engineStatus').mockResolvedValue({
@@ -401,7 +430,13 @@ describe('knowledge builder direct mode', () => {
         bookLines.push('练习题02套')
         solutionLines.push('练习题02套')
       }
-      bookLines.push(`${(index % 6) + 1}. ${stem}。`, 'A. 选项甲', 'B. 选项乙', 'C. 选项丙', 'D. 选项丁')
+      bookLines.push(
+        `${(index % 6) + 1}. ${stem}。`,
+        'A. 选项甲',
+        'B. 选项乙',
+        'C. 选项丙',
+        'D. 选项丁'
+      )
       solutionLines.push(
         `${(index % 6) + 1}. (2021年广东省考 60%)`,
         `与题干毫无关系的重印文本第${index}号，内容完全不同便于区分。`,
@@ -411,17 +446,34 @@ describe('knowledge builder direct mode', () => {
     })
     writeFileSync(join(source, '题本.md'), `${bookLines.join('\n')}\n`, 'utf8')
     writeFileSync(join(source, '解析.md'), `${solutionLines.join('\n')}\n`, 'utf8')
-    const service = new KnowledgeBuilderService(data, process.cwd(), {} as AiService, {
-      connect: vi.fn(),
-      ensureBuiltinVault: () => ({
-        id: 'builtin', name: '内置示例库', path: 'C:/builtin-vault', connectedAt: '', lastIndexedAt: '',
-        questionCount: 0, documentCount: 0, warnings: [], isBuiltin: true
-      }),
-      questionSignatures: () => new Set<string>()
-    } as unknown as VaultService)
+    const service = new KnowledgeBuilderService(
+      data,
+      process.cwd(),
+      {} as AiService,
+      {
+        connect: vi.fn(),
+        ensureBuiltinVault: () => ({
+          id: 'builtin',
+          name: '内置示例库',
+          path: 'C:/builtin-vault',
+          connectedAt: '',
+          lastIndexedAt: '',
+          questionCount: 0,
+          documentCount: 0,
+          warnings: [],
+          isBuiltin: true
+        }),
+        questionSignatures: () => new Set<string>()
+      } as unknown as VaultService
+    )
     vi.spyOn(service, 'engineStatus').mockResolvedValue({
-      available: true, installing: false, version: 'test', pythonPath: 'test-python',
-      ocrAvailable: false, message: 'ready', supportedExtensions: ['.md']
+      available: true,
+      installing: false,
+      version: 'test',
+      pythonPath: 'test-python',
+      ocrAvailable: false,
+      message: 'ready',
+      supportedExtensions: ['.md']
     })
     const conversionTarget = service as unknown as {
       convert: (python: string, worker: string, source: string, output: string) => Promise<void>
@@ -436,7 +488,11 @@ describe('knowledge builder direct mode', () => {
       sourcePath: source,
       fileIds: scan.files.filter((file) => file.eligible).map((file) => file.id),
       options: {
-        mode: 'direct', quality: 'standard', subject: 'auto', tags: [], instruction: '',
+        mode: 'direct',
+        quality: 'standard',
+        subject: 'auto',
+        tags: [],
+        instruction: '',
         rightsConfirmed: true
       }
     })

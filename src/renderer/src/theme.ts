@@ -45,18 +45,18 @@ export const lightTheme: Theme = {
 export const darkTheme: Theme = {
   ...createDarkTheme(brand),
   // 四层表面层级
-  colorNeutralBackground1: '#151412',   // 应用背景（最暗，侧栏/外框）
-  colorNeutralBackground2: '#1B1917',   // 工作区背景
-  colorNeutralBackground3: '#24211E',   // 普通内容区域
-  colorNeutralBackground4: '#2B2521',   // 浮起/重点区域
+  colorNeutralBackground1: '#151412', // 应用背景（最暗，侧栏/外框）
+  colorNeutralBackground2: '#1B1917', // 工作区背景
+  colorNeutralBackground3: '#24211E', // 普通内容区域
+  colorNeutralBackground4: '#2B2521', // 浮起/重点区域
   colorNeutralBackground5: '#332C27',
   colorNeutralBackground6: '#3C342E',
   // 边框
   colorNeutralStroke1: 'rgba(235, 223, 208, 0.14)',
   colorNeutralStroke2: 'rgba(235, 223, 208, 0.08)',
   // 文字四层
-  colorNeutralForeground1: '#F0EAE1',   // 主标题
-  colorNeutralForeground2: '#D1C8BC',   // 正文
-  colorNeutralForeground3: '#A49A8E',   // 次级
+  colorNeutralForeground1: '#F0EAE1', // 主标题
+  colorNeutralForeground2: '#D1C8BC', // 正文
+  colorNeutralForeground3: '#A49A8E', // 次级
   colorNeutralForegroundDisabled: '#766F67'
 }

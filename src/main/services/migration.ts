@@ -50,9 +50,14 @@ export class MigrationService {
     }
   }
 
-  importFrom(sourcePath: string, vaultTargetPath: string): { restartRequired: true; message: string } {
+  importFrom(
+    sourcePath: string,
+    vaultTargetPath: string
+  ): { restartRequired: true; message: string } {
     const root = resolve(sourcePath)
-    const manifest = JSON.parse(readFileSync(join(root, 'manifest.json'), 'utf8')) as MigrationManifest
+    const manifest = JSON.parse(
+      readFileSync(join(root, 'manifest.json'), 'utf8')
+    ) as MigrationManifest
     const isMigrationPackage =
       manifest?.app === MIGRATION_APP_ID || LEGACY_MIGRATION_APP_IDS.includes(manifest?.app ?? '')
     if (!isMigrationPackage || !Array.isArray(manifest.vaults))

@@ -40,13 +40,17 @@ function formatToday(): string {
   return `${now.getMonth() + 1} 月 ${now.getDate()} 日 · 星期${weeks[now.getDay()]}`
 }
 
-function findWeakest(dashboard: DashboardData): { subject: string; accuracy: number; attempts: number } | undefined {
+function findWeakest(
+  dashboard: DashboardData
+): { subject: string; accuracy: number; attempts: number } | undefined {
   const mastered = dashboard.subjectMastery.filter((item) => item.attempts > 0)
   if (!mastered.length) return undefined
   return mastered.reduce((weakest, item) => (item.accuracy < weakest.accuracy ? item : weakest))
 }
 
-function buildCalendar(dashboard: DashboardData): Array<{ date: string; attempts: number; accuracy: number; isToday: boolean }> {
+function buildCalendar(
+  dashboard: DashboardData
+): Array<{ date: string; attempts: number; accuracy: number; isToday: boolean }> {
   const activityMap = new Map(dashboard.activity.map((item) => [item.date, item]))
   const cells: Array<{ date: string; attempts: number; accuracy: number; isToday: boolean }> = []
   const today = new Date()
@@ -55,7 +59,12 @@ function buildCalendar(dashboard: DashboardData): Array<{ date: string; attempts
     date.setDate(today.getDate() - offset)
     const dateStr = date.toISOString().slice(0, 10)
     const activity = activityMap.get(dateStr)
-    cells.push({ date: dateStr, attempts: activity?.attempts ?? 0, accuracy: activity?.accuracy ?? 0, isToday: offset === 0 })
+    cells.push({
+      date: dateStr,
+      attempts: activity?.attempts ?? 0,
+      accuracy: activity?.accuracy ?? 0,
+      isToday: offset === 0
+    })
   }
   return cells
 }
@@ -64,10 +73,37 @@ function buildCalendar(dashboard: DashboardData): Array<{ date: string; attempts
 function StatStrip({ dashboard }: { dashboard: DashboardData }): React.JSX.Element {
   const targetProgress = dashboard.dailyTarget ? dashboard.todayAttempts / dashboard.dailyTarget : 0
   const items = [
-    { label: '今日完成', value: dashboard.todayAttempts, suffix: ` / ${dashboard.dailyTarget} 题`, progress: Math.min(1, targetProgress), detail: dashboard.todayAttempts >= dashboard.dailyTarget ? '已达成' : `还差 ${Math.max(0, dashboard.dailyTarget - dashboard.todayAttempts)} 题` },
-    { label: '累计正确率', value: dashboard.accuracy, suffix: '%', progress: dashboard.accuracy / 100, detail: dashboard.todayAttempts > 0 ? '全部有效作答' : '暂无数据' },
-    { label: '到期复习', value: dashboard.dueReviews, suffix: ' 题', progress: dashboard.dueReviews > 0 ? 1 : 0, detail: dashboard.dueReviews > 0 ? '待处理' : '暂无到期' },
-    { label: '今日投入', value: dashboard.todayMinutes, suffix: ' 分钟', progress: Math.min(1, dashboard.todayMinutes / 60), detail: `连续 ${dashboard.studyStreak} 天` }
+    {
+      label: '今日完成',
+      value: dashboard.todayAttempts,
+      suffix: ` / ${dashboard.dailyTarget} 题`,
+      progress: Math.min(1, targetProgress),
+      detail:
+        dashboard.todayAttempts >= dashboard.dailyTarget
+          ? '已达成'
+          : `还差 ${Math.max(0, dashboard.dailyTarget - dashboard.todayAttempts)} 题`
+    },
+    {
+      label: '累计正确率',
+      value: dashboard.accuracy,
+      suffix: '%',
+      progress: dashboard.accuracy / 100,
+      detail: dashboard.todayAttempts > 0 ? '全部有效作答' : '暂无数据'
+    },
+    {
+      label: '到期复习',
+      value: dashboard.dueReviews,
+      suffix: ' 题',
+      progress: dashboard.dueReviews > 0 ? 1 : 0,
+      detail: dashboard.dueReviews > 0 ? '待处理' : '暂无到期'
+    },
+    {
+      label: '今日投入',
+      value: dashboard.todayMinutes,
+      suffix: ' 分钟',
+      progress: Math.min(1, dashboard.todayMinutes / 60),
+      detail: `连续 ${dashboard.studyStreak} 天`
+    }
   ]
   return (
     <div className="stat-strip">
@@ -105,7 +141,11 @@ function TrainingRhythm({ dashboard }: { dashboard: DashboardData }): React.JSX.
           const intensity = cell.attempts > 0 ? Math.max(0.3, cell.attempts / maxAttempts) : 0
           const cls = [
             'calendar-cell',
-            cell.isToday ? 'calendar-cell-today' : cell.attempts > 0 ? 'calendar-cell-active' : 'calendar-cell-empty'
+            cell.isToday
+              ? 'calendar-cell-today'
+              : cell.attempts > 0
+                ? 'calendar-cell-active'
+                : 'calendar-cell-empty'
           ].join(' ')
           return (
             <div
@@ -165,7 +205,14 @@ function SubjectMastery({ dashboard }: { dashboard: DashboardData }): React.JSX.
     )
   }
   return (
-    <Section title="科目掌握" description={weakest ? `「${SUBJECT_LABELS[weakest.subject] ?? weakest.subject}」掌握度最低，建议优先补强。` : undefined}>
+    <Section
+      title="科目掌握"
+      description={
+        weakest
+          ? `「${SUBJECT_LABELS[weakest.subject] ?? weakest.subject}」掌握度最低，建议优先补强。`
+          : undefined
+      }
+    >
       <div className="mastery-list">
         {sorted.map((item) => {
           const label = SUBJECT_LABELS[item.subject] ?? item.subject
@@ -202,7 +249,8 @@ function SubjectMastery({ dashboard }: { dashboard: DashboardData }): React.JSX.
       </div>
       <div className="mastery-actions">
         <button type="button" className="mastery-action" onClick={() => navigate('/review')}>
-          {dashboard.dueReviews ? `${dashboard.dueReviews} 题待复习` : '错题复习'} <ArrowRightIcon size={12} />
+          {dashboard.dueReviews ? `${dashboard.dueReviews} 题待复习` : '错题复习'}{' '}
+          <ArrowRightIcon size={12} />
         </button>
         <button type="button" className="mastery-action" onClick={() => navigate('/diagnosis')}>
           能力诊断 <ArrowRightIcon size={12} />
@@ -219,7 +267,8 @@ export function DashboardPage(): React.JSX.Element {
   const refresh = useAppStore((state) => state.refreshDashboard)
   const dashboard = data.dashboard
   const weakest = findWeakest(dashboard)
-  const hasTraining = dashboard.todayAttempts > 0 || dashboard.subjectMastery.some((s) => s.attempts > 0)
+  const hasTraining =
+    dashboard.todayAttempts > 0 || dashboard.subjectMastery.some((s) => s.attempts > 0)
   const remaining = Math.max(0, dashboard.dailyTarget - dashboard.todayAttempts)
   const suggestCount = weakest ? Math.min(12, remaining || 10) : 10
   const estimatedMin = Math.max(5, Math.round(suggestCount * 0.8))
@@ -245,7 +294,9 @@ export function DashboardPage(): React.JSX.Element {
             onClick={() =>
               navigate(
                 `/practice?mode=adaptive&count=${remaining || 10}${
-                  weakest ? `&subject=${weakest.subject}&recommended=${SUBJECT_LABELS[weakest.subject] ?? weakest.subject}` : ''
+                  weakest
+                    ? `&subject=${weakest.subject}&recommended=${SUBJECT_LABELS[weakest.subject] ?? weakest.subject}`
+                    : ''
                 }`
               )
             }
@@ -288,12 +339,16 @@ export function DashboardPage(): React.JSX.Element {
             onClick={() =>
               navigate(
                 `/practice?mode=adaptive&count=${suggestCount}${
-                  weakest ? `&subject=${weakest.subject}&recommended=${SUBJECT_LABELS[weakest.subject] ?? weakest.subject}` : '&recommended=首组训练'
+                  weakest
+                    ? `&subject=${weakest.subject}&recommended=${SUBJECT_LABELS[weakest.subject] ?? weakest.subject}`
+                    : '&recommended=首组训练'
                 }`
               )
             }
           >
-            {hasTraining ? `补 ${SUBJECT_LABELS[weakest?.subject ?? 'xingce'] ?? '薄弱科目'}` : '开始第一组训练'}
+            {hasTraining
+              ? `补 ${SUBJECT_LABELS[weakest?.subject ?? 'xingce'] ?? '薄弱科目'}`
+              : '开始第一组训练'}
           </Button>
           {dashboard.dueReviews > 0 && (
             <Button
@@ -332,10 +387,18 @@ export function DashboardPage(): React.JSX.Element {
                 <ExamIcon size={20} className="accent" />
               </div>
               <ProgressBar
-                value={Object.keys(dashboard.activeExam.answers).length / dashboard.activeExam.questionIds.length}
+                value={
+                  Object.keys(dashboard.activeExam.answers).length /
+                  dashboard.activeExam.questionIds.length
+                }
                 style={{ marginTop: 10 }}
               />
-              <button type="button" className="mastery-action" style={{ marginTop: 10 }} onClick={() => navigate('/exam/run')}>
+              <button
+                type="button"
+                className="mastery-action"
+                style={{ marginTop: 10 }}
+                onClick={() => navigate('/exam/run')}
+              >
                 继续模考 <ArrowRightIcon size={12} />
               </button>
             </div>
@@ -349,17 +412,29 @@ export function DashboardPage(): React.JSX.Element {
                 <BrainIcon size={20} className="accent" />
               </div>
               <ProgressBar
-                value={dashboard.activePlan.items.filter((i) => i.done).length / dashboard.activePlan.items.length}
+                value={
+                  dashboard.activePlan.items.filter((i) => i.done).length /
+                  dashboard.activePlan.items.length
+                }
                 style={{ marginTop: 10 }}
               />
-              <button type="button" className="mastery-action" style={{ marginTop: 10 }} onClick={() => navigate('/diagnosis')}>
+              <button
+                type="button"
+                className="mastery-action"
+                style={{ marginTop: 10 }}
+                onClick={() => navigate('/diagnosis')}
+              >
                 查看计划 <ArrowRightIcon size={12} />
               </button>
             </div>
           ) : (
             <div className="empty-compact">
               <span>今天还没有训练记录</span>
-              <button type="button" className="mastery-action" onClick={() => navigate('/practice')}>
+              <button
+                type="button"
+                className="mastery-action"
+                onClick={() => navigate('/practice')}
+              >
                 开始训练 <ArrowRightIcon size={12} />
               </button>
             </div>
@@ -390,7 +465,11 @@ export function DashboardPage(): React.JSX.Element {
           ) : (
             <div className="empty-compact">
               <span>完成一道题后，这里会保留你的错题和笔记</span>
-              <button type="button" className="mastery-action" onClick={() => navigate('/practice')}>
+              <button
+                type="button"
+                className="mastery-action"
+                onClick={() => navigate('/practice')}
+              >
                 开始 <ArrowRightIcon size={12} />
               </button>
             </div>

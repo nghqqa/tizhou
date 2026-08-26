@@ -330,16 +330,16 @@ export function EnvironmentPage(): React.JSX.Element {
       {diagnostic && (
         <Section title="诊断结果" description={formatFullDate(diagnostic.generatedAt)}>
           <div className="section-scroll">
-          {diagnostic.checks.map((check) => (
-            <div className="check-row" key={check.id}>
-              <StatusDot status={check.status} />
-              <div>
-                <strong>{check.label}</strong>
-                <span>{check.detail}</span>
+            {diagnostic.checks.map((check) => (
+              <div className="check-row" key={check.id}>
+                <StatusDot status={check.status} />
+                <div>
+                  <strong>{check.label}</strong>
+                  <span>{check.detail}</span>
+                </div>
+                {check.action && <span className="pill">{check.action}</span>}
               </div>
-              {check.action && <span className="pill">{check.action}</span>}
-            </div>
-          ))}
+            ))}
           </div>
         </Section>
       )}
@@ -692,10 +692,7 @@ export function SettingsPage(): React.JSX.Element {
                 <p className="warning" style={{ margin: 0, flex: 1 }}>
                   ⚠ {data!.vault.warnings.length} 条索引警告（重复 ID 等不影响使用，重新索引后刷新）
                 </p>
-                <Button
-                  size="small"
-                  onClick={() => setShowWarnings(!showWarnings)}
-                >
+                <Button size="small" onClick={() => setShowWarnings(!showWarnings)}>
                   {showWarnings ? '收起' : '查看'}
                 </Button>
                 <Button
@@ -792,87 +789,88 @@ export function SettingsPage(): React.JSX.Element {
         </Section>
       </div>
       <div className="grid two">
-      <Section
-        title="数据备份"
-        description="恢复前会自动创建 pre-restore 快照，避免误操作造成不可逆丢失。"
-        actions={
-          <Button icon={<DatabaseIcon />} disabled={busy} onClick={() => void createBackup()}>
-            立即备份
-          </Button>
-        }
-      >
-        {!backups ? (
-          <Spinner label="正在读取备份" />
-        ) : backups.length ? (
-          <div className="table-scroll">
-          <table className="report-table">
-            <thead>
-              <tr>
-                <th>创建时间</th>
-                <th>类型</th>
-                <th>大小</th>
-                <th>操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {backups.map((backup) => (
-                <tr key={backup.id}>
-                  <td>{formatFullDate(backup.createdAt)}</td>
-                  <td>
-                    {backup.reason === 'manual'
-                      ? '手动'
-                      : backup.reason === 'automatic'
-                        ? '自动'
-                        : '恢复前快照'}
-                  </td>
-                  <td>{formatBytes(backup.size)}</td>
-                  <td>
-                    <Button
-                      size="small"
-                      appearance="subtle"
-                      disabled={busy}
-                      onClick={() => void restore(backup.path)}
-                    >
-                      恢复
-                    </Button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <Section
+          title="数据备份"
+          description="恢复前会自动创建 pre-restore 快照，避免误操作造成不可逆丢失。"
+          actions={
+            <Button icon={<DatabaseIcon />} disabled={busy} onClick={() => void createBackup()}>
+              立即备份
+            </Button>
+          }
+        >
+          {!backups ? (
+            <Spinner label="正在读取备份" />
+          ) : backups.length ? (
+            <div className="table-scroll">
+              <table className="report-table">
+                <thead>
+                  <tr>
+                    <th>创建时间</th>
+                    <th>类型</th>
+                    <th>大小</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {backups.map((backup) => (
+                    <tr key={backup.id}>
+                      <td>{formatFullDate(backup.createdAt)}</td>
+                      <td>
+                        {backup.reason === 'manual'
+                          ? '手动'
+                          : backup.reason === 'automatic'
+                            ? '自动'
+                            : '恢复前快照'}
+                      </td>
+                      <td>{formatBytes(backup.size)}</td>
+                      <td>
+                        <Button
+                          size="small"
+                          appearance="subtle"
+                          disabled={busy}
+                          onClick={() => void restore(backup.path)}
+                        >
+                          恢复
+                        </Button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <EmptyState
+              title="尚无备份"
+              description="创建第一份本地数据库快照，后续可从这里恢复。"
+              actionLabel="立即备份"
+              onAction={() => void createBackup()}
+            />
+          )}
+        </Section>
+        <Section
+          title="跨机迁移"
+          description="把学习记录与全部用户知识库打包到另一台电脑。API Key 需在新机器重新填写。"
+        >
+          <div className="button-row">
+            <Button
+              icon={<FolderOpenIcon />}
+              disabled={busy}
+              onClick={() => void exportMigration()}
+            >
+              导出迁移包
+            </Button>
+            <Button icon={<DatabaseIcon />} disabled={busy} onClick={() => void importMigration()}>
+              导入迁移包
+            </Button>
           </div>
-        ) : (
-          <EmptyState
-            title="尚无备份"
-            description="创建第一份本地数据库快照，后续可从这里恢复。"
-            actionLabel="立即备份"
-            onAction={() => void createBackup()}
-          />
-        )}
-      </Section>
-      <Section
-        title="跨机迁移"
-        description="把学习记录与全部用户知识库打包到另一台电脑。API Key 需在新机器重新填写。"
-      >
-        <div className="button-row">
-          <Button icon={<FolderOpenIcon />} disabled={busy} onClick={() => void exportMigration()}>
-            导出迁移包
-          </Button>
-          <Button icon={<DatabaseIcon />} disabled={busy} onClick={() => void importMigration()}>
-            导入迁移包
-          </Button>
-        </div>
-      </Section>
+        </Section>
       </div>
       <div className="grid two">
-      <Section
-        title="Markdown 格式提示"
-        description="frontmatter 字段允许中英文值，路径变化不会改变基于内容生成的稳定题号。"
-      >
-        <pre
-          className="markdown"
-          style={{ whiteSpace: 'pre-wrap' }}
-        >{`---
+        <Section
+          title="Markdown 格式提示"
+          description="frontmatter 字段允许中英文值，路径变化不会改变基于内容生成的稳定题号。"
+        >
+          <pre className="markdown" style={{ whiteSpace: 'pre-wrap' }}>{`---
 id: my-question-001
 kind: question
 subject: xingce
@@ -892,15 +890,15 @@ B. 选项二
 ## 解析
 
 解析内容`}</pre>
-      </Section>
-      <Section
-        title="危险操作"
-        description="只清空学习证据，不删除知识库目录、模型凭据和应用设置。操作前自动创建本地快照。"
-      >
-        <Button appearance="secondary" disabled={busy} onClick={() => void resetLearningData()}>
-          清空学习数据
-        </Button>
-      </Section>
+        </Section>
+        <Section
+          title="危险操作"
+          description="只清空学习证据，不删除知识库目录、模型凭据和应用设置。操作前自动创建本地快照。"
+        >
+          <Button appearance="secondary" disabled={busy} onClick={() => void resetLearningData()}>
+            清空学习数据
+          </Button>
+        </Section>
       </div>
     </div>
   )

@@ -40,7 +40,7 @@
 - **Select 边框间距**：16px column-gap，边框不贴合
 - **三字段垂直对齐**：align-items:start + hint min-height 统一
 - **响应式**：900px 双列 → 640px 单列
-- **内联样式清理**：全部提取为 CSS 类(builder-start-*/builder-filter-*/builder-pagination)
+- **内联样式清理**：全部提取为 CSS 类(builder-start-_/builder-filter-_/builder-pagination)
 
 ## 0.8.0 - 2026-08-25
 

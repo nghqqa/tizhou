@@ -160,7 +160,8 @@ function parseSolutionBook(lines) {
         start(setNo, num)
         expected = num + 1
         const origin = match[2].match(ORIGIN_MARK)
-        if (origin) current.origin = { year: Number(origin[1]), region: origin[2], rate: Number(origin[3]) }
+        if (origin)
+          current.origin = { year: Number(origin[1]), region: origin[2], rate: Number(origin[3]) }
         continue
       }
       if (num === 1 && !current) {
@@ -168,7 +169,8 @@ function parseSolutionBook(lines) {
         start(setNo, 1)
         expected = 2
         const origin = match[2].match(ORIGIN_MARK)
-        if (origin) current.origin = { year: Number(origin[1]), region: origin[2], rate: Number(origin[3]) }
+        if (origin)
+          current.origin = { year: Number(origin[1]), region: origin[2], rate: Number(origin[3]) }
         continue
       }
       if (num === 1 && current && current.num >= 5) {
@@ -176,7 +178,8 @@ function parseSolutionBook(lines) {
         start(setNo, 1)
         expected = 2
         const origin = match[2].match(ORIGIN_MARK)
-        if (origin) current.origin = { year: Number(origin[1]), region: origin[2], rate: Number(origin[3]) }
+        if (origin)
+          current.origin = { year: Number(origin[1]), region: origin[2], rate: Number(origin[3]) }
         continue
       }
     }
@@ -327,7 +330,9 @@ function verify(outDir) {
     if (!/"?answer"?\s*:\s*\[/.test(fm) && !/^answer:/m.test(fm)) missingAnswer += 1
     if (!/^explanation:/m.test(fm)) missingExplanation += 1
   }
-  console.log(`共 ${files.length} 个题目文件；缺答案 ${missingAnswer}；缺解析 ${missingExplanation}`)
+  console.log(
+    `共 ${files.length} 个题目文件；缺答案 ${missingAnswer}；缺解析 ${missingExplanation}`
+  )
 }
 
 const CATEGORIES = {
@@ -359,7 +364,8 @@ const SUB_CATEGORIES = {
   dili: '地理常识'
 }
 
-const ASSET_IMG = /<img[^>]*src=["']?openexam-asset:\/\/question-assets\/([0-9a-f]{40}\.[a-z0-9]+)["']?[^>]*>/gi
+const ASSET_IMG =
+  /<img[^>]*src=["']?openexam-asset:\/\/question-assets\/([0-9a-f]{40}\.[a-z0-9]+)["']?[^>]*>/gi
 
 // HTML → Markdown：题图引用改写为知识库相对路径（![](assets/xxx.webp)），其余标签剥离
 function htmlToMarkdown(html, assetSink) {
@@ -436,7 +442,8 @@ function buildOpenExam(dbPath, outDir, assetsSourceDir) {
       .toUpperCase()
       .replace(/[^A-D]/g, '')
       .split('')
-    const explanation = htmlToMarkdown(row.analysis ?? '', assetSink) || htmlToMarkdown(row.analysis_html, assetSink)
+    const explanation =
+      htmlToMarkdown(row.analysis ?? '', assetSink) || htmlToMarkdown(row.analysis_html, assetSink)
     if (!stem || stem.length < 8 || options.length < 2 || answer.length === 0) {
       skippedIncomplete += 1
       entry.skipped += 1
@@ -566,7 +573,8 @@ function buildShenlun(ocrFile, bookTitle, outDir) {
 function reflowChinese(lines) {
   const paragraphs = []
   let current = ''
-  const STRUCTURAL = /^(资料|材料|【|第[一二三四五六七八九十百0-9]+|[一二三四五六七八九十]+、|\d{1,2}[.、．])/
+  const STRUCTURAL =
+    /^(资料|材料|【|第[一二三四五六七八九十百0-9]+|[一二三四五六七八九十]+、|\d{1,2}[.、．])/
   for (const line of lines) {
     const text = line.trim()
     if (!text) continue
@@ -618,7 +626,7 @@ function buildShenlunEssay(ocrFile, bookTitle, outDir) {
       }
     }
     let questionStart = -1
-    for (let i = (requireIndex >= 0 ? requireIndex : body.length - 1); i >= 0; i -= 1) {
+    for (let i = requireIndex >= 0 ? requireIndex : body.length - 1; i >= 0; i -= 1) {
       if (QUESTION_START.test(body[i])) {
         questionStart = i
         break
@@ -660,7 +668,9 @@ function buildShenlunEssay(ocrFile, bookTitle, outDir) {
     writeFileSync(join(outDir, `${id}.md`), questionMarkdown(question), 'utf8')
     written += 1
   })
-  console.log(`${bookTitle} 作答题: ${blocks.length} 块 → ${written} 题（${skipped} 块未识别出题目）`)
+  console.log(
+    `${bookTitle} 作答题: ${blocks.length} 块 → ${written} 题（${skipped} 块未识别出题目）`
+  )
 }
 
 // 跨库去重：从 secondary 目录删除与 primary 重复的题目文件（保留 primary 版本）
@@ -707,12 +717,17 @@ if (command === 'build' && argv[3] === 'pianduan600') {
     const missing = Array.from({ length: Math.max(...nums) }, (_, index) => index + 1).filter(
       (num) => !nums.includes(num)
     )
-    console.log(`  第${set}套: ${nums.length} 题${missing.length ? `，缺题号 ${missing.join(',')}` : ''}`)
+    console.log(
+      `  第${set}套: ${nums.length} 题${missing.length ? `，缺题号 ${missing.join(',')}` : ''}`
+    )
   }
   const first = questions[0]
   const last = questions[questions.length - 1]
   if (first) console.log(`\n首题预览: ${first.stem.slice(0, 60)}... 选项${first.options.length}个`)
-  if (last) console.log(`末题预览: (${last.set}-${last.num}) ${last.stem.slice(0, 60)}... 选项${last.options.length}个`)
+  if (last)
+    console.log(
+      `末题预览: (${last.set}-${last.num}) ${last.stem.slice(0, 60)}... 选项${last.options.length}个`
+    )
 } else if (command === 'debug-solutions') {
   const solutions = parseSolutionBook(readLines(argv[3]))
   const bySet = new Map()

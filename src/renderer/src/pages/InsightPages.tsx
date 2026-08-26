@@ -1,6 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Button, Field, Input, Select, Spinner } from '@fluentui/react-components'
-import { ArrowRightIcon, CheckIcon, ClipboardTextIcon, LightningIcon, TargetIcon } from '@phosphor-icons/react'
+import {
+  ArrowRightIcon,
+  CheckIcon,
+  ClipboardTextIcon,
+  LightningIcon,
+  TargetIcon
+} from '@phosphor-icons/react'
 import { useNavigate } from 'react-router-dom'
 import {
   Bar,
@@ -545,7 +551,11 @@ export function DiagnosisPage(): React.JSX.Element {
                         )}
                         {!activePlan && (
                           <span className="pill">
-                            {item.type === 'read_knowledge' ? <ClipboardTextIcon /> : <TargetIcon />}{' '}
+                            {item.type === 'read_knowledge' ? (
+                              <ClipboardTextIcon />
+                            ) : (
+                              <TargetIcon />
+                            )}{' '}
                             {item.target}
                           </span>
                         )}

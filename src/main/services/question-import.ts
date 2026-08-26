@@ -130,7 +130,8 @@ export function parseQuestionBook(lines: string[]): ParsedQuestion[] {
       const option = line.match(OPTION_NO)
       if (option && option[1] === nextOption) {
         current.options.push({ key: option[1] ?? '', text: option[2] ?? '' })
-        nextOption = nextOption === 'A' ? 'B' : nextOption === 'B' ? 'C' : nextOption === 'C' ? 'D' : null
+        nextOption =
+          nextOption === 'A' ? 'B' : nextOption === 'B' ? 'C' : nextOption === 'C' ? 'D' : null
         continue
       }
     }
@@ -372,7 +373,9 @@ function yamlQuote(value: string): string {
 
 // 去重签名：题干+材料全量归一化 + 首选项前缀，跨来源按精确匹配（OCR 与网络文本的标点差异不保证命中）
 export function directSignature(stem: string, material: string, firstOption: string): string {
-  return `${String(stem ?? '').replace(/\s+/g, '')}|${String(material ?? '').replace(/\s+/g, '')}|${String(firstOption ?? '')
+  return `${String(stem ?? '').replace(/\s+/g, '')}|${String(material ?? '').replace(/\s+/g, '')}|${String(
+    firstOption ?? ''
+  )
     .replace(/\s+/g, '')
     .slice(0, 50)}`
 }

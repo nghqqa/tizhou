@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Button,
   Dialog,
@@ -214,7 +214,10 @@ export function ExamHomePage(): React.JSX.Element {
         >
           <div className="toolbar" style={{ marginBottom: 0 }}>
             <Field label="选择真题卷" className="grow">
-              <Select value={paperChoice} onChange={(_, dataValue) => setPaperChoice(dataValue.value)}>
+              <Select
+                value={paperChoice}
+                onChange={(_, dataValue) => setPaperChoice(dataValue.value)}
+              >
                 <option value="">选择试卷…</option>
                 {papers.map((item) => (
                   <option key={item.paper} value={item.paper}>
@@ -297,6 +300,10 @@ export function ExamRunPage(): React.JSX.Element {
   const [error, setError] = useState('')
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [finishing, setFinishing] = useState(false)
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
+  const [essayText, setEssayText] = useState('')
+  const essayTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const essaySeqRef = useRef(0)
 
   useEffect(() => {
     void invoke<ExamSession | undefined>({ method: 'exam.active' })
@@ -356,6 +363,26 @@ export function ExamRunPage(): React.JSX.Element {
   }
   async function finish(): Promise<void> {
     if (!exam) return
+    // 交卷前强制保存未 flush 的主观题草稿
+    if (essayTimerRef.current) {
+      clearTimeout(essayTimerRef.current)
+      essayTimerRef.current = undefined
+    }
+    if (essayText.trim() && current) {
+      const seq = ++essaySeqRef.current
+      try {
+        await invoke({
+          method: 'exam.save',
+          params: {
+            examId: exam.id,
+            answer: { questionId: current.id, answer: [essayText], durationSeconds: 0 }
+          }
+        })
+        void seq
+      } catch {
+        // 交卷优先，保存失败不阻断
+      }
+    }
     setFinishing(true)
     setError('')
     try {
@@ -369,6 +396,54 @@ export function ExamRunPage(): React.JSX.Element {
       setConfirmOpen(false)
     }
   }
+
+  /** 主观题 debounce 保存：600ms 无输入后触发，防止每次按键都写数据库 */
+  function scheduleEssaySave(text: string): void {
+    setEssayText(text)
+    setSaveStatus('idle')
+    if (essayTimerRef.current) clearTimeout(essayTimerRef.current)
+    essayTimerRef.current = setTimeout(() => void flushEssaySave(text), 600)
+  }
+
+  async function flushEssaySave(text: string): Promise<void> {
+    if (!exam || !current || !text.trim()) return
+    const seq = ++essaySeqRef.current
+    setSaveStatus('saving')
+    try {
+      const saved = await invoke<ExamSession>({
+        method: 'exam.save',
+        params: {
+          examId: exam.id,
+          answer: { questionId: current.id, answer: [text], durationSeconds: 0 }
+        }
+      })
+      if (seq === essaySeqRef.current) {
+        setExam(saved)
+        setSaveStatus('saved')
+      }
+    } catch {
+      if (seq === essaySeqRef.current) setSaveStatus('error')
+    }
+  }
+
+  // 切题时 flush 未保存的主观题
+  useEffect(() => {
+    return () => {
+      if (essayTimerRef.current) {
+        clearTimeout(essayTimerRef.current)
+        if (essayText.trim()) void flushEssaySave(essayText)
+      }
+    }
+  }, [index])
+
+  // 加载当前题的已有主观题答案
+  useEffect(() => {
+    if (current?.type === 'essay') {
+      setEssayText(currentAnswer[0] ?? '')
+    } else {
+      setEssayText('')
+    }
+  }, [current?.id])
   if (error && !exam)
     return (
       <div className="page">
@@ -434,23 +509,30 @@ export function ExamRunPage(): React.JSX.Element {
             sourceFilePath={current.filePath}
           />
           {current.type === 'essay' ? (
-            <textarea
-              className="essay-editor"
-              value={currentAnswer[0] ?? ''}
-              onChange={(event) =>
-                void invoke<ExamSession>({
-                  method: 'exam.save',
-                  params: {
-                    examId: exam.id,
-                    answer: {
-                      questionId: current.id,
-                      answer: [event.target.value],
-                      durationSeconds: 0
-                    }
-                  }
-                }).then(setExam)
-              }
-            />
+            <div>
+              <textarea
+                className="essay-editor"
+                value={essayText}
+                onChange={(event) => scheduleEssaySave(event.target.value)}
+              />
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 6 }}>
+                {saveStatus === 'saving' && (
+                  <span className="muted" style={{ fontSize: 11 }}>
+                    正在保存…
+                  </span>
+                )}
+                {saveStatus === 'saved' && (
+                  <span className="positive" style={{ fontSize: 11 }}>
+                    ✓ 已保存
+                  </span>
+                )}
+                {saveStatus === 'error' && (
+                  <span className="negative" style={{ fontSize: 11 }}>
+                    保存失败，切题时将重试
+                  </span>
+                )}
+              </div>
+            </div>
           ) : (
             <div className="options">
               {current.options.map((option) => (

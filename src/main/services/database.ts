@@ -405,9 +405,7 @@ export class DatabaseService {
   }
 
   clearActiveVaultWarnings(): void {
-    this.db
-      .prepare("UPDATE vault_registry SET warnings_json='[]' WHERE active=1")
-      .run()
+    this.db.prepare("UPDATE vault_registry SET warnings_json='[]' WHERE active=1").run()
   }
 
   private mapVault(row: Row): VaultInfo {
@@ -650,9 +648,10 @@ export class DatabaseService {
       const refs = parseJson(row.papers_json, []) as Array<{ paper: string }>
       for (const ref of refs) {
         if (!ref?.paper) continue
-        const entry =
-          papers.get(ref.paper) ??
-          { count: 0, year: row.year === null ? undefined : numberValue(row.year) }
+        const entry = papers.get(ref.paper) ?? {
+          count: 0,
+          year: row.year === null ? undefined : numberValue(row.year)
+        }
         entry.count += 1
         papers.set(ref.paper, entry)
       }

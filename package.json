@@ -1,8 +1,9 @@
 {
   "name": "tizhou",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "private": true,
   "license": "MIT",
+  "author": "nghqqa",
   "description": "题舟，题海行舟 · 本地优先的考试学习工作台",
   "repository": {
     "type": "git",
