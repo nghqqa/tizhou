@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Button, Field, Input, Select, Spinner } from '@fluentui/react-components'
-import { CheckIcon, ClipboardTextIcon, LightningIcon, TargetIcon } from '@phosphor-icons/react'
+import { ArrowRightIcon, CheckIcon, ClipboardTextIcon, LightningIcon, TargetIcon } from '@phosphor-icons/react'
+import { useNavigate } from 'react-router-dom'
 import {
   Bar,
   CartesianGrid,
@@ -11,12 +12,14 @@ import {
   XAxis,
   YAxis
 } from 'recharts'
-import type {
-  AiAskResult,
-  DiagnosisResult,
-  LearningPlan,
-  LearningPlanItem,
-  ReportData
+import {
+  planItemActionLabel,
+  planItemRoute,
+  type AiAskResult,
+  type DiagnosisResult,
+  type LearningPlan,
+  type LearningPlanItem,
+  type ReportData
 } from '@shared/contracts'
 import { FEATURE_PROMPTS, taskDataEnvelope } from '@shared/prompts'
 import { invoke } from '../api'
@@ -198,6 +201,7 @@ export function ReportsPage(): React.JSX.Element {
 }
 
 export function DiagnosisPage(): React.JSX.Element {
+  const navigate = useNavigate()
   const refreshDashboard = useAppStore((state) => state.refreshDashboard)
   const ai = useAppStore((state) => state.data!.ai)
   const [diagnosis, setDiagnosis] = useState<DiagnosisResult>()
@@ -518,22 +522,34 @@ export function DiagnosisPage(): React.JSX.Element {
                           目标 {item.target} {item.type === 'read_knowledge' ? '分钟' : '项'}
                         </small>
                       </div>
-                      {activePlan ? (
-                        <Button
-                          size="small"
-                          appearance={item.done ? 'subtle' : 'secondary'}
-                          icon={item.done ? <CheckIcon /> : <TargetIcon />}
-                          disabled={item.done}
-                          onClick={() => void completeItem(item)}
-                        >
-                          {item.done ? '已完成' : '标记完成'}
-                        </Button>
-                      ) : (
-                        <span className="pill">
-                          {item.type === 'read_knowledge' ? <ClipboardTextIcon /> : <TargetIcon />}{' '}
-                          {item.target}
-                        </span>
-                      )}
+                      <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                        {!item.done && (
+                          <button
+                            type="button"
+                            className="mastery-action"
+                            onClick={() => navigate(planItemRoute(item))}
+                          >
+                            {planItemActionLabel(item)} <ArrowRightIcon size={12} />
+                          </button>
+                        )}
+                        {activePlan && (
+                          <Button
+                            size="small"
+                            appearance={item.done ? 'subtle' : 'secondary'}
+                            icon={item.done ? <CheckIcon /> : <TargetIcon />}
+                            disabled={item.done}
+                            onClick={() => void completeItem(item)}
+                          >
+                            {item.done ? '已完成' : '完成'}
+                          </Button>
+                        )}
+                        {!activePlan && (
+                          <span className="pill">
+                            {item.type === 'read_knowledge' ? <ClipboardTextIcon /> : <TargetIcon />}{' '}
+                            {item.target}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   ))}
                 </div>

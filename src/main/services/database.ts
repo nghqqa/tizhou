@@ -1139,6 +1139,10 @@ export class DatabaseService {
     return this.getExam(examId)!
   }
 
+  getExamById(id: string): ExamSession | undefined {
+    return this.getExam(id)
+  }
+
   private getExam(id: string): ExamSession | undefined {
     const row = this.db.prepare('SELECT * FROM exam_sessions WHERE id = ?').get(id) as
       Row | undefined

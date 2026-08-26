@@ -50,6 +50,9 @@ const ExamHomePage = lazy(() =>
 const ExamRunPage = lazy(() =>
   import('./pages/ExamPages').then((module) => ({ default: module.ExamRunPage }))
 )
+const ExamResultPage = lazy(() =>
+  import('./pages/ExamResultPage').then((module) => ({ default: module.ExamResultPage }))
+)
 const KnowledgePage = lazy(() =>
   import('./pages/KnowledgePages').then((module) => ({ default: module.KnowledgePage }))
 )
@@ -263,6 +266,7 @@ function AppShell(): React.JSX.Element {
             <Route path="/review" element={<ReviewPage />} />
             <Route path="/exam" element={<ExamHomePage />} />
             <Route path="/exam/run" element={<ExamRunPage />} />
+            <Route path="/exam/result/:id" element={<ExamResultPage />} />
             <Route path="/knowledge-builder" element={<KnowledgeBuilderPage />} />
             <Route
               path="/knowledge/xingce"

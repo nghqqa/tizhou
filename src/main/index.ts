@@ -324,6 +324,8 @@ async function initialize(): Promise<void> {
         return database!.finishExam(request.params.examId)
       case 'exam.history':
         return database!.listExams()
+      case 'exam.get':
+        return database!.getExamById(request.params.examId) ?? null
       case 'exam.papers':
         return database!.listPapers()
       case 'exam.createPaper': {

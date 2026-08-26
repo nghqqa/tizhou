@@ -361,7 +361,7 @@ export function ExamRunPage(): React.JSX.Element {
     try {
       await invoke({ method: 'exam.finish', params: { examId: exam.id } })
       await refresh()
-      navigate('/exam')
+      navigate(`/exam/result/${exam.id}`)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '交卷失败')
     } finally {

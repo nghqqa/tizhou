@@ -303,6 +303,39 @@ export interface ConstructedEvaluation {
 
 export type PlanItemType = 'read_knowledge' | 'official_practice' | 'official_review' | 'ai_variant'
 
+/** 根据计划项类型推导默认跳转路由（route 字段优先） */
+export function planItemRoute(item: LearningPlanItem): string {
+  if (item.route) return item.route
+  switch (item.type) {
+    case 'read_knowledge':
+      return '/knowledge/xingce'
+    case 'official_practice':
+      return `/practice?mode=adaptive&count=${item.target || 10}`
+    case 'official_review':
+      return '/review'
+    case 'ai_variant':
+      return '/ai-training'
+    default:
+      return '/practice'
+  }
+}
+
+/** 计划项执行按钮文案 */
+export function planItemActionLabel(item: LearningPlanItem): string {
+  switch (item.type) {
+    case 'read_knowledge':
+      return '去阅读'
+    case 'official_practice':
+      return '去训练'
+    case 'official_review':
+      return '去复习'
+    case 'ai_variant':
+      return '去变式'
+    default:
+      return '去执行'
+  }
+}
+
 export interface LearningPlanItem {
   id: string
   day: number
@@ -311,6 +344,8 @@ export interface LearningPlanItem {
   target: number
   completed: number
   done: boolean
+  /** 点击计划项时跳转的路由（按 type 自动推导，也可显式指定） */
+  route?: string
 }
 
 export interface LearningPlan {
@@ -572,6 +607,7 @@ export type WorkbenchRequest =
   | { method: 'exam.save'; params: { examId: string; answer: ExamAnswer } }
   | { method: 'exam.finish'; params: { examId: string } }
   | { method: 'exam.history'; params?: undefined }
+  | { method: 'exam.get'; params: { examId: string } }
   | { method: 'exam.papers'; params?: undefined }
   | { method: 'exam.createPaper'; params: { paper: string } }
   | { method: 'migration.export'; params: { targetPath: string } }

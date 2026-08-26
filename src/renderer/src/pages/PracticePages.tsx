@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { Button, Field, Input, ProgressBar, Select, Textarea } from '@fluentui/react-components'
 import {
   BookmarkSimpleIcon,
@@ -32,18 +33,29 @@ interface SessionResult {
   result: AttemptResult
 }
 
-function Trainer({ review = false }: { review?: boolean }): React.JSX.Element {
+interface TrainerInitial {
+  mode?: PracticeSelection['mode']
+  count?: number
+  category?: string
+  feedbackMode?: 'immediate' | 'summary'
+}
+
+function Trainer({ review = false, initial }: { review?: boolean; initial?: TrainerInitial }): React.JSX.Element {
   const refreshDashboard = useAppStore((state) => state.refreshDashboard)
   const ai = useAppStore((state) => state.data!.ai)
   const [categories, setCategories] = useState<Category[]>([])
   const [facets, setFacets] = useState<QuestionFacets>({ years: [], regions: [], papers: [] })
-  const [category, setCategory] = useState('')
+  const [category, setCategory] = useState(initial?.category ?? '')
   const [year, setYear] = useState('')
   const [region, setRegion] = useState('')
   const [paper, setPaper] = useState('')
-  const [mode, setMode] = useState<PracticeSelection['mode']>(review ? 'review' : 'adaptive')
-  const [feedbackMode, setFeedbackMode] = useState<'immediate' | 'summary'>('immediate')
-  const [count, setCount] = useState(10)
+  const [mode, setMode] = useState<PracticeSelection['mode']>(
+    initial?.mode ?? (review ? 'review' : 'adaptive')
+  )
+  const [feedbackMode, setFeedbackMode] = useState<'immediate' | 'summary'>(
+    initial?.feedbackMode ?? 'immediate'
+  )
+  const [count, setCount] = useState(initial?.count ?? 10)
   const [session, setSession] = useState<PracticeSession>()
   const [pendingSession, setPendingSession] = useState<PracticeSession>()
   const [questions, setQuestions] = useState<Question[]>([])
@@ -724,6 +736,15 @@ function Trainer({ review = false }: { review?: boolean }): React.JSX.Element {
 }
 
 export function PracticePage(): React.JSX.Element {
+  const [searchParams] = useSearchParams()
+  const recommended = searchParams.get('recommended')
+  const mode = searchParams.get('mode') as PracticeSelection['mode'] | null
+  const count = Number(searchParams.get('count')) || undefined
+  const category = searchParams.get('category') ?? undefined
+  const initial: TrainerInitial | undefined =
+    mode || count || category
+      ? { mode: mode ?? undefined, count, category, feedbackMode: 'immediate' }
+      : undefined
   return (
     <div className="page">
       <PageHeader
@@ -731,7 +752,15 @@ export function PracticePage(): React.JSX.Element {
         title="专项练习"
         description="支持会话恢复、内容快照、即时或汇总解析、键盘选项和自适应选题。"
       />
-      <Trainer />
+      {recommended && (
+        <div className="answer-panel" style={{ marginBottom: 14 }}>
+          <p className="positive" style={{ margin: 0 }}>
+            ✓ 已根据你的薄弱模块生成训练建议：{recommended}
+            {count ? ` · ${count} 题` : ''}。你可以直接开始，也可以调整下方配置。
+          </p>
+        </div>
+      )}
+      <Trainer initial={initial} />
     </div>
   )
 }

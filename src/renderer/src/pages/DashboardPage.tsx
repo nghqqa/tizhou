@@ -188,7 +188,11 @@ function SubjectMastery({ dashboard }: { dashboard: DashboardData }): React.JSX.
               <button
                 type="button"
                 className="mastery-action"
-                onClick={() => navigate('/practice')}
+                onClick={() =>
+                  navigate(
+                    `/practice?mode=adaptive&count=${Math.min(12, item.attempts > 0 ? 10 : 10)}&subject=${item.subject}&recommended=${SUBJECT_LABELS[item.subject] ?? item.subject}`
+                  )
+                }
               >
                 {isWeak ? '补强' : '训练'} <ArrowRightIcon size={12} />
               </button>
@@ -238,7 +242,13 @@ export function DashboardPage(): React.JSX.Element {
             appearance="primary"
             size="large"
             icon={<PlayIcon weight="fill" />}
-            onClick={() => navigate('/practice')}
+            onClick={() =>
+              navigate(
+                `/practice?mode=adaptive&count=${remaining || 10}${
+                  weakest ? `&subject=${weakest.subject}&recommended=${SUBJECT_LABELS[weakest.subject] ?? weakest.subject}` : ''
+                }`
+              )
+            }
           >
             开始训练
           </Button>
@@ -275,7 +285,13 @@ export function DashboardPage(): React.JSX.Element {
           <Button
             appearance={hasTraining ? 'secondary' : 'primary'}
             icon={<TargetIcon weight="fill" />}
-            onClick={() => navigate('/practice')}
+            onClick={() =>
+              navigate(
+                `/practice?mode=adaptive&count=${suggestCount}${
+                  weakest ? `&subject=${weakest.subject}&recommended=${SUBJECT_LABELS[weakest.subject] ?? weakest.subject}` : '&recommended=首组训练'
+                }`
+              )
+            }
           >
             {hasTraining ? `补 ${SUBJECT_LABELS[weakest?.subject ?? 'xingce'] ?? '薄弱科目'}` : '开始第一组训练'}
           </Button>
