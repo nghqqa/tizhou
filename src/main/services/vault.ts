@@ -526,6 +526,7 @@ export class VaultService {
       section(parsed.content, ['题目', '问题']) ||
       bodyBeforeSections(parsed.content)
     if (!stem) throw new Error('缺少题干')
+    const questionType = parseQuestionType(data.questionType || data.type, options)
     const answer = asStringArray(
       data.answer || data.answers || data.correct || section(parsed.content, ['答案', '参考答案'])
     ).map((value) =>
@@ -534,18 +535,17 @@ export class VaultService {
         .trim()
         .toUpperCase()
     )
-    if (answer.length === 0) throw new Error('缺少答案')
+    // 主观题允许无参考答案入库：练习走「申论作答」页的 AI 批改兜底
+    if (answer.length === 0 && questionType !== 'essay') throw new Error('缺少答案')
     const explanation =
       normalizeText(data.explanation || data.analysis) ||
       section(parsed.content, ['解析', '答案解析', '参考解析']) ||
-      '该题暂未提供解析。'
+      (questionType === 'essay'
+        ? '暂无参考答案；可在「申论作答」页配合 AI 批改练习。'
+        : '该题暂未提供解析。')
     const subjectRaw = parseSubject(data.subject, relativePath)
     const subject: Subject =
-      subjectRaw === 'common'
-        ? parseQuestionType(data.questionType || data.type, options) === 'essay'
-          ? 'shenlun'
-          : 'xingce'
-        : subjectRaw
+      subjectRaw === 'common' ? (questionType === 'essay' ? 'shenlun' : 'xingce') : subjectRaw
     const category =
       normalizeText(data.category || data.topic || data.module) ||
       (subject === 'shenlun' ? '申论综合' : '未分类')
@@ -564,7 +564,7 @@ export class VaultService {
       id: explicitId || `q-${hash(stableSignature).slice(0, 24)}`,
       subject,
       category,
-      type: parseQuestionType(data.questionType || data.type, options),
+      type: questionType,
       stem,
       options,
       answer,

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { DatabaseService } from '../src/main/services/database'
 import { VaultService } from '../src/main/services/vault'
+import { directQuestionMarkdown } from '../src/main/services/question-import'
 
 const QUESTION = `---
 kind: question
@@ -74,6 +75,40 @@ describe('VaultService', () => {
     expect(database.listQuestions()[0]?.id).toBe(firstId)
     expect(result.added).toBe(0)
     expect(result.removed).toBe(0)
+  })
+
+  it('indexes generated shenlun essays with empty answers and material passthrough', () => {
+    const essay = directQuestionMarkdown({
+      id: 'kb-etest0000000000000001',
+      set: 1,
+      num: 1,
+      subject: 'shenlun',
+      category: '归纳概括',
+      tags: ['申论'],
+      sourceFile: '申论题本.md',
+      year: 2023,
+      paper: '山东B卷',
+      questionType: 'essay',
+      difficulty: 3,
+      stem: '根据“给定资料2”，归纳W市经开区依托社区基金提升基层社会治理水平的经验做法。\n要求：全面，准确，有条理，不超过300字。',
+      options: [],
+      answer: [],
+      explanation: '暂无参考答案；可在「申论作答」页配合 AI 批改练习。',
+      material:
+        '资料2\nW市经济技术开发区在实践中探索设立社区基金，吸纳驻区单位、企业园区、社会组织、居民群众中的红色力量参与筹建，累计募捐资金达到130余万元。'
+    })
+    writeFileSync(join(vaultDirectory, 'essay.md'), essay, 'utf8')
+
+    const result = vaults.connect(vaultDirectory)
+    expect(result.vault.questionCount).toBe(1)
+    expect(result.skipped).toBe(0)
+    const stored = database.listQuestions({ subject: 'shenlun' })[0]!
+    expect(stored.type).toBe('essay')
+    expect(stored.answer).toEqual([])
+    expect(stored.material).toContain('社区基金')
+    expect(stored.paper).toBe('山东B卷')
+    expect(stored.year).toBe(2023)
+    expect(stored.category).toBe('归纳概括')
   })
 
   it('reports malformed files without blocking valid content', () => {

@@ -10,6 +10,7 @@ import {
   directQuestionMarkdown,
   mergeDirectQuestions,
   parseAnswerGroups,
+  parseEssayBook,
   parseQuestionBook,
   parseSolutionBook,
   toLines
@@ -173,6 +174,110 @@ describe('question import parsers', () => {
     expect(parsed.data.answer).toEqual(['A'])
     expect(parsed.data.options[0]).toMatchObject({ key: 'A', text: '观点甲' })
     expect(parsed.data.kind).toBe('question')
+  })
+})
+
+describe('essay book parsing', () => {
+  const KUAKUA_UNIT = [
+    '第一章 归纳概括',
+    '【训练一】提升基层社会治理水平经验做法',
+    '资料2',
+    '“不仅仅是方便，还省了不少钱呢！”一大早，小区72岁老人董先生对上门服务的义剪美爱心理发师竖起了大拇指，连夸政府为老人们办了件大实事。',
+    'W市经济技术开发区在实践中探索设立社区基金，吸纳驻区单位、企业园区、社会组织、居民群众中的红色力量参与社区基金的筹建，搭建社区需求与资源对接的公益平台，形成精准化对接、项目化运作、品牌化带动新格局。目前我们已成立街道级社区基金2支、社区级基金32支，累计募捐资金达到130余万元。',
+    '根据“给定资料2”，归纳W市经开区依托社区基金提升基层社会治理水平的经验做法。',
+    '(2023年山东B卷）',
+    '要求：全面，准确，有条理，不超过300字。'
+  ]
+
+  it('cuts bracket-style units with chapter, origin, requirement and material', () => {
+    const book = parseEssayBook(
+      toLines(
+        [
+          '2027申论',
+          '目录',
+          '第一章 归纳概括..',
+          '【训练一】提升基层社会治理水平经验做法.',
+          '.2',
+          ...KUAKUA_UNIT,
+          '100',
+          '3',
+          '第二章 提出对策',
+          '【训练二】解决线上盲道问题',
+          '资料1',
+          '盲道被占用现象普遍，部分路段的盲道被共享单车和机动车挤占，视障人士出行困难，反映多次仍未得到有效解决。',
+          '请梳理“线上盲道”在建设和使用中存在的问题，并提出解决建议。',
+          '要求：问题梳理准确全面，不超过250字。'
+        ].join('\n')
+      )
+    )
+
+    expect(book.skipped).toBe(0)
+    expect(book.units).toHaveLength(2)
+    const first = book.units[0]!
+    expect(first.seq).toBe(1)
+    expect(first.chapter).toBe('归纳概括')
+    expect(first.title).toBe('提升基层社会治理水平经验做法')
+    expect(first.stem).toContain('归纳W市经开区')
+    expect(first.stem).toContain('要求：全面，准确，有条理，不超过300字')
+    expect(first.stem).not.toContain('山东B卷')
+    expect(first.year).toBe(2023)
+    expect(first.paper).toBe('山东B卷')
+    expect(first.material).toContain('资料2')
+    expect(first.material.length).toBeGreaterThan(80)
+
+    const second = book.units[1]!
+    expect(second.chapter).toBe('提出对策')
+    expect(second.year).toBeUndefined()
+    expect(second.paper).toBeUndefined()
+  })
+
+  it('falls back to title-based stems when a unit has no separate question sentence', () => {
+    // 酷酷刷式：训练N：标题 + 给定资料 + 要求，没有独立提问句
+    const book = parseEssayBook(
+      toLines(
+        [
+          '实战公考',
+          '酷酷刷',
+          '第一章 归纳概括',
+          '训练一：“好品山东”好在哪里',
+          '5',
+          '给定资料6',
+          '好品山东为企业注入质量基因，一批制造企业在标准引领下实现品牌溢价，产品远销海外市场，区域品牌效应持续放大，形成质量与效益互促的良性循环。',
+          '要求：概括“好品山东”好在哪些方面，条理清晰，不超过200字。'
+        ].join('\n')
+      )
+    )
+
+    expect(book.units).toHaveLength(1)
+    const unit = book.units[0]!
+    expect(unit.title).toBe('“好品山东”好在哪里')
+    expect(unit.material).toContain('好品山东为企业注入质量基因')
+    expect(unit.stem).not.toContain('好品山东为企业注入质量基因')
+    expect(unit.stem).toContain('要求：概括')
+  })
+
+  it('captures an in-unit reference answer as explanation when the book provides one', () => {
+    const book = parseEssayBook(
+      toLines(
+        [
+          ...KUAKUA_UNIT,
+          '参考答案：',
+          '一是坚持党建引领，汇聚多方力量共建社区基金；',
+          '二是搭建供需对接平台，推动项目化运作。'
+        ].join('\n')
+      )
+    )
+    expect(book.units[0]!.explanation).toContain('坚持党建引领')
+  })
+
+  it('skips units that have neither material nor a meaningful stem', () => {
+    const book = parseEssayBook(
+      toLines(
+        ['第一章 归纳概括', '【训练一】标题甲', '【训练二】标题乙', '【训练三】标题丙'].join('\n')
+      )
+    )
+    expect(book.units).toHaveLength(0)
+    expect(book.skipped).toBe(3)
   })
 })
 
@@ -507,5 +612,215 @@ describe('knowledge builder direct mode', () => {
     expect(job.artifacts).toHaveLength(0)
     const failed = job.files.find((file) => file.state === 'failed')
     expect(failed?.message).toContain('配对校验拦截')
+  }, 35_000)
+
+  it('cuts shenlun essay units out of a 训练-style book, stages and publishes them without answers', async () => {
+    const data = temporaryDirectory('tizhou-kb-essay-data-')
+    const source = temporaryDirectory('tizhou-kb-essay-source-')
+    // 夸夸刷实录版式：【训练一】标题 + 资料块 + 提问句 + (年份卷别) + 要求：
+    writeFileSync(
+      join(source, '申论题本.md'),
+      [
+        '2027申论',
+        '专项提升夸夸刷',
+        '目录',
+        '第一章 归纳概括..',
+        '【训练一】提升基层社会治理水平经验做法.',
+        '.2',
+        '【训练二】如何提供和优化铁路物流服务',
+        '....4',
+        '第二章 提出对策..',
+        '..42',
+        '第一章 归纳概括',
+        '【训练一】提升基层社会治理水平经验做法',
+        '资料2',
+        '“不仅仅是方便，还省了不少钱呢！”一大早，小区72岁老人董先生对上门服务的义剪美爱心理发师竖起了大拇指。',
+        'W市经济技术开发区在实践中探索设立社区基金，吸纳驻区单位、企业园区、社会组织、居民群众中的红色力量参与社区基金的筹建，搭建社区需求与资源对接的公益平台，形成精准化对接、项目化运作、品牌化带动新格局。目前我们已成立街道级社区基金2支、社区级基金32支，累计募捐资金达到130余万元。',
+        '根据“给定资料2”，归纳W市经开区依托社区基金提升基层社会治理水平的经验做法。',
+        '(2023年山东B卷）',
+        '要求：全面，准确，有条理，不超过300字。',
+        '100',
+        '3',
+        '读书破万卷，下笔如有神。概括题的关键在于读懂材料、抓准关键词。',
+        '第二章 提出对策',
+        '【训练二】解决线上盲道问题',
+        '资料1',
+        '盲道被占用现象普遍，部分路段的盲道被共享单车和机动车挤占，视障人士出行困难，反映多次仍未得到有效解决，管理部门职责边界不清，日常巡查机制缺失。',
+        '请梳理“线上盲道”在建设和使用中存在的问题，并提出解决建议。',
+        '要求：问题梳理准确全面，所提建议与问题相对应，具有可行性，不超过250字。'
+      ].join('\n') + '\n',
+      'utf8'
+    )
+    const connect = vi.fn((path: string) => ({
+      vault: {
+        id: 'managed',
+        name: 'managed-vault',
+        path,
+        connectedAt: '',
+        lastIndexedAt: '',
+        questionCount: 2,
+        documentCount: 0,
+        warnings: [],
+        isBuiltin: false
+      },
+      added: 2,
+      updated: 0,
+      removed: 0,
+      skipped: 0,
+      warnings: []
+    }))
+    const service = new KnowledgeBuilderService(
+      data,
+      process.cwd(),
+      {} as AiService,
+      {
+        connect,
+        ensureBuiltinVault: () => ({
+          id: 'builtin',
+          name: '内置示例库',
+          path: 'C:/builtin-vault',
+          connectedAt: '',
+          lastIndexedAt: '',
+          questionCount: 0,
+          documentCount: 0,
+          warnings: [],
+          isBuiltin: true
+        }),
+        questionSignatures: () => new Set<string>()
+      } as unknown as VaultService
+    )
+    vi.spyOn(service, 'engineStatus').mockResolvedValue({
+      available: true,
+      installing: false,
+      version: 'test',
+      pythonPath: 'test-python',
+      ocrAvailable: false,
+      message: 'ready',
+      supportedExtensions: ['.md']
+    })
+    const conversionTarget = service as unknown as {
+      convert: (python: string, worker: string, source: string, output: string) => Promise<void>
+    }
+    vi.spyOn(conversionTarget, 'convert').mockImplementation(
+      async (_python, _worker, sourcePath, outputPath) => {
+        writeFileSync(outputPath, readFileSync(sourcePath, 'utf8'), 'utf8')
+      }
+    )
+
+    const scan = service.scan(source)
+    const started = await service.startJob({
+      sourcePath: source,
+      fileIds: scan.files.filter((file) => file.eligible).map((file) => file.id),
+      options: {
+        mode: 'direct',
+        quality: 'standard',
+        subject: 'auto',
+        tags: [],
+        instruction: '',
+        rightsConfirmed: true
+      }
+    })
+    let job = started
+    const deadline = Date.now() + 30_000
+    while (['queued', 'running', 'cancelling'].includes(job.status) && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      job = service.getJob(started.id)
+    }
+
+    expect(job.status).toBe('review')
+    expect(job.message).toContain('申论主观题 2 道')
+    expect(job.files[0]?.message).toContain('2 道申论题')
+
+    for (const artifact of job.artifacts) service.reviewArtifact(job.id, artifact.id, 'approved')
+    service.publish(job.id)
+
+    const managedRoot = connect.mock.calls[0]![0]
+    const files = readdirSync(join(managedRoot, '直导题库'), { recursive: true })
+      .map(String)
+      .filter((name) => name.endsWith('.md'))
+    expect(files.length).toBe(2)
+    const first = matter(readFileSync(join(managedRoot, '直导题库', files[0]!), 'utf8'))
+    expect(first.data.questionType).toBe('essay')
+    expect(first.data.subject).toBe('shenlun')
+    expect(first.data.answer).toEqual([])
+    expect(String(first.data.material)).toContain('社区基金')
+    expect(first.data.year).toBe(2023)
+    expect(first.data.paper).toBe('山东B卷')
+  }, 35_000)
+
+  it('suggests the organize mode when a book has training marks but nothing can be cut', async () => {
+    const data = temporaryDirectory('tizhou-kb-guide-data-')
+    const source = temporaryDirectory('tizhou-kb-guide-source-')
+    // 有体量（能过 50 字防扫描件闸门）、有训练式标记，但单元全是空壳切不出内容
+    writeFileSync(
+      join(source, '残卷.md'),
+      [
+        '说明：本书为出版社赠阅样张，此处为版权页说明文字，用于排版校对与印前审读流程演示，不具备学习参考价值。',
+        '第一章 归纳概括',
+        '【训练一】标题甲',
+        '【训练二】标题乙',
+        '【训练三】标题丙'
+      ].join('\n') + '\n',
+      'utf8'
+    )
+    const service = new KnowledgeBuilderService(
+      data,
+      process.cwd(),
+      {} as AiService,
+      {
+        connect: vi.fn(),
+        ensureBuiltinVault: () => ({
+          id: 'builtin',
+          name: '内置示例库',
+          path: 'C:/builtin-vault',
+          connectedAt: '',
+          lastIndexedAt: '',
+          questionCount: 0,
+          documentCount: 0,
+          warnings: [],
+          isBuiltin: true
+        }),
+        questionSignatures: () => new Set<string>()
+      } as unknown as VaultService
+    )
+    vi.spyOn(service, 'engineStatus').mockResolvedValue({
+      available: true,
+      installing: false,
+      version: 'test',
+      pythonPath: 'test-python',
+      ocrAvailable: false,
+      message: 'ready',
+      supportedExtensions: ['.md']
+    })
+    const conversionTarget = service as unknown as {
+      convert: (python: string, worker: string, source: string, output: string) => Promise<void>
+    }
+    vi.spyOn(conversionTarget, 'convert').mockImplementation(
+      async (_python, _worker, sourcePath, outputPath) => {
+        writeFileSync(outputPath, readFileSync(sourcePath, 'utf8'), 'utf8')
+      }
+    )
+    const scan = service.scan(source)
+    const started = await service.startJob({
+      sourcePath: source,
+      fileIds: scan.files.filter((file) => file.eligible).map((file) => file.id),
+      options: {
+        mode: 'direct',
+        quality: 'standard',
+        subject: 'auto',
+        tags: [],
+        instruction: '',
+        rightsConfirmed: true
+      }
+    })
+    let job = started
+    const deadline = Date.now() + 30_000
+    while (['queued', 'running', 'cancelling'].includes(job.status) && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      job = service.getJob(started.id)
+    }
+
+    expect(job.status).toBe('completed')
+    expect(job.message).toContain('模型提炼')
   }, 35_000)
 })

@@ -429,4 +429,97 @@ describe('knowledge builder', () => {
     expect(markdown).toContain('reviewStatus: "approved"')
     expect(markdown).toContain('资料分析读题与校验方法')
   }, 35_000)
+
+  it('reuses cached conversions across jobs for identical source bytes', async () => {
+    const data = temporaryDirectory('tizhou-kb-cache-data-')
+    const source = temporaryDirectory('tizhou-kb-cache-source-')
+    writeFileSync(
+      join(source, '方法.txt'),
+      '资料分析训练方法。先识别基期与现期，再确定增长量或增长率。列式后检查单位与数量级。计算结束后回到题干核对时间、范围和统计口径，并用近似值判断结果是否合理。'
+    )
+    // 两个服务实例共享同一 data 目录 → 共享同一份转换缓存
+    let conversions = 0
+    const buildService = (): KnowledgeBuilderService => {
+      const service = new KnowledgeBuilderService(
+        data,
+        process.cwd(),
+        {} as AiService,
+        {} as VaultService
+      )
+      useFakeConversionEngine(service)
+      const conversionTarget = service as unknown as {
+        convert: (
+          pythonPath: string,
+          workerPath: string,
+          sourcePath: string,
+          outputPath: string
+        ) => Promise<void>
+      }
+      vi.spyOn(conversionTarget, 'convert').mockImplementation(
+        async (_pythonPath, _workerPath, sourcePath, outputPath) => {
+          conversions += 1
+          writeFileSync(outputPath, readFileSync(sourcePath, 'utf8'), 'utf8')
+        }
+      )
+      return service
+    }
+
+    const waitFor = async (service: KnowledgeBuilderService, jobId: string) => {
+      let job = service.getJob(jobId)
+      const deadline = Date.now() + 30_000
+      while (['queued', 'running', 'cancelling'].includes(job.status) && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 100))
+        job = service.getJob(jobId)
+      }
+      return job
+    }
+    const options = {
+      mode: 'convert-only' as const,
+      quality: 'standard',
+      subject: 'auto',
+      tags: [],
+      instruction: '',
+      rightsConfirmed: true
+    }
+
+    const first = buildService()
+    const scanA = first.scan(source)
+    const jobA = await waitFor(
+      first,
+      (
+        await first.startJob({
+          sourcePath: source,
+          fileIds: scanA.files.filter((f) => f.eligible).map((f) => f.id),
+          options
+        })
+      ).id
+    )
+    expect(jobA.status).toBe('completed')
+    expect(conversions).toBe(1)
+
+    const second = buildService()
+    const scanB = second.scan(source)
+    const jobB = await waitFor(
+      second,
+      (
+        await second.startJob({
+          sourcePath: source,
+          fileIds: scanB.files.filter((f) => f.eligible).map((f) => f.id),
+          options
+        })
+      ).id
+    )
+    expect(jobB.status).toBe('completed')
+    // 第二个任务命中缓存：转换引擎不再被调用，但 raw 结果照常就位（唯一来源是缓存拷贝）
+    expect(conversions).toBe(1)
+    const cachedRawPath = join(
+      data,
+      'knowledge-builder',
+      'jobs',
+      jobB.id,
+      'raw',
+      `${jobB.files[0]!.sourceId}.md`
+    )
+    expect(readFileSync(cachedRawPath, 'utf8')).toContain('资料分析训练方法')
+  }, 35_000)
 })

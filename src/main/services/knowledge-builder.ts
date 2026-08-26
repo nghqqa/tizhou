@@ -1,6 +1,7 @@
 import { spawn, execFile } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import {
+  copyFileSync,
   existsSync,
   lstatSync,
   mkdirSync,
@@ -32,14 +33,18 @@ import type {
 import { parseOcrWorkerLine } from '../../shared/ocr-payload'
 import { FEATURE_PROMPTS, sourceEnvelope, taskDataEnvelope } from '../../shared/prompts'
 import { AiService } from './ai'
+import { ConversionCache } from './conversion-cache'
 import {
   directQuestionMarkdown,
   directSignature,
   mergeDirectQuestions,
   parseAnswerGroups,
+  parseEssayBook,
   parseQuestionBook,
   parseSolutionBook,
   toLines,
+  type DirectQuestion,
+  type ParsedEssayUnit,
   type ParsedSolution
 } from './question-import'
 import { VaultService } from './vault'
@@ -232,6 +237,14 @@ function isPdfFile(path: string): boolean {
   return /\.pdf$/i.test(path)
 }
 
+// 统计申论教材的「训练」式单元标题行数（【训练N】xxx / 训练N：xxx 两种版式），
+// 直导零产出时用于判断这本书是否主观题教材并给出模式建议
+function countEssayTrainingMarks(lines: string[]): number {
+  return lines.filter((line) =>
+    /^【?训练\s*[一二三四五六七八九十百0-9]{1,4}\s*】?\s*[:：]?/.test(line)
+  ).length
+}
+
 function safeTitle(value: string, fallback: string): string {
   const cleaned = value
     .replace(/[\\/:*?"<>|]/g, ' ')
@@ -271,6 +284,7 @@ export class KnowledgeBuilderService {
   private readonly jobsDirectory: string
   private readonly engineDirectory: string
   private readonly managedVaultDirectory: string
+  private readonly conversionCache: ConversionCache
   private runningJobId?: string
   private runningChild?: ReturnType<typeof spawn>
   private installing = false
@@ -287,6 +301,7 @@ export class KnowledgeBuilderService {
     this.jobsDirectory = join(this.rootDirectory, 'jobs')
     this.engineDirectory = join(this.rootDirectory, 'engine')
     this.managedVaultDirectory = join(this.rootDirectory, 'managed-vault')
+    this.conversionCache = new ConversionCache(join(this.rootDirectory, 'conversion-cache'))
     mkdirSync(this.jobsDirectory, { recursive: true })
     mkdirSync(this.engineDirectory, { recursive: true })
     mkdirSync(this.managedVaultDirectory, { recursive: true })
@@ -823,6 +838,13 @@ export class KnowledgeBuilderService {
         questions: ReturnType<typeof parseQuestionBook>
         groups: Map<string, string>
       }> = []
+      const directEssays: Array<{
+        sourceId: string
+        relativePath: string
+        units: ParsedEssayUnit[]
+      }> = []
+      // 无客观题书的面板提示线索：全文含训练式标题的行数（用于收尾时给出模式建议）
+      let trainingMarkers = 0
       const directSolutions = new Map<string, ParsedSolution>()
       for (const entry of job.files) {
         job = this.loadJob(id)
@@ -837,36 +859,55 @@ export class KnowledgeBuilderService {
         try {
           const source = this.resolveSourceFile(job, file)
           const rawPath = join(job.outputPath, 'raw', `${file.sourceId}.md`)
-          await this.convert(engine.pythonPath, workerPath, source, rawPath)
-          job.cancelRequested ||= this.loadJob(id).cancelRequested
-          if (job.cancelRequested) throw new Error('任务已取消')
-          const rawSize = statSync(rawPath).size
-          if (rawSize > MAX_RAW_MARKDOWN_BYTES)
-            throw new Error('转换结果超过 20 MB，请先拆分原文件')
-          let raw = readFileSync(rawPath, 'utf8').trim()
-          // PDF 始终走 OCR worker：worker 内部逐页判断文字层是否足够，
-          // 文字层页直接使用原始文本，扫描页 OCR，混合 PDF 不漏识别
-          if (engine.ocrAvailable && isPdfFile(file.relativePath)) {
-            file.message = '正在逐页检测文字层并识别'
-            this.saveJob(job)
-            const quality = await this.ocrConvert(job, file, engine.pythonPath, source, rawPath)
+          // PDF 始终由 OCR worker 处理：worker 内部逐页判断文字层是否足够，
+          // 文字层页直接使用原始文本，扫描页 OCR，混合 PDF 不漏识别；
+          // MarkItDown 首跑的结果必然被覆盖，OCR 可用时不再先跑一遍。
+          const useOcr = engine.ocrAvailable && isPdfFile(file.relativePath)
+          const converter = useOcr
+            ? `ocr@${OCR_PACKAGES.join('+')}`
+            : `markitdown@${MARKITDOWN_VERSION}`
+          let ocrQuality: OcrQualityReport | undefined
+          const cached = await this.conversionCache.fetch(source, converter)
+          if (cached) {
+            copyFileSync(cached.markdownPath, rawPath)
             job.cancelRequested ||= this.loadJob(id).cancelRequested
-            if (statSync(rawPath).size > MAX_RAW_MARKDOWN_BYTES)
-              throw new Error('OCR 结果超过 20 MB，请先拆分原文件')
-            raw = readFileSync(rawPath, 'utf8').trim()
-            // 保存质量报告到文件元数据
-            if (quality) {
-              file.ocrQuality = quality
-              const parts = [
-                `${quality.textLayerPages}/${quality.totalPages} 页文字层`,
-                quality.ocrPages > 0 ? `${quality.ocrPages} 页 OCR` : null,
-                quality.emptyPages > 0 ? `${quality.emptyPages} 页空白` : null,
-                quality.averageConfidence
-                  ? `平均置信度 ${(quality.averageConfidence * 100).toFixed(0)}%`
-                  : null
-              ].filter(Boolean)
-              file.message = `转换完成：${parts.join(' · ')}`
+            if (job.cancelRequested) throw new Error('任务已取消')
+            ocrQuality = cached.ocrQuality
+          } else {
+            if (!useOcr) {
+              file.message = '正在转换为 Markdown'
+              this.saveJob(job)
+              await this.convert(engine.pythonPath, workerPath, source, rawPath)
+              job.cancelRequested ||= this.loadJob(id).cancelRequested
+              if (job.cancelRequested) throw new Error('任务已取消')
+            } else {
+              file.message = '正在逐页检测文字层并识别'
+              this.saveJob(job)
+              ocrQuality = await this.ocrConvert(job, file, engine.pythonPath, source, rawPath)
+              job.cancelRequested ||= this.loadJob(id).cancelRequested
+              if (job.cancelRequested) throw new Error('任务已取消')
             }
+          }
+          if (statSync(rawPath).size > MAX_RAW_MARKDOWN_BYTES)
+            throw new Error(
+              useOcr ? 'OCR 结果超过 20 MB，请先拆分原文件' : '转换结果超过 20 MB，请先拆分原文件'
+            )
+          if (!cached) await this.conversionCache.store(source, converter, rawPath, ocrQuality)
+          const raw = readFileSync(rawPath, 'utf8').trim()
+          // 保存质量报告到文件元数据
+          if (ocrQuality) {
+            file.ocrQuality = ocrQuality
+            const parts = [
+              `${ocrQuality.textLayerPages}/${ocrQuality.totalPages} 页文字层`,
+              ocrQuality.ocrPages > 0 ? `${ocrQuality.ocrPages} 页 OCR` : null,
+              ocrQuality.emptyPages > 0 ? `${ocrQuality.emptyPages} 页空白` : null,
+              ocrQuality.averageConfidence
+                ? `平均置信度 ${(ocrQuality.averageConfidence * 100).toFixed(0)}%`
+                : null
+            ].filter(Boolean)
+            file.message = `${cached ? '缓存命中' : '转换完成'}：${parts.join(' · ')}`
+          } else if (cached) {
+            file.message = '缓存命中：复用上次转换结果'
           }
           if (raw.length < 50)
             throw new Error(
@@ -875,7 +916,11 @@ export class KnowledgeBuilderService {
                 : '没有提取到足够文本，文件可能是扫描件；安装 OCR 组件后可自动识别'
             )
           file.state = 'converted'
-          file.message = 'Markdown 转换完成'
+          file.message = cached
+            ? ocrQuality?.averageConfidence
+              ? `缓存命中：平均置信度 ${(ocrQuality.averageConfidence * 100).toFixed(0)}%`
+              : '缓存命中：复用上次转换结果'
+            : 'Markdown 转换完成'
           this.saveJob(job)
           if (job.options.mode === 'direct') {
             const directLines = toLines(raw)
@@ -887,14 +932,27 @@ export class KnowledgeBuilderService {
               file.message = `解析册：提取 ${solutions.size} 条参考答案`
             } else {
               const questions = parseQuestionBook(directLines)
-              directBooks.push({
-                sourceId: file.sourceId,
-                relativePath: file.relativePath,
-                questions,
-                groups: parseAnswerGroups(directLines)
-              })
-              file.state = 'ready'
-              file.message = `题本：切出 ${questions.length} 题，批次结束后自动合并发布`
+              const essays = parseEssayBook(directLines)
+              trainingMarkers += solutionMarks === 0 ? countEssayTrainingMarks(directLines) : 0
+              if (questions.length > 0 || essays.units.length === 0) {
+                directBooks.push({
+                  sourceId: file.sourceId,
+                  relativePath: file.relativePath,
+                  questions,
+                  groups: parseAnswerGroups(directLines)
+                })
+                file.state = 'ready'
+                file.message = `题本：切出 ${questions.length} 题，批次结束后自动合并发布`
+              } else {
+                // 客观题解析器颗粒无收但训练单元结构成立 → 申论主观题教材，走直导申论通道
+                directEssays.push({
+                  sourceId: file.sourceId,
+                  relativePath: file.relativePath,
+                  units: essays.units
+                })
+                file.state = 'ready'
+                file.message = `切出 ${essays.units.length} 道申论题（无参考答案），批次结束后生成待审核产物`
+              }
             }
           } else if (job.options.mode === 'convert-only') {
             file.state = 'ready'
@@ -1006,14 +1064,88 @@ export class KnowledgeBuilderService {
             }`
           }
         }
+        // 申论直导通道：主观题没有标准答案也允许入库——「申论作答」页对空参考要点有
+        // AI 批改兜底，硬卡答案会把这两类教材永远挡在门外（validateCandidate 仅约束模型提炼路径）
+        let stagedEssays = 0
+        for (const book of directEssays) {
+          const bookFile = job.files.find((file) => file.sourceId === book.sourceId)
+          let bookStaged = 0
+          for (const unit of book.units) {
+            const item: DirectQuestion = {
+              id: `kb-e${hash(`${book.relativePath}\n${unit.chapter}\n${compact(unit.stem).slice(0, 120)}`).slice(0, 19)}`,
+              set: 1,
+              num: unit.seq,
+              subject: 'shenlun',
+              category: unit.chapter || '申论综合',
+              tags: [...new Set([...job.options.tags, ...(unit.chapter ? [unit.chapter] : [])])],
+              sourceFile: book.relativePath,
+              year: unit.year,
+              paper: unit.paper,
+              questionType: 'essay',
+              difficulty: 3,
+              stem: unit.stem,
+              options: [],
+              answer: [],
+              explanation: unit.explanation || '暂无参考答案；可在「申论作答」页配合 AI 批改练习。',
+              material: unit.material
+            }
+            // 与库内签名同口径：材料参与去重，避免跨批次重复导入同一篇训练
+            const signature = directSignature(item.stem, item.material ?? '', '')
+            if (existingSignatures.has(signature) || batchSeen.has(signature)) {
+              skippedDuplicate += 1
+              continue
+            }
+            batchSeen.add(signature)
+            const markdown = directQuestionMarkdown(item)
+            const artifact: StoredArtifact = {
+              id: item.id,
+              jobId: job.id,
+              sourceId: book.sourceId,
+              sourcePath: book.relativePath,
+              relativeSourcePath: book.relativePath,
+              kind: 'question',
+              subject: 'shenlun',
+              title: safeTitle(unit.title || unit.stem.slice(0, 40), '未命名题目'),
+              category: item.category,
+              confidence: 1,
+              status: 'pending',
+              warnings: unit.explanation
+                ? []
+                : ['暂无参考答案，建议在备考开始前用 AI 批改补齐要点'],
+              preview: unit.stem.slice(0, 180),
+              markdown,
+              evidenceExcerpt: unit.stem.slice(0, 80)
+            }
+            this.saveArtifact(job, artifact)
+            if (!job.artifactIds.includes(artifact.id)) job.artifactIds.push(artifact.id)
+            staged += 1
+            stagedEssays += 1
+            bookStaged += 1
+          }
+          if (bookFile) {
+            bookFile.state = 'ready'
+            bookFile.artifactCount = bookStaged
+            bookFile.message = `切出 ${bookStaged} 道申论题${
+              bookStaged ? '（无参考答案，练习配合 AI 批改）' : ''
+            }`
+          }
+        }
         job.status = staged > 0 ? 'review' : 'completed'
         job.message = staged
-          ? `已切出 ${staged} 题（配对验证 ${skippedMisaligned} 题疑似错位已剔除、无答案 ${skippedNoAnswer}、不完整 ${skippedIncomplete}、与现有题库重复 ${skippedDuplicate}）——请抽查后「全部批准」并「发布」入库${abortedBooks ? `；${abortedBooks} 本书因疑似套号错位被拦截` : ''}`
+          ? `已切出 ${staged} 题${
+              stagedEssays
+                ? `，其中申论主观题 ${stagedEssays} 道（无参考答案，发布后经「申论作答」页 AI 批改练习）`
+                : ''
+            }（配对验证错位剔除 ${skippedMisaligned}、无答案跳过 ${skippedNoAnswer}、不完整 ${skippedIncomplete}、与现有题库重复 ${skippedDuplicate}）——请抽查后「全部批准」并「发布」入库${
+              abortedBooks ? `；${abortedBooks} 本书因疑似套号错位被拦截` : ''
+            }`
           : skippedDuplicate
             ? `直导完成：${skippedDuplicate} 题与现有题库重复，未生成新题${abortedBooks ? `；${abortedBooks} 本书因疑似套号错位被拦截` : ''}`
             : abortedBooks
               ? `直导完成：全部题本被配对校验拦截（疑似套号错位），未生成产物`
-              : '直导完成：未切出题目（未识别出题目或全部缺少答案）'
+              : trainingMarkers >= 3
+                ? `直导完成：检测到 ${trainingMarkers} 处训练式标题但未能稳定切分出题目——这本书大概率是主观题教材，请改用「模型提炼」模式导入`
+                : '直导完成：未切出题目（未识别出题目或全部缺少答案）'
       } else {
         const artifacts = job.artifactIds.map((artifactId) => this.loadArtifact(job, artifactId))
         job.status = artifacts.some((artifact) => artifact.status === 'pending')

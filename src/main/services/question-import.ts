@@ -36,12 +36,15 @@ export interface DirectQuestion {
   sourceFile: string
   year?: number
   region?: string
+  paper?: string
   questionType: string
   difficulty: number
   stem: string
   options: DirectOption[]
   answer: string[]
   explanation: string
+  /** 主观题材料原文（申论直导）；客观题不产出该字段 */
+  material?: string
 }
 
 const SET_TITLE = /^练习题\s*0*(\d{1,3})\s*套?\s*$/
@@ -55,6 +58,18 @@ const ORIGIN_MARK = /^[（(]\s*(\d{4})\s*年?\s*([^)）]*?)\s+(\d{1,3})\s*%\s*[)
 const ANSWER_SECTION = /^参考答案$|^答案速查$/
 const ANSWER_RANGE = /^(\d{1,3})\s*[-—~]\s*(\d{1,3})\s*[:：]\s*([A-Da-d]{1,30})/
 const NOISE = /^(四海公考|SIHAIGONGKAO|花生十三|花生\+三|超格学员专用|公众号[：:].*)$/i
+
+// ---- 申论主观题教材（直导）：单元式「训练 + 资料 + 提问 + 要求」结构 ----
+// 两种实测版式：【训练一】标题（夸夸刷系） / 训练一：标题（酷酷刷系）
+const ESSAY_UNIT_MARK = /^【?训练\s*[一二三四五六七八九十百0-9]{1,4}\s*】?\s*[:：]?\s*(.+)$/
+const ESSAY_CHAPTER_MARK = /^第[一二三四五六七八九十百0-9]{1,4}章\s*(.*)$/
+const ESSAY_MATERIAL_HEADER = /^(?:资料|给定资料)\s*[0-9一二三四五六七八九十]{0,3}\s*[:：]?$/
+const ESSAY_REQUIREMENT_MARK = /^要求[:：]\s*(.+)$/
+const ESSAY_ORIGIN_MARK = /^[（(]\s*(\d{4})\s*年?\s*([^)）]{1,24}?)\s*[)）]\s*$/
+const ESSAY_ANSWER_HEADER = /^(?:【)?(?:参考答案|答案要点)(?:】)?\s*[:：]?$/
+// 目录页点线引导符与孤立页码（OCR 常产出「.2」「…38」「100」这类残渣行）
+const ESSAY_LEADER_LINE = /^[.。…·•]{2,}\s*\d{0,4}$/
+const ESSAY_PAGE_NUMBER = /^\d{1,4}$/
 
 export function toLines(raw: string): string[] {
   return raw
@@ -293,6 +308,208 @@ export function parseAnswerGroups(lines: string[]): Map<string, string> {
   return answers
 }
 
+// ---- 申论主观题解析：确定性切分「章节 + 训练单元」式教材，不调用模型 ----
+
+export interface ParsedEssayUnit {
+  /** 全书内被采纳单元的顺序号（1 起），配合源文件名生成稳定 id */
+  seq: number
+  /** 分类：所在章节标题（如 归纳概括），无章节信息时回退「申论综合」 */
+  chapter: string
+  title: string
+  /** 提问句（含「要求：」行）；提问段无法单独辨识时以单元标题兜底拼接 */
+  stem: string
+  /** 资料正文 */
+  material: string
+  year?: number
+  paper?: string
+  /** 单元内的参考答案/要点段（现版教材通常没有） */
+  explanation: string
+}
+
+export interface ParsedEssayBook {
+  units: ParsedEssayUnit[]
+  skipped: number
+}
+
+function isEssayNoiseLine(line: string): boolean {
+  return NOISE.test(line) || ESSAY_LEADER_LINE.test(line) || ESSAY_PAGE_NUMBER.test(line)
+}
+
+function cleanEssayTitle(value: string): string {
+  let title = value.replace(/\s+/g, ' ').trim()
+  // 目录行尾巴是「点线 + 可选页码」的循环结构（如「……….38」「做法.」），循环剥离直到稳定
+  let previous = ''
+  while (title !== previous) {
+    previous = title
+    title = title
+      .replace(/[.。…·•]{1,}\s*(?:\d{1,4})?\s*$/, '')
+      .replace(/(?:\d{1,4}\s*)?[.。…·•]{2,}\s*$/, '')
+      .replace(/\s+\d{1,4}$/, '')
+      .trim()
+  }
+  // 书尾推广水印（OCR 混入标题行尾部）
+  return title
+    .replace(/公考资料免费更新.*$/i, '')
+    .replace(/加微[a-z0-9_]{2,}.*$/i, '')
+    .trim()
+}
+
+// 设问线索词按行判定：材料尾段误吸附进提问段时逐行剔除，保留真正带设问动词的句子。
+// 延续行（以标点开头或极短的断句）随前一行去留。
+const ESSAY_HINT_CUES =
+  /归纳|概括|分析|指出|谈谈|如何看待|如何理解|如何优化|如何解决|原因|问题|启示|哪些|什么|建议|看法|理解|评价|撰写|简述|说明|措施|对策|思路|提纲|公开信|短评|演讲|报告/
+
+function isHintLine(line: string): boolean {
+  // 延续行只认「以标点开头」的断句；纯短行不豁免（材料残段常是 1~12 字的引号尾/词组）
+  if (ESSAY_HINT_CUES.test(line)) return true
+  return /^[，、；：,]/.test(line)
+}
+
+interface EssayUnitEntry {
+  chapter: string
+  title: string
+  body: string[]
+}
+
+function buildEssayUnit(entry: EssayUnitEntry, seq: number): ParsedEssayUnit | undefined {
+  const body = entry.body
+  let requirement = ''
+  let requirementIndex = -1
+  let originYear: number | undefined
+  let originPaper: string | undefined
+  let answerIndex = -1
+  for (let index = 0; index < body.length; index += 1) {
+    const line = body[index] ?? ''
+    const requirementMatch = line.match(ESSAY_REQUIREMENT_MARK)
+    if (requirementMatch) {
+      requirement = requirementMatch[1]?.trim() ?? ''
+      requirementIndex = index
+    }
+    const originMatch = line.match(ESSAY_ORIGIN_MARK)
+    if (originMatch) {
+      originYear = Number(originMatch[1])
+      originPaper = cleanEssayTitle(originMatch[2] ?? '')
+    }
+    if (requirementIndex >= 0 && answerIndex < 0 && ESSAY_ANSWER_HEADER.test(line))
+      answerIndex = index
+  }
+  const absoluteEnd = requirementIndex >= 0 ? requirementIndex : body.length
+
+  // 从「要求」上一行向上扫描提问段：带设问线索的行进题干，其余误吸附的行归还材料。
+  // 扫描在资料头处停（材料边界），出处行跳过，总字数超 160 视为整段材料不再向前。
+  const stemLines: string[] = [] // 自下而上收集
+  const rejectedLines: string[] = [] // 扫描区内不构成设问的行，同样自下而上
+  let scannedChars = 0
+  let scanCursor = requirementIndex - 1
+  while (scanCursor >= 0) {
+    const line = body[scanCursor] ?? ''
+    if (ESSAY_MATERIAL_HEADER.test(line)) break
+    // 出处行（(2023年山东B卷））单独捕获过；跳过它继续向上收提问句。
+    // OCR 常把出处行拆成两行：「(2026」+「年国考市地卷）」，两种形态都识别
+    if (
+      ESSAY_ORIGIN_MARK.test(line) ||
+      /^[（(]\s*\d{0,4}\s*$/.test(line) ||
+      /^\d{0,4}年[^。]{0,12}[)）]$/.test(line)
+    ) {
+      scanCursor -= 1
+      continue
+    }
+    scannedChars += line.length
+    if (scannedChars > 160) break
+    ;(isHintLine(line) ? stemLines : rejectedLines).push(line)
+    scanCursor -= 1
+  }
+  stemLines.reverse()
+  rejectedLines.reverse()
+  const questionFound = stemLines.length > 0
+
+  // 资料头取「要求」之上的第一个；找不到则整个正文（要求之前）都是材料
+  let materialHeaderIndex = -1
+  for (let index = 0; index < absoluteEnd; index += 1) {
+    if (ESSAY_MATERIAL_HEADER.test(body[index] ?? '')) {
+      materialHeaderIndex = index
+      break
+    }
+  }
+  const materialStart = materialHeaderIndex < 0 ? 0 : materialHeaderIndex
+  const zoneStart = scanCursor + 1 // 扫描区下边界（含）
+  const constantMaterial = body.slice(
+    Math.min(materialStart, absoluteEnd),
+    Math.min(zoneStart, absoluteEnd)
+  )
+  const materialParts: string[] = [
+    ...constantMaterial,
+    ...rejectedLines,
+    ...(questionFound ? [] : body.slice(Math.max(zoneStart, materialStart), absoluteEnd))
+  ]
+  const material = materialParts.filter((part) => part.trim()).join('\n')
+
+  const requirementText = requirement ? `要求：${requirement}` : ''
+  let stem = [...stemLines, requirementText].filter(Boolean).join('\n')
+  if (!questionFound || stem.replace(/\s+/g, '').length < 10)
+    stem = `${entry.title}${requirement ? ` 要求：${requirement}` : ''}`
+
+  // 完整性门槛：既没材料又没实质题干的单元（纯目录残片等）跳过
+  if (material.replace(/\s+/g, '').length < 30 && stem.replace(/\s+/g, '').length < 16)
+    return undefined
+
+  return {
+    seq,
+    chapter: entry.chapter,
+    title: entry.title,
+    stem,
+    material,
+    ...(originYear && Number.isFinite(originYear) ? { year: originYear } : {}),
+    ...(originPaper ? { paper: originPaper } : {}),
+    explanation:
+      answerIndex >= 0
+        ? body
+            .slice(answerIndex + 1)
+            .join('\n')
+            .trim()
+        : ''
+  }
+}
+
+export function parseEssayBook(lines: string[]): ParsedEssayBook {
+  const entries: EssayUnitEntry[] = []
+  let chapter = ''
+  for (const rawLine of lines) {
+    if (isEssayNoiseLine(rawLine)) continue
+    const chapterMatch = rawLine.match(ESSAY_CHAPTER_MARK)
+    if (chapterMatch) {
+      chapter = cleanEssayTitle(chapterMatch[1] ?? '')
+      continue
+    }
+    const unitMatch = rawLine.match(ESSAY_UNIT_MARK)
+    if (unitMatch) {
+      // 目录页会先印一遍单元标题（无正文）；同名单元取最后一次出现（带正文的那个）
+      const entry: EssayUnitEntry = {
+        chapter,
+        title: cleanEssayTitle(unitMatch[1] ?? ''),
+        body: []
+      }
+      const existing = entries.findIndex(
+        (candidate) => candidate.chapter === entry.chapter && candidate.title === entry.title
+      )
+      if (existing >= 0) entries.splice(existing, 1)
+      entries.push(entry)
+      continue
+    }
+    const last = entries[entries.length - 1]
+    if (last) last.body.push(rawLine)
+  }
+
+  const units: ParsedEssayUnit[] = []
+  let skipped = 0
+  for (const entry of entries) {
+    const unit = buildEssayUnit(entry, units.length + 1)
+    if (unit) units.push(unit)
+    else skipped += 1
+  }
+  return { units, skipped }
+}
+
 export function mergeDirectQuestions(
   questions: ParsedQuestion[],
   solutions: Map<string, ParsedSolution>,
@@ -421,10 +638,12 @@ export function directQuestionMarkdown(question: DirectQuestion): string {
     'generatedBy: "direct-import"',
     ...(question.year ? [`year: ${question.year}`] : []),
     ...(question.region ? [`region: ${yamlQuote(question.region)}`] : []),
+    ...(question.paper ? [`paper: ${yamlQuote(question.paper)}`] : []),
     'kind: "question"',
     `questionType: ${yamlQuote(question.questionType)}`,
     `difficulty: ${question.difficulty}`,
     `stem: ${yamlQuote(question.stem)}`,
+    ...(question.material ? [`material: ${yamlQuote(question.material)}`] : []),
     `options: ${JSON.stringify(question.options)}`,
     `answer: ${JSON.stringify(question.answer)}`,
     `explanation: ${yamlQuote(question.explanation)}`,
@@ -436,10 +655,10 @@ export function directQuestionMarkdown(question: DirectQuestion): string {
     '',
     question.stem,
     '',
-    '## 选项',
-    '',
-    ...question.options.map((option) => `${option.key}. ${option.text}`),
-    '',
+    ...(question.material ? ['## 材料', '', question.material, ''] : []),
+    ...(question.options.length
+      ? ['## 选项', '', ...question.options.map((option) => `${option.key}. ${option.text}`), '']
+      : []),
     '## 答案',
     '',
     question.answer.join('、'),
