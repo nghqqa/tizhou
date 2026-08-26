@@ -629,10 +629,10 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
             label="我确认有权处理所选资料，并会在发布前逐项核对答案、事实与来源"
           />
           <div className="builder-start-row">
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div className="builder-start-main">
               <Button
+                className="builder-start-button"
                 appearance="primary"
-                size="large"
                 icon={<PlayIcon />}
                 disabled={
                   !engine.available ||
@@ -645,16 +645,14 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
               >
                 {busy === 'start' ? '正在创建…' : mode === 'direct' ? '开始导入' : '开始处理'}
               </Button>
-              <div>
-                <strong style={{ fontSize: 14, fontVariantNumeric: 'tabular-nums' }}>
-                  {selected.size} 个文件
-                </strong>
-                <div className="muted-copy">
+              <div className="builder-start-meta">
+                <strong>{selected.size} 个文件</strong>
+                <span>
                   {mode === 'direct' ? '完成后需抽查并发布入库' : '由模型提取后逐项审核'}
-                </div>
+                </span>
               </div>
             </div>
-            <span className="muted-copy" style={{ marginTop: 6 }}>
+            <span className="builder-start-note">
               原文件保持不变 · 任务可取消 · 单个失败不中断整批
             </span>
           </div>
@@ -774,13 +772,13 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
           {job.artifacts.length > 0 && (
             <div className="builder-review-layout">
               <div className="builder-artifact-list" aria-label="待审核知识产物">
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, padding: '8px 10px', borderBottom: '1px solid var(--tz-border)', position: 'sticky', top: 0, background: 'var(--tz-surface)', zIndex: 1 }}>
+                <div className="builder-filter-bar">
                   {(['all', 'pending', 'approved', 'rejected', 'warnings'] as const).map((f) => (
                     <button
                       key={f}
                       type="button"
-                      className={`pill ${filterStatus === f ? 'pill-active' : ''}`}
-                      style={{ cursor: 'pointer', border: filterStatus === f ? '1px solid var(--tz-vermillion)' : '1px solid var(--tz-border)' }}
+                      className="builder-filter-pill"
+                      data-active={filterStatus === f}
                       onClick={() => { setFilterStatus(f); setReviewPage(0) }}
                     >
                       {f === 'all' ? `全部 ${job.artifacts.length}` :
@@ -828,12 +826,10 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
                   </button>
                 ))}
                 {totalPages > 1 && (
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '10px', borderTop: '1px solid var(--tz-border)' }}>
-                    <Button size="small" disabled={safePage === 0} onClick={() => setReviewPage(safePage - 1)}>上一页</Button>
-                    <span style={{ fontSize: 11, color: 'var(--tz-ink-3)' }}>
-                      {safePage + 1} / {totalPages} 页 · {filteredArtifacts.length} 条
-                    </span>
-                    <Button size="small" disabled={safePage >= totalPages - 1} onClick={() => setReviewPage(safePage + 1)}>下一页</Button>
+                  <div className="builder-pagination">
+                    <Button size="small" appearance="subtle" disabled={safePage === 0} onClick={() => setReviewPage(safePage - 1)}>上一页</Button>
+                    <span>{safePage + 1} / {totalPages} · {filteredArtifacts.length} 条</span>
+                    <Button size="small" appearance="subtle" disabled={safePage >= totalPages - 1} onClick={() => setReviewPage(safePage + 1)}>下一页</Button>
                   </div>
                 )}
               </div>
@@ -869,7 +865,7 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
                         </div>
                       )}
                       {artifact.status === 'rejected' && (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <div className="builder-status-row">
                           <span className="pill">已拒绝</span>
                           <Button
                             appearance="subtle"
@@ -882,7 +878,7 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
                         </div>
                       )}
                       {artifact.status === 'approved' && (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <div className="builder-status-row">
                           <span className="pill">已批准</span>
                           <Button
                             appearance="subtle"
@@ -910,16 +906,14 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
                     />
                   </>
                 ) : job && job.pendingArtifacts === 0 && job.artifacts.length > 0 ? (
-                  <div className="empty-compact" style={{ padding: '20px 0', flexDirection: 'column', gap: 6, alignItems: 'flex-start' }}>
+                  <div className="empty-guide">
                     <strong>本批产物已全部处理</strong>
                     <span>
                       已批准 {job.approvedArtifacts} 项 · 已拒绝{' '}
                       {job.artifacts.filter((a) => a.status === 'rejected').length} 项
                       {job.approvedArtifacts > 0 && '，可点击上方「发布」入库'}
                     </span>
-                    <span style={{ fontSize: 'var(--tz-text-xs)', color: 'var(--tz-ink-3)' }}>
-                      在左侧筛选中切换「已批准」或「已拒绝」可查看具体项目
-                    </span>
+                    <span>在左侧筛选中切换「已批准」或「已拒绝」可查看具体项目</span>
                   </div>
                 ) : (
                   <div className="empty-compact" style={{ padding: '20px 0' }}>
