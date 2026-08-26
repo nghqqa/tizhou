@@ -575,7 +575,7 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
           description="直导题库：题本与解析/答案册放同一批次，自动配对、与当前题库去重后写入（零 API）；AI 模式：由模型提取知识后逐项审核。"
         >
           <div className="builder-options">
-            <Field label="产物类型">
+            <Field className="builder-option-field" label="产物类型">
               <Select
                 value={mode}
                 onChange={(_, data) => setMode(data.value as KnowledgeBuildMode)}
@@ -588,7 +588,7 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
               </Select>
             </Field>
             {mode !== 'direct' && (
-              <Field label="质量流程">
+              <Field className="builder-option-field" label="质量流程">
                 <Select
                   value={quality}
                   disabled={mode === 'convert-only'}
@@ -599,7 +599,7 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
                 </Select>
               </Field>
             )}
-            <Field label="默认科目">
+            <Field className="builder-option-field" label="默认科目">
               <Select
                 value={subject}
                 onChange={(_, data) => setSubject(data.value as Subject | 'common' | 'auto')}
@@ -610,7 +610,11 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
                 <option value="common">公共知识</option>
               </Select>
             </Field>
-            <Field label="批次标签" hint="用逗号分隔，将附加到所有产物">
+            <Field
+              className="builder-option-field"
+              label="批次标签"
+              hint="用逗号分隔，将附加到所有产物"
+            >
               <Input
                 value={tags}
                 onChange={(_, data) => setTags(data.value)}

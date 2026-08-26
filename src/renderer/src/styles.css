@@ -684,29 +684,36 @@ a { color: inherit; }
 .builder-file > span:nth-of-type(2) { color: var(--tz-ink-3); font-family: var(--tz-font-mono); text-align: right; }
 .builder-file > small { grid-column: 3 / -1; color: var(--tz-ink-3); }
 
-/* 整理策略表单：Grid 布局，控件间距 16px，边框不贴合 */
+/* 整理策略表单：Grid 顶部对齐，控件间距 16px，hint 不影响控件位置 */
 .builder-options {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   column-gap: 16px;
   row-gap: 14px;
+  align-items: start;
   min-width: 0;
   margin-bottom: 14px;
 }
 .builder-options > * {
   min-width: 0;
+  align-self: start;
 }
-/* 确保控件完整位于 Grid 单元格内，不溢出 */
-.builder-options [class*='Field'] {
+/* 项目级稳定类：不依赖 Fluent UI hash 类名 */
+.builder-option-field {
+  align-self: start;
   min-width: 0;
   width: 100%;
 }
-.builder-options select,
-.builder-options input,
-.builder-options textarea {
+.builder-option-field select,
+.builder-option-field input {
+  display: block;
   width: 100%;
   min-width: 0;
   box-sizing: border-box;
+}
+/* hint 区域最小高度：有 hint 和没 hint 的 Field 控件顶部保持一致 */
+.builder-option-field [class*='hint'] {
+  min-height: 18px;
 }
 /* 开始操作栏：主按钮 + 元信息 + 风险说明，左对齐不分散 */
 .builder-start-row {
@@ -900,6 +907,9 @@ a { color: inherit; }
   .side-stack { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .builder-options { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+@media (max-width: 640px) {
+  .builder-options { grid-template-columns: 1fr; }
+}
 @media (max-width: 720px) {
   .builder-start-row {
     align-items: stretch;
@@ -930,7 +940,7 @@ a { color: inherit; }
   .vault-summary { display: flex; justify-content: center; }
   .grid.two, .grid.three, .grid.four, .form-grid, .document-layout, .diagnosis-band { grid-template-columns: 1fr; }
   .document-list { max-height: 220px; border-right: 0; border-bottom: 1px solid var(--tz-border); }
-  .builder-scan-summary, .builder-options, .builder-review-layout { grid-template-columns: 1fr; }
+  .builder-scan-summary, .builder-review-layout { grid-template-columns: 1fr; }
   .builder-review-layout { height: auto; max-height: none; min-height: 400px; overflow: visible; }
   .builder-scan-summary > div { border-right: 0; border-bottom: 1px solid var(--tz-border); }
   .builder-scan-summary > div:last-child { border-bottom: 0; }
