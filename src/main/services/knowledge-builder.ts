@@ -934,7 +934,18 @@ export class KnowledgeBuilderService {
               const questions = parseQuestionBook(directLines)
               const essays = parseEssayBook(directLines)
               trainingMarkers += solutionMarks === 0 ? countEssayTrainingMarks(directLines) : 0
-              if (questions.length > 0 || essays.units.length === 0) {
+              // 通道按产出规模择优：申论书的 OCR 残渣常让客观题解析器切出个位数伪题，
+              // 按"客观题>0 就走客观题"会把整本申论错送管线（实测夸夸刷 58 单元 vs 3 伪题）。
+              // 反向同理，行测题本的偶发训练字样不会盖过数百道客观题。
+              if (essays.units.length >= questions.length && essays.units.length > 0) {
+                directEssays.push({
+                  sourceId: file.sourceId,
+                  relativePath: file.relativePath,
+                  units: essays.units
+                })
+                file.state = 'ready'
+                file.message = `切出 ${essays.units.length} 道申论题（无参考答案），批次结束后生成待审核产物`
+              } else {
                 directBooks.push({
                   sourceId: file.sourceId,
                   relativePath: file.relativePath,
@@ -943,15 +954,6 @@ export class KnowledgeBuilderService {
                 })
                 file.state = 'ready'
                 file.message = `题本：切出 ${questions.length} 题，批次结束后自动合并发布`
-              } else {
-                // 客观题解析器颗粒无收但训练单元结构成立 → 申论主观题教材，走直导申论通道
-                directEssays.push({
-                  sourceId: file.sourceId,
-                  relativePath: file.relativePath,
-                  units: essays.units
-                })
-                file.state = 'ready'
-                file.message = `切出 ${essays.units.length} 道申论题（无参考答案），批次结束后生成待审核产物`
               }
             }
           } else if (job.options.mode === 'convert-only') {

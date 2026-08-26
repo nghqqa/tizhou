@@ -823,4 +823,97 @@ describe('knowledge builder direct mode', () => {
     expect(job.status).toBe('completed')
     expect(job.message).toContain('模型提炼')
   }, 35_000)
+
+  it('routes a shenlun book through the essay channel even when OCR noise yields pseudo objective stems', async () => {
+    // 回归：夸夸刷里存在「N. 长句」形似残渣行，旧路由「客观题>0 即走客观题」把整本书送错管线
+    const data = temporaryDirectory('tizhou-kb-route-data-')
+    const source = temporaryDirectory('tizhou-kb-route-source-')
+    writeFileSync(
+      join(source, '申论题本.md'),
+      [
+        '第一章 归纳概括',
+        '【训练一】提升基层社会治理水平经验做法',
+        '资料2',
+        'W市经济技术开发区在实践中探索设立社区基金，吸纳驻区单位、企业园区、社会组织、居民群众中的红色力量参与筹建，搭建社区需求与资源对接的公益平台，形成精准化对接、项目化运作的新格局，累计募捐资金达到130余万元。',
+        '根据“给定资料2”，归纳W市经开区依托社区基金提升基层社会治理水平的经验做法。',
+        '(2023年山东B卷）',
+        '要求：全面，准确，有条理，不超过300字。',
+        '第二章 提出对策',
+        '【训练二】解决线上盲道问题',
+        '资料1',
+        '盲道被占用现象普遍，部分路段的盲道被共享单车和机动车挤占，视障人士出行困难，反映多次仍未解决，管理部门职责边界不清。',
+        '请梳理“线上盲道”在建设和使用中存在的问题，并提出解决建议。',
+        '要求：梳理准确，建议可行，不超过250字。',
+        '第三章 综合分析',
+        '【训练三】谈谈对“夜经济”的理解',
+        '资料3',
+        '夜间经济已经成为城市消费的新蓝海，多地出台政策延长商圈营业时间、丰富夜间文化供给，但同时也带来噪音扰民与环卫压力等治理新课题。',
+        '结合给定资料，谈谈你对发展“夜经济”的看法。',
+        '要求：观点明确，分析透彻，不超过200字。',
+        '1. 这是排版残渣形成的编号长句，形式与客观题题号行高度相似但绝非可入库的选择题目内容。',
+        '2. 另一条同类编号残渣句子同样只是为了让客观题解析器产出非零候选数，用来锁定这条路由回归路径。'
+      ].join('\n') + '\n',
+      'utf8'
+    )
+    const service = new KnowledgeBuilderService(
+      data,
+      process.cwd(),
+      {} as AiService,
+      {
+        connect: vi.fn(),
+        ensureBuiltinVault: () => ({
+          id: 'builtin',
+          name: '内置示例库',
+          path: 'C:/builtin-vault',
+          connectedAt: '',
+          lastIndexedAt: '',
+          questionCount: 0,
+          documentCount: 0,
+          warnings: [],
+          isBuiltin: true
+        }),
+        questionSignatures: () => new Set<string>()
+      } as unknown as VaultService
+    )
+    vi.spyOn(service, 'engineStatus').mockResolvedValue({
+      available: true,
+      installing: false,
+      version: 'test',
+      pythonPath: 'test-python',
+      ocrAvailable: false,
+      message: 'ready',
+      supportedExtensions: ['.md']
+    })
+    const conversionTarget = service as unknown as {
+      convert: (python: string, worker: string, source: string, output: string) => Promise<void>
+    }
+    vi.spyOn(conversionTarget, 'convert').mockImplementation(
+      async (_python, _worker, sourcePath, outputPath) => {
+        writeFileSync(outputPath, readFileSync(sourcePath, 'utf8'), 'utf8')
+      }
+    )
+    const scan = service.scan(source)
+    const started = await service.startJob({
+      sourcePath: source,
+      fileIds: scan.files.filter((file) => file.eligible).map((file) => file.id),
+      options: {
+        mode: 'direct',
+        quality: 'standard',
+        subject: 'auto',
+        tags: [],
+        instruction: '',
+        rightsConfirmed: true
+      }
+    })
+    let job = started
+    const deadline = Date.now() + 30_000
+    while (['queued', 'running', 'cancelling'].includes(job.status) && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      job = service.getJob(started.id)
+    }
+
+    expect(job.status).toBe('review')
+    expect(job.files[0]?.message).toContain('道申论题')
+    expect(job.message).toContain('申论主观题')
+  }, 35_000)
 })
