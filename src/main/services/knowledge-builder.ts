@@ -1379,6 +1379,7 @@ export class KnowledgeBuilderService {
               textLayerPages?: number
               ocrPages?: number
               emptyPages?: number
+              ocrLineCount?: number
               averageConfidence?: number
               lowConfidenceLines?: number
               removedPageNumbers?: number
@@ -1391,6 +1392,7 @@ export class KnowledgeBuilderService {
                 textLayerPages: payload.textLayerPages ?? 0,
                 ocrPages: payload.ocrPages ?? 0,
                 emptyPages: payload.emptyPages ?? 0,
+                ocrLineCount: payload.ocrLineCount ?? 0,
                 averageConfidence: payload.averageConfidence,
                 lowConfidenceLines: payload.lowConfidenceLines ?? 0,
                 removedPageNumbers: payload.removedPageNumbers ?? 0,

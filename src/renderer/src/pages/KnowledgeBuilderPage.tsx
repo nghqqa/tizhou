@@ -29,6 +29,7 @@ import type {
   KnowledgeBuildQuality,
   KnowledgeEngineStatus,
   KnowledgeSourceScan,
+  OcrQualityReport,
   Subject,
   VaultIndexResult
 } from '@shared/contracts'
@@ -57,6 +58,29 @@ function getDisplayJobStatus(job: KnowledgeBuildJob): string {
     return '本批已处理'
   }
   return jobStatusLabel(job.status)
+}
+
+/** OCR 质量摘要：区分文字层页/OCR页/置信度，不与 AI 模型置信度混淆 */
+function OcrQualitySummary({ report }: { report: OcrQualityReport }): React.JSX.Element {
+  const parts: string[] = []
+  if (report.textLayerPages > 0) parts.push(`文字层 ${report.textLayerPages} 页`)
+  if (report.ocrPages > 0) parts.push(`OCR ${report.ocrPages} 页`)
+  if (report.averageConfidence != null) {
+    parts.push(`OCR 置信度 ${(report.averageConfidence * 100).toFixed(0)}%`)
+  }
+  if (report.emptyPages > 0) parts.push(`${report.emptyPages} 页空白`)
+  const hasWarning =
+    (report.averageConfidence != null && report.averageConfidence < 0.72) ||
+    (report.ocrLineCount > 0 && report.lowConfidenceLines / report.ocrLineCount > 0.2)
+  return (
+    <span
+      className={hasWarning ? 'ocr-quality ocr-quality-warning' : 'ocr-quality'}
+      style={{ gridColumn: '3 / -1' }}
+    >
+      {parts.join(' · ')}
+      {hasWarning && ' · 识别质量较低，请人工抽查'}
+    </span>
+  )
 }
 
 function artifactStatusLabel(status: KnowledgeArtifactStatus): string {
@@ -791,6 +815,7 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
                 <span title={file.relativePath}>{file.relativePath}</span>
                 <Badge appearance="outline">{file.state}</Badge>
                 <small>{file.message ?? '等待处理'}</small>
+                {file.ocrQuality && <OcrQualitySummary report={file.ocrQuality} />}
               </div>
             ))}
           </div>

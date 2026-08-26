@@ -89,10 +89,10 @@ def ocr_page(engine: RapidOCR, image) -> list[dict]:
 def filter_lines(
     pages: list[list[dict]],
     heights: list[int | None],
+    page_sources: list[str] | None = None,
 ) -> tuple[list[list[str]], dict]:
-    """过滤页眉/页脚/页码/水印，统计质量指标"""
+    """过滤页眉/页脚/页码/水印，统计质量指标（置信度只统计 OCR 页）"""
     total = len(pages)
-    # 统计跨页重复短行
     counts: dict[str, int] = {}
     for lines in pages:
         seen: set[str] = set()
@@ -112,21 +112,26 @@ def filter_lines(
         }
 
     kept_pages: list[list[str]] = []
-    all_scores: list[float] = []
+    ocr_scores: list[float] = []  # 只统计 OCR 页的识别行
     low_confidence_lines = 0
-    total_lines = 0
+    ocr_line_count = 0
     removed_page_numbers = 0
 
-    for lines, height in zip(pages, heights):
+    for page_index, (lines, height) in enumerate(zip(pages, heights)):
+        is_ocr_page = page_sources is None or (
+            page_index < len(page_sources) and page_sources[page_index] == 'ocr'
+        )
         kept: list[str] = []
         for line in lines:
             text = line['text']
             if not text:
                 continue
-            total_lines += 1
-            all_scores.append(line['score'])
-            if line['score'] < LOW_CONFIDENCE_THRESHOLD:
-                low_confidence_lines += 1
+            # 只统计 OCR 页的置信度（文字层页不参与，不抬高平均值）
+            if is_ocr_page:
+                ocr_scores.append(line['score'])
+                ocr_line_count += 1
+                if line['score'] < LOW_CONFIDENCE_THRESHOLD:
+                    low_confidence_lines += 1
 
             # 纯数字行：只删除页码位置的，保护题号
             if re.match(r'^\d{1,3}$', text):
@@ -161,12 +166,12 @@ def filter_lines(
             kept.append(text)
         kept_pages.append(kept)
 
-    avg_confidence = sum(all_scores) / len(all_scores) if all_scores else None
-    low_conf_ratio = low_confidence_lines / total_lines if total_lines > 0 else 0
+    avg_confidence = sum(ocr_scores) / len(ocr_scores) if ocr_scores else None
+    low_conf_ratio = low_confidence_lines / ocr_line_count if ocr_line_count > 0 else 0
     return kept_pages, {
         'averageConfidence': round(avg_confidence, 3) if avg_confidence else None,
         'lowConfidenceLines': low_confidence_lines,
-        'totalLines': total_lines,
+        'ocrLineCount': ocr_line_count,
         'lowConfidenceRatio': round(low_conf_ratio, 3),
         'removedPageNumbers': removed_page_numbers,
     }
@@ -187,6 +192,7 @@ def main() -> int:
     engine = None  # 延迟初始化，纯文字层 PDF 不需要加载模型
     pages_data: list[list[dict]] = []
     heights: list[int | None] = []
+    page_sources: list[str] = []  # 每页来源: 'text-layer' 或 'ocr'
     text_layer_pages = 0
     ocr_pages = 0
     empty_pages = 0
@@ -202,6 +208,7 @@ def main() -> int:
         lines = ocr_page(engine, image_data)
         pages_data.append(lines)
         heights.append(height)
+        page_sources.append('ocr')
         ocr_pages = 1
         if not lines:
             empty_pages = 1
@@ -223,6 +230,7 @@ def main() -> int:
                     paragraphs = [p.strip() for p in text.split('\n') if p.strip()]
                     pages_data.append([{'text': p, 'top': 0, 'bottom': 0, 'score': 1.0} for p in paragraphs])
                     heights.append(None)  # 文字层页面无高度信息
+                    page_sources.append('text-layer')
                     report({'page': page_index + 1, 'total': total_pages,
                            'characters': len(text), 'source': 'text-layer'})
                     continue
@@ -236,6 +244,7 @@ def main() -> int:
                 lines = ocr_page(engine, image_data)
                 pages_data.append(lines)
                 heights.append(height)
+                page_sources.append('ocr')
                 ocr_pages += 1
                 char_count = sum(len(l['text']) for l in lines)
                 if char_count < 10:
@@ -247,7 +256,7 @@ def main() -> int:
             document.close()
 
     # 过滤并合并
-    kept_pages, quality = filter_lines(pages_data, heights)
+    kept_pages, quality = filter_lines(pages_data, heights, page_sources)
     merged = '\n\n'.join('\n'.join(lines) for lines in kept_pages if lines)
     output.write_text(merged, encoding='utf-8')
 
@@ -266,6 +275,7 @@ def main() -> int:
         'textLayerPages': text_layer_pages,
         'ocrPages': ocr_pages,
         'emptyPages': empty_pages,
+        'ocrLineCount': quality['ocrLineCount'],
         'averageConfidence': quality['averageConfidence'],
         'lowConfidenceLines': quality['lowConfidenceLines'],
         'removedPageNumbers': quality['removedPageNumbers'],

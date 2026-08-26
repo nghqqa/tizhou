@@ -1317,6 +1317,20 @@ a {
   gap: 8px;
 }
 
+/* OCR 质量摘要（区别于文件状态和 AI 置信度） */
+.ocr-quality {
+  overflow: hidden;
+  color: var(--tz-ink-3);
+  font-size: 10px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ocr-quality-warning {
+  color: var(--tz-amber);
+  font-weight: 500;
+}
+
 /* 审核完成引导 */
 .empty-guide {
   display: flex;

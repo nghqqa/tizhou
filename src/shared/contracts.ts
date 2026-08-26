@@ -140,6 +140,7 @@ export interface OcrQualityReport {
   textLayerPages: number
   ocrPages: number
   emptyPages: number
+  ocrLineCount: number
   averageConfidence?: number
   lowConfidenceLines: number
   removedPageNumbers: number
