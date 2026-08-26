@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useState, type ComponentType } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type ComponentType } from 'react'
 import {
   Button,
   FluentProvider,
@@ -157,24 +157,38 @@ function AppShell(): React.JSX.Element {
     void updateSettings({ theme: isDark ? 'light' : 'dark' })
   }
 
+  const updateBusyRef = useRef(false)
+
   const checkForUpdates = async (): Promise<void> => {
+    if (updateBusyRef.current) return
+    updateBusyRef.current = true
     try {
       const result = await invoke<{
         available: boolean
+        downloading: boolean
+        downloaded: boolean
         version?: string
         error?: string
         currentVersion: string
       }>({ method: 'app.update.check' })
       if (result.error) {
         window.alert(`检查更新失败：${result.error}`)
+      } else if (result.downloaded) {
+        // 已下载完毕，直接询问安装
+        const install = window.confirm('更新已下载完成。点击确定立即安装并重启应用。')
+        if (install) {
+          await invoke({ method: 'app.update.install' })
+        }
       } else if (result.available && result.version) {
         const download = window.confirm(
           `发现新版本 ${result.version}（当前 ${result.currentVersion}）。\n点击确定开始下载，下载完成后会提示安装。`
         )
         if (download) {
-          const dlResult = await invoke<{ downloaded: boolean; error?: string }>({
-            method: 'app.update.download'
-          })
+          const dlResult = await invoke<{
+            downloaded: boolean
+            downloading: boolean
+            error?: string
+          }>({ method: 'app.update.download' })
           if (dlResult.error) {
             window.alert(`下载失败：${dlResult.error}`)
           } else if (dlResult.downloaded) {
@@ -184,11 +198,13 @@ function AppShell(): React.JSX.Element {
             }
           }
         }
-      } else {
+      } else if (!result.downloading) {
         window.alert(`当前已是最新版本（${result.currentVersion}）。`)
       }
     } catch (cause) {
       window.alert(`检查更新失败：${cause instanceof Error ? cause.message : '未知错误'}`)
+    } finally {
+      updateBusyRef.current = false
     }
   }
 
