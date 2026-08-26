@@ -156,13 +156,61 @@ startxref
     return result
   }
 
+  function createScannedPdf(dir: string): string {
+    const pdfPath = join(dir, 'scanned-test.pdf')
+    // Create image-only PDF using Python PIL (image with text drawn on it)
+    const script = `
+from PIL import Image, ImageDraw, ImageFont
+img = Image.new('RGB', (1240, 1754), 'white')
+draw = ImageDraw.Draw(img)
+font = ImageFont.truetype('C:/Windows/Fonts/msyh.ttc', 28) if __import__('os').path.exists('C:/Windows/Fonts/msyh.ttc') else ImageFont.load_default()
+draw.text((100, 200), '1. This is a scanned question about examination.', fill='black', font=font)
+draw.text((100, 250), 'A. Scanned option one', fill='black', font=font)
+draw.text((100, 300), 'B. Scanned option two', fill='black', font=font)
+draw.text((100, 350), 'C. Scanned option three', fill='black', font=font)
+draw.text((100, 400), 'D. Scanned option four', fill='black', font=font)
+img.save(r'${pdfPath.replace(/\\/g, '\\\\')}', 'PDF', resolution=200)`
+    execFileSync(VENV_PYTHON, ['-c', script], { timeout: 30000 })
+    return pdfPath
+  }
+
+  function createMixedPdf(dir: string): string {
+    const pdfPath = join(dir, 'mixed-test.pdf')
+    // Page 1: text layer, Page 2: scanned image
+    const textPdf = createTextPdf(dir)
+    const script = `
+from PIL import Image, ImageDraw, ImageFont
+import pypdfium2 as pdfium
+img = Image.new('RGB', (1240, 1754), 'white')
+draw = ImageDraw.Draw(img)
+font = ImageFont.truetype('C:/Windows/Fonts/msyh.ttc', 28) if __import__('os').path.exists('C:/Windows/Fonts/msyh.ttc') else ImageFont.load_default()
+draw.text((100, 200), '5. This is a scanned page in mixed PDF.', fill='black', font=font)
+draw.text((100, 250), 'A. Mixed option one', fill='black', font=font)
+draw.text((100, 300), 'B. Mixed option two', fill='black', font=font)
+img_path = r'${join(dir, 'scan-page.pdf').replace(/\\/g, '\\\\')}'
+img.save(img_path, 'PDF', resolution=200)
+# Merge text PDF + scan PDF
+pdf1 = pdfium.PdfDocument(r'${textPdf.replace(/\\/g, '\\\\')}')
+pdf2 = pdfium.PdfDocument(img_path)
+dest = pdfium.PdfDocument.new()
+for src in [pdf1, pdf2]:
+    for i in range(len(src)):
+        dest.import_pages(src, [i])
+dest.save(r'${pdfPath.replace(/\\/g, '\\\\')}')`
+    execFileSync(VENV_PYTHON, ['-c', script], { timeout: 30000 })
+    return pdfPath
+  }
+
   it('processes pure text-layer PDF and reports textLayerPages > 0', { timeout: 120000 }, () => {
-    if (!hasVenv()) return // Skip if no venv
+    if (!hasVenv()) {
+      throw new Error(
+        'OCR venv not found — integration test requires the app engine to be installed'
+      )
+    }
     const dir = temporaryDirectory('tizhou-ocr-text-')
     const pdfPath = createTextPdf(dir)
     const outPath = join(dir, 'output.md')
     const stdout = runWorker(pdfPath, outPath)
-    // Parse final report
     const lines = stdout.trim().split('\n')
     const lastLine = lines[lines.length - 1]
     const payload = parseOcrWorkerLine(lastLine)
@@ -171,13 +219,71 @@ startxref
     expect(quality.totalPages).toBe(1)
     expect(quality.textLayerPages).toBe(1)
     expect(quality.ocrPages).toBe(0)
-    // Output should contain the question text
     const content = readFileSync(outPath, 'utf8')
     expect(content).toContain('test question')
   })
 
+  it('processes scanned PDF with OCR and reports ocrPages > 0', { timeout: 180000 }, () => {
+    if (!hasVenv()) {
+      throw new Error(
+        'OCR venv not found — integration test requires the app engine to be installed'
+      )
+    }
+    const dir = temporaryDirectory('tizhou-ocr-scan-')
+    const pdfPath = createScannedPdf(dir)
+    const outPath = join(dir, 'output.md')
+    const stdout = runWorker(pdfPath, outPath)
+    const lines = stdout.trim().split('\n')
+    const lastLine = lines[lines.length - 1]
+    const payload = parseOcrWorkerLine(lastLine)
+    expect(payload?.type).toBe('quality')
+    const quality = payload as OcrQualityPayload
+    expect(quality.totalPages).toBe(1)
+    expect(quality.ocrPages).toBe(1)
+    expect(quality.textLayerPages).toBe(0)
+    expect(quality.averageConfidence).toBeDefined()
+    // Output should contain OCR-recognized text
+    const content = readFileSync(outPath, 'utf8')
+    expect(content.length).toBeGreaterThan(20)
+  })
+
+  it(
+    'processes mixed PDF: text-layer page + scanned page in correct order',
+    { timeout: 180000 },
+    () => {
+      if (!hasVenv()) {
+        throw new Error(
+          'OCR venv not found — integration test requires the app engine to be installed'
+        )
+      }
+      const dir = temporaryDirectory('tizhou-ocr-mixed-')
+      const pdfPath = createMixedPdf(dir)
+      const outPath = join(dir, 'output.md')
+      const stdout = runWorker(pdfPath, outPath)
+      const lines = stdout.trim().split('\n')
+      const lastLine = lines[lines.length - 1]
+      const payload = parseOcrWorkerLine(lastLine)
+      expect(payload?.type).toBe('quality')
+      const quality = payload as OcrQualityPayload
+      expect(quality.totalPages).toBe(2)
+      expect(quality.textLayerPages).toBe(1)
+      expect(quality.ocrPages).toBe(1)
+      // Confidence should only be from OCR page, not text-layer
+      expect(quality.averageConfidence).toBeDefined()
+      expect(quality.ocrLineCount).toBeGreaterThan(0)
+      // Output should contain both text-layer and OCR content
+      const content = readFileSync(outPath, 'utf8')
+      expect(content).toContain('test question') // from text layer
+      expect(content).toContain('scanned page') // from OCR
+    }
+  )
+
   it('parses real worker output through shared parseOcrWorkerLine', { timeout: 120000 }, () => {
-    if (!hasVenv()) return
+    if (!hasVenv()) {
+      throw new Error(
+        'OCR venv not found — integration test requires the app engine to be installed'
+      )
+    }
     const dir = temporaryDirectory('tizhou-ocr-shared-')
     const pdfPath = createTextPdf(dir)
     const outPath = join(dir, 'output.md')

@@ -1,6 +1,6 @@
 {
   "name": "tizhou",
-  "version": "0.9.7",
+  "version": "0.9.8",
   "private": true,
   "license": "MIT",
   "author": "nghqqa",
@@ -29,6 +29,7 @@
   "dependencies": {
     "@fluentui/react-components": "9.74.6",
     "@phosphor-icons/react": "2.1.10",
+    "electron-updater": "^6.8.9",
     "gray-matter": "4.0.3",
     "katex": "0.18.4",
     "react": "19.2.8",
@@ -60,9 +61,16 @@
     "directories": {
       "output": "dist"
     },
+    "publish": {
+      "provider": "github",
+      "owner": "nghqqa",
+      "repo": "tizhou",
+      "releaseType": "release"
+    },
     "files": [
       "out/**/*",
-      "package.json"
+      "package.json",
+      "node_modules/electron-updater/**/*"
     ],
     "extraResources": [
       {

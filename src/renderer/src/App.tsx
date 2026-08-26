@@ -8,6 +8,7 @@ import {
   Spinner
 } from '@fluentui/react-components'
 import {
+  ArrowClockwiseIcon,
   BrainIcon,
   BookOpenTextIcon,
   BooksIcon,
@@ -33,6 +34,7 @@ import {
 import { NavLink, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { darkTheme, lightTheme } from './theme'
 import { useAppStore } from './store'
+import { invoke } from './api'
 import { LoadingState } from './components/ui'
 
 const DashboardPage = lazy(() =>
@@ -155,6 +157,41 @@ function AppShell(): React.JSX.Element {
     void updateSettings({ theme: isDark ? 'light' : 'dark' })
   }
 
+  const checkForUpdates = async (): Promise<void> => {
+    try {
+      const result = await invoke<{
+        available: boolean
+        version?: string
+        error?: string
+        currentVersion: string
+      }>({ method: 'app.update.check' })
+      if (result.error) {
+        window.alert(`检查更新失败：${result.error}`)
+      } else if (result.available && result.version) {
+        const download = window.confirm(
+          `发现新版本 ${result.version}（当前 ${result.currentVersion}）。\n点击确定开始下载，下载完成后会提示安装。`
+        )
+        if (download) {
+          const dlResult = await invoke<{ downloaded: boolean; error?: string }>({
+            method: 'app.update.download'
+          })
+          if (dlResult.error) {
+            window.alert(`下载失败：${dlResult.error}`)
+          } else if (dlResult.downloaded) {
+            const install = window.confirm('更新已下载完成。点击确定立即安装并重启应用。')
+            if (install) {
+              await invoke({ method: 'app.update.install' })
+            }
+          }
+        }
+      } else {
+        window.alert(`当前已是最新版本（${result.currentVersion}）。`)
+      }
+    } catch (cause) {
+      window.alert(`检查更新失败：${cause instanceof Error ? cause.message : '未知错误'}`)
+    }
+  }
+
   useEffect(() => {
     void initialize()
   }, [initialize])
@@ -228,6 +265,16 @@ function AppShell(): React.JSX.Element {
             onClick={toggleTheme}
           >
             {isDark ? '浅色模式' : '深色模式'}
+          </Button>
+          <Button
+            appearance="subtle"
+            size="small"
+            icon={<ArrowClockwiseIcon size={16} />}
+            aria-label="检查更新"
+            title="检查更新"
+            onClick={() => void checkForUpdates()}
+          >
+            检查更新
           </Button>
         </div>
         <div className="vault-summary">

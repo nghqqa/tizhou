@@ -2,6 +2,7 @@ import { fileURLToPath } from 'node:url'
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { cpSync, existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
+import { autoUpdater } from 'electron-updater'
 import type { LearningPlan, WorkbenchRequest } from '../shared/contracts'
 import { AiService } from './services/ai'
 import { DatabaseService } from './services/database'
@@ -371,6 +372,31 @@ async function initialize(): Promise<void> {
         }, 1500)
         return result
       }
+      case 'app.update.status':
+        return getUpdateStatus()
+      case 'app.update.check':
+        try {
+          await autoUpdater.checkForUpdates()
+          return getUpdateStatus()
+        } catch (error) {
+          return {
+            ...getUpdateStatus(),
+            error: error instanceof Error ? error.message : '检查更新失败'
+          }
+        }
+      case 'app.update.download':
+        try {
+          await autoUpdater.downloadUpdate()
+          return getUpdateStatus()
+        } catch (error) {
+          return {
+            ...getUpdateStatus(),
+            error: error instanceof Error ? error.message : '下载更新失败'
+          }
+        }
+      case 'app.update.install':
+        autoUpdater.quitAndInstall()
+        return { ...getUpdateStatus() }
       case 'folder.pick': {
         const selected = await dialog.showOpenDialog(mainWindow!, {
           title: request.params.title,
@@ -529,10 +555,66 @@ function migrateLegacyDataDirectory(): void {
   }
 }
 
+// ── 自动更新（electron-updater + GitHub Releases）──
+let updateStatus: {
+  checking: boolean
+  available: boolean
+  downloading: boolean
+  downloaded: boolean
+  progress?: number
+  version?: string
+  error?: string
+} = { checking: false, available: false, downloading: false, downloaded: false }
+
+function setupAutoUpdater(): void {
+  autoUpdater.autoDownload = false
+  autoUpdater.autoInstallOnAppQuit = true
+  autoUpdater.logger = null
+
+  autoUpdater.on('checking-for-update', () => {
+    updateStatus = { ...updateStatus, checking: true, error: undefined }
+  })
+  autoUpdater.on('update-available', (info) => {
+    updateStatus = {
+      ...updateStatus,
+      checking: false,
+      available: true,
+      version: info.version,
+      error: undefined
+    }
+  })
+  autoUpdater.on('update-not-available', () => {
+    updateStatus = { ...updateStatus, checking: false, available: false, error: undefined }
+  })
+  autoUpdater.on('download-progress', (progress) => {
+    updateStatus = {
+      ...updateStatus,
+      downloading: true,
+      progress: Math.round(progress.percent)
+    }
+  })
+  autoUpdater.on('update-downloaded', () => {
+    updateStatus = { ...updateStatus, downloading: false, downloaded: true, progress: 100 }
+  })
+  autoUpdater.on('error', (error) => {
+    updateStatus = {
+      ...updateStatus,
+      checking: false,
+      downloading: false,
+      error: error.message
+    }
+  })
+}
+
+function getUpdateStatus() {
+  return { ...updateStatus, currentVersion: app.getVersion() }
+}
+
 app.whenReady().then(async () => {
   migrateLegacyDataDirectory()
   await initialize()
   createWindow()
+  setupAutoUpdater()
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })

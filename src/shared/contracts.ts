@@ -687,6 +687,10 @@ export type WorkbenchRequest =
   | { method: 'diagnostics.export'; params?: undefined }
   | { method: 'user.resetLearningData'; params: { confirmation: string } }
   | { method: 'shell.openPath'; params: { path: string } }
+  | { method: 'app.update.status'; params?: undefined }
+  | { method: 'app.update.check'; params?: undefined }
+  | { method: 'app.update.download'; params?: undefined }
+  | { method: 'app.update.install'; params?: undefined }
 
 export interface WorkbenchAPI {
   invoke<T = unknown>(request: WorkbenchRequest): Promise<T>
