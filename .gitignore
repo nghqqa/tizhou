@@ -21,3 +21,5 @@ coverage/
 runtime/
 .zcode/
 .impeccable/
+__pycache__/
+*.py[cod]

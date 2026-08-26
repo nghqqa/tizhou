@@ -29,6 +29,7 @@ import type {
   Subject,
   VaultIndexResult
 } from '../../shared/contracts'
+import { parseOcrWorkerLine } from '../../shared/ocr-payload'
 import { FEATURE_PROMPTS, sourceEnvelope, taskDataEnvelope } from '../../shared/prompts'
 import { AiService } from './ai'
 import {
@@ -1369,44 +1370,16 @@ export class KnowledgeBuilderService {
         const lines = stdoutBuffer.split('\n')
         stdoutBuffer = lines.pop() ?? ''
         for (const line of lines) {
-          try {
-            const payload = JSON.parse(line) as {
-              page?: number
-              total?: number
-              source?: string
-              done?: boolean
-              totalPages?: number
-              textLayerPages?: number
-              ocrPages?: number
-              emptyPages?: number
-              ocrLineCount?: number
-              averageConfidence?: number
-              lowConfidenceLines?: number
-              removedPageNumbers?: number
-              warnings?: string[]
-            }
-            if (payload.done) {
-              // 最终报告：保存质量数据
-              qualityReport = {
-                totalPages: payload.totalPages ?? 0,
-                textLayerPages: payload.textLayerPages ?? 0,
-                ocrPages: payload.ocrPages ?? 0,
-                emptyPages: payload.emptyPages ?? 0,
-                ocrLineCount: payload.ocrLineCount ?? 0,
-                averageConfidence: payload.averageConfidence,
-                lowConfidenceLines: payload.lowConfidenceLines ?? 0,
-                removedPageNumbers: payload.removedPageNumbers ?? 0,
-                warnings: payload.warnings ?? []
-              }
-              continue
-            }
-            if (typeof payload.page === 'number' && typeof payload.total === 'number') {
-              const source = payload.source === 'text-layer' ? '文字层' : 'OCR'
-              file.message = `第 ${payload.page}/${payload.total} 页 · ${source}`
-              this.saveJob(job)
-            }
-          } catch {
-            // 工作进程偶发输出非 JSON 行，忽略
+          const payload = parseOcrWorkerLine(line)
+          if (!payload) continue
+          if (payload.type === 'quality') {
+            qualityReport = payload
+            continue
+          }
+          if (payload.type === 'progress') {
+            const source = payload.source === 'text-layer' ? '文字层' : 'OCR'
+            file.message = `第 ${payload.page}/${payload.total} 页 · ${source}`
+            this.saveJob(job)
           }
         }
       })
@@ -1420,6 +1393,13 @@ export class KnowledgeBuilderService {
       child.once('close', (code) => {
         clearTimeout(timer)
         this.runningChild = undefined
+        // 解析 stdoutBuffer 中残留的最后一行（无换行符的情况）
+        if (stdoutBuffer.trim()) {
+          const payload = parseOcrWorkerLine(stdoutBuffer)
+          if (payload?.type === 'quality') {
+            qualityReport = payload
+          }
+        }
         if (code === 0 && existsSync(outputPath)) resolvePromise()
         else reject(new Error(stderr.trim() || `OCR 进程退出码 ${code ?? '未知'}`))
       })

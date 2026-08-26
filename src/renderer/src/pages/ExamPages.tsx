@@ -18,6 +18,7 @@ import { useNavigate } from 'react-router-dom'
 import { formatDate, formatFullDate, invoke } from '../api'
 import { MarkdownContent } from '../components/MarkdownContent'
 import { EmptyState, ErrorState, LoadingState, PageHeader, Section } from '../components/ui'
+import { EssaySaveController } from '../services/exam-essay-save'
 import { useAppStore } from '../store'
 
 export function ExamHomePage(): React.JSX.Element {
@@ -300,20 +301,42 @@ export function ExamRunPage(): React.JSX.Element {
   const [error, setError] = useState('')
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [finishing, setFinishing] = useState(false)
-  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'dirty' | 'saving' | 'saved' | 'error'>(
+    'idle'
+  )
   const [essayText, setEssayText] = useState('')
+  const [saveBlocked, setSaveBlocked] = useState(false)
   const essayTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
-  // 串行化保存队列：确保旧请求完成后再发新请求，防止乱序覆盖
-  const saveQueueRef = useRef<Promise<void>>(Promise.resolve())
-  // 待保存数据：捕获输入时的 questionId，切题后不串写
-  const pendingSaveRef = useRef<{ questionId: string; answer: string[] } | null>(null)
   const mountedRef = useRef(true)
+  // 生产保存控制器：串行化队列 + 失败保留 + 重试 + drain 检查
+  const saveControllerRef = useRef<EssaySaveController | null>(null)
+  if (!saveControllerRef.current && exam) {
+    saveControllerRef.current = new EssaySaveController(
+      async (save) => {
+        await invoke({
+          method: 'exam.save',
+          params: {
+            examId: save.examId,
+            answer: {
+              questionId: save.questionId,
+              answer: save.answer,
+              durationSeconds: 0
+            }
+          }
+        })
+      },
+      (status) => {
+        if (mountedRef.current) setSaveStatus(status)
+      }
+    )
+  }
 
   useEffect(() => {
     mountedRef.current = true
     return () => {
       mountedRef.current = false
       if (essayTimerRef.current) clearTimeout(essayTimerRef.current)
+      void saveControllerRef.current?.destroy()
     }
   }, [])
 
@@ -375,16 +398,24 @@ export function ExamRunPage(): React.JSX.Element {
   }
   async function finish(): Promise<void> {
     if (!exam) return
-    // 交卷前 flush 所有未保存的主观题
+    // 交卷前 flush pending 并检查保存失败
     if (essayTimerRef.current) {
       clearTimeout(essayTimerRef.current)
       essayTimerRef.current = undefined
     }
-    if (pendingSaveRef.current) {
-      queueEssaySave(pendingSaveRef.current)
-      pendingSaveRef.current = null
+    const controller = saveControllerRef.current
+    if (controller) {
+      await controller.flushPending()
+      const result = await controller.drain()
+      if (result.hasFailure) {
+        setSaveBlocked(true)
+        setError('答案保存失败，暂不能交卷。请点击「重试保存」后再次交卷。')
+        setFinishing(false)
+        setConfirmOpen(false)
+        return
+      }
     }
-    await saveQueueRef.current
+    setSaveBlocked(false)
     setFinishing(true)
     setError('')
     try {
@@ -399,61 +430,41 @@ export function ExamRunPage(): React.JSX.Element {
     }
   }
 
-  /** 串行化保存：通过 promise 链确保前一个请求完成后再发下一个 */
-  function queueEssaySave(data: { questionId: string; answer: string[] }): void {
-    if (!exam) return
-    const examId = exam.id
-    setSaveStatus('saving')
-    saveQueueRef.current = saveQueueRef.current.then(async () => {
-      try {
-        const saved = await invoke<ExamSession>({
-          method: 'exam.save',
-          params: {
-            examId,
-            answer: { questionId: data.questionId, answer: data.answer, durationSeconds: 0 }
-          }
-        })
-        if (mountedRef.current) {
-          setExam(saved)
-          setSaveStatus('saved')
-        }
-      } catch {
-        if (mountedRef.current) setSaveStatus('error')
-      }
-    })
+  /** 重试失败的保存 */
+  async function retrySave(): Promise<void> {
+    const controller = saveControllerRef.current
+    if (!controller) return
+    setError('')
+    const result = await controller.retryAll()
+    if (!result.hasFailure) {
+      setSaveBlocked(false)
+      setSaveStatus('saved')
+    } else {
+      setError(`仍有 ${result.failedQuestionIds.length} 题保存失败，请再次重试。`)
+    }
   }
 
   /** 主观题 debounce：输入时捕获当前 questionId，600ms 后保存 */
   function scheduleEssaySave(text: string): void {
     setEssayText(text)
-    setSaveStatus('idle')
     if (essayTimerRef.current) clearTimeout(essayTimerRef.current)
-    // 在输入时捕获当前题的 ID，切题后不会串写
-    if (current) {
-      pendingSaveRef.current = {
-        questionId: current.id,
-        answer: text ? [text] : []
-      }
+    const controller = saveControllerRef.current
+    if (controller && exam && current) {
+      controller.markDirty(exam.id, current.id, text)
     }
     essayTimerRef.current = setTimeout(() => {
-      if (pendingSaveRef.current) {
-        queueEssaySave(pendingSaveRef.current)
-        pendingSaveRef.current = null
-      }
+      void saveControllerRef.current?.flushPending()
     }, 600)
   }
 
-  // 切题时 flush 上一题的未保存内容（pendingSave 已捕获旧题 ID）
+  // 切题时 flush 上一题的未保存内容（controller 已捕获旧题 ID）
   useEffect(() => {
     return () => {
       if (essayTimerRef.current) {
         clearTimeout(essayTimerRef.current)
         essayTimerRef.current = undefined
       }
-      if (pendingSaveRef.current) {
-        queueEssaySave(pendingSaveRef.current)
-        pendingSaveRef.current = null
-      }
+      void saveControllerRef.current?.flushPending()
     }
   }, [index])
 
@@ -547,9 +558,17 @@ export function ExamRunPage(): React.JSX.Element {
                     ✓ 已保存
                   </span>
                 )}
-                {saveStatus === 'error' && (
+                {saveStatus === 'error' && !saveBlocked && (
                   <span className="negative" style={{ fontSize: 11 }}>
                     保存失败，切题时将重试
+                  </span>
+                )}
+                {saveBlocked && (
+                  <span className="negative" style={{ fontSize: 11 }}>
+                    保存失败{' '}
+                    <Button size="small" appearance="secondary" onClick={() => void retrySave()}>
+                      重试保存
+                    </Button>
                   </span>
                 )}
               </div>

@@ -122,7 +122,7 @@ describe('EssaySaveController (production module)', () => {
     await controller.flushPending()
     const result = await controller.drain()
     expect(result.hasFailure).toBe(true)
-    expect(result.failedQuestionId).toBe('q1')
+    expect(result.failedQuestionIds).toContain('q1')
     expect(controller.hasFailedSave).toBe(true)
   })
 
