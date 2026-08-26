@@ -407,8 +407,8 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
         title="把本地资料变成可审核的题库"
         description="原料只读，MarkItDown 负责转换，已配置模型负责提炼和复核。只有人工批准的产物才会进入应用管理知识库。"
         actions={
-          <Button icon={<FolderOpenIcon />} onClick={() => void chooseSource()}>
-            选择原料目录
+          <Button appearance="subtle" icon={<FolderOpenIcon />} onClick={() => void chooseSource()}>
+            选择目录
           </Button>
         }
       />
@@ -482,6 +482,7 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
             />
           </Field>
           <Button
+            appearance="subtle"
             icon={busy === 'scan' ? <Spinner size="tiny" /> : <ArrowClockwiseIcon />}
             disabled={!sourcePath.trim() || busy === 'scan'}
             onClick={() => void scanSource()}
@@ -518,14 +519,15 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
                 placeholder="按路径筛选文件"
               />
               <Button
+                appearance="subtle"
                 onClick={() =>
                   setSelected(new Set(visibleEligible.slice(0, 500).map((file) => file.id)))
                 }
               >
-                选择当前可转换项
+                全选
               </Button>
-              <Button icon={<TrashIcon />} onClick={() => setSelected(new Set())}>
-                清空选择
+              <Button appearance="subtle" onClick={() => setSelected(new Set())}>
+                清空
               </Button>
             </div>
 
@@ -626,27 +628,34 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
             onChange={(_, data) => setRightsConfirmed(data.checked === true)}
             label="我确认有权处理所选资料，并会在发布前逐项核对答案、事实与来源"
           />
-          <div className="button-row builder-start-row">
-            <Button
-              appearance="primary"
-              icon={<PlayIcon />}
-              disabled={
-                !engine.available ||
-                !selected.size ||
-                !rightsConfirmed ||
-                busy === 'start' ||
-                Boolean(job && RUNNING_STATES.has(job.status))
-              }
-              onClick={() => void startJob()}
-            >
-              {busy === 'start'
-                ? '正在创建批次'
-                : mode === 'direct'
-                  ? `开始导入 ${selected.size} 个文件（完成后自动入库）`
-                  : `开始处理 ${selected.size} 个文件`}
-            </Button>
-            <span className="muted-copy">
-              原文件保持不变，任务可取消，单个失败不会中断整个批次。
+          <div className="builder-start-row">
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <Button
+                appearance="primary"
+                size="large"
+                icon={<PlayIcon />}
+                disabled={
+                  !engine.available ||
+                  !selected.size ||
+                  !rightsConfirmed ||
+                  busy === 'start' ||
+                  Boolean(job && RUNNING_STATES.has(job.status))
+                }
+                onClick={() => void startJob()}
+              >
+                {busy === 'start' ? '正在创建…' : mode === 'direct' ? '开始导入' : '开始处理'}
+              </Button>
+              <div>
+                <strong style={{ fontSize: 14, fontVariantNumeric: 'tabular-nums' }}>
+                  {selected.size} 个文件
+                </strong>
+                <div className="muted-copy">
+                  {mode === 'direct' ? '完成后需抽查并发布入库' : '由模型提取后逐项审核'}
+                </div>
+              </div>
+            </div>
+            <span className="muted-copy" style={{ marginTop: 6 }}>
+              原文件保持不变 · 任务可取消 · 单个失败不中断整批
             </span>
           </div>
         </Section>
@@ -658,38 +667,47 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
           description={job.message}
           actions={
             <div className="button-row">
-              <Button icon={<FolderOpenIcon />} onClick={() => void openOutput()}>
-                打开任务目录
+              <Button appearance="subtle" icon={<FolderOpenIcon />} onClick={() => void openOutput()}>
+                任务目录
               </Button>
               {RUNNING_STATES.has(job.status) && (
-                <Button icon={<StopIcon />} onClick={() => void cancelJob()}>
-                  停止任务
+                <Button
+                  appearance="subtle"
+                  icon={<StopIcon />}
+                  onClick={() => {
+                    if (window.confirm('确认停止当前任务？已完成的文件会保留。')) void cancelJob()
+                  }}
+                >
+                  停止
                 </Button>
               )}
               {job.failedFiles > 0 && !RUNNING_STATES.has(job.status) && (
                 <Button
+                  appearance="subtle"
                   icon={<ArrowClockwiseIcon />}
                   disabled={busy === 'retry'}
                   onClick={() => void retryJob()}
                 >
-                  重试失败文件
+                  重试失败
                 </Button>
               )}
               {!RUNNING_STATES.has(job.status) && job.pendingArtifacts > 0 && (
                 <>
                   <Button
+                    appearance="secondary"
                     icon={<CheckCircleIcon />}
                     disabled={busy === 'review'}
                     onClick={() => void reviewAll('approved')}
                   >
-                    {busy === 'review' ? '正在处理…' : `全部批准 ${job.pendingArtifacts} 项`}
+                    {busy === 'review' ? '处理中…' : `全部批准 ${job.pendingArtifacts}`}
                   </Button>
                   <Button
+                    appearance="secondary"
                     icon={<ArrowClockwiseIcon />}
                     disabled={busy === 'review'}
                     onClick={() => void reviewAll('rejected')}
                   >
-                    {busy === 'review' ? '正在处理…' : '全部拒绝'}
+                    {busy === 'review' ? '处理中…' : '全部拒绝'}
                   </Button>
                 </>
               )}
@@ -697,7 +715,7 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
                 job.pendingArtifacts === 0 &&
                 job.artifacts.length > 0 && (
                   <span className="pill">
-                    ✓ 全部已处理 · 已批准 {job.approvedArtifacts} · 已拒绝{' '}
+                    ✓ 已处理 · 批准 {job.approvedArtifacts} · 拒绝{' '}
                     {job.artifacts.filter((a) => a.status === 'rejected').length}
                   </span>
                 )}
@@ -708,13 +726,14 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
                   disabled={busy === 'publish'}
                   onClick={() => void publish()}
                 >
-                  发布 {job.approvedArtifacts} 项
+                  {busy === 'publish' ? '发布中…' : `发布 ${job.approvedArtifacts} 项`}
                 </Button>
               )}
               {job.options.mode === 'direct' &&
                 !RUNNING_STATES.has(job.status) &&
                 job.artifacts.some((item) => item.status === 'published') && (
                   <Button
+                    appearance="subtle"
                     icon={<ArrowClockwiseIcon />}
                     disabled={busy === 'publish'}
                     onClick={() => void revertImport()}
