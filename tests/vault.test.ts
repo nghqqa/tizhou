@@ -33,7 +33,7 @@ describe('VaultService', () => {
   let vaults: VaultService
 
   beforeEach(() => {
-    directory = mkdtempSync(join(tmpdir(), 'lizhi-vault-'))
+    directory = mkdtempSync(join(tmpdir(), 'tizhou-vault-'))
     vaultDirectory = join(directory, 'vault')
     mkdirSync(vaultDirectory)
     database = new DatabaseService(

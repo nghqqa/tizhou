@@ -15,8 +15,6 @@ interface MigrationManifest {
 }
 
 export const MIGRATION_APP_ID = 'tizhou'
-// 兼容旧版（砺知考公工作台）创建的迁移包
-const LEGACY_MIGRATION_APP_IDS = ['lizhi-kaogong-workbench', 'kaogong-workbench-x']
 
 export function vaultIdForPath(path: string): string {
   return `vault-${createHash('sha256').update(String(path).toLowerCase()).digest('hex').slice(0, 20)}`
@@ -58,8 +56,7 @@ export class MigrationService {
     const manifest = JSON.parse(
       readFileSync(join(root, 'manifest.json'), 'utf8')
     ) as MigrationManifest
-    const isMigrationPackage =
-      manifest?.app === MIGRATION_APP_ID || LEGACY_MIGRATION_APP_IDS.includes(manifest?.app ?? '')
+    const isMigrationPackage = manifest?.app === MIGRATION_APP_ID
     if (!isMigrationPackage || !Array.isArray(manifest.vaults))
       throw new Error('所选目录不是本应用的迁移包（缺少或无效的 manifest.json）')
     if (!existsSync(join(root, 'workbench.sqlite')))

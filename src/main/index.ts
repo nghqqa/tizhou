@@ -542,26 +542,6 @@ async function initialize(): Promise<void> {
   })
 }
 
-// 品牌更名后自动迁移数据目录：旧 lizhi-kaogong-workbench → 新 tizhou
-// 在 app ready 之前执行，确保 userData 路径就位后再打开数据库
-function migrateLegacyDataDirectory(): void {
-  const newDataDirectory = app.getPath('userData')
-  if (existsSync(join(newDataDirectory, 'workbench.sqlite'))) return // 新目录已有数据
-  const legacyNames = ['lizhi-kaogong-workbench', 'kaogong-workbench-x']
-  for (const legacyName of legacyNames) {
-    const legacyPath = join(dirname(newDataDirectory), legacyName)
-    if (!existsSync(join(legacyPath, 'workbench.sqlite'))) continue
-    try {
-      mkdirSync(newDataDirectory, { recursive: true })
-      cpSync(legacyPath, newDataDirectory, { recursive: true })
-      console.log(`[题舟] 已从旧目录 ${legacyName} 迁移数据到 ${basename(newDataDirectory)}`)
-      return
-    } catch (error) {
-      console.error(`[题舟] 数据迁移失败:`, error)
-    }
-  }
-}
-
 // ── 自动更新（electron-updater + GitHub Releases）──
 let updateStatus: {
   checking: boolean
@@ -623,7 +603,6 @@ const isSmokeTest = process.argv.includes('--smoke-test')
 if (isSmokeTest) {
   app.whenReady().then(async () => {
     try {
-      migrateLegacyDataDirectory()
       await initialize()
       setupAutoUpdater()
       console.log('SMOKE_READY')
@@ -635,7 +614,6 @@ if (isSmokeTest) {
   })
 } else {
   app.whenReady().then(async () => {
-    migrateLegacyDataDirectory()
     await initialize()
     createWindow()
     setupAutoUpdater()
