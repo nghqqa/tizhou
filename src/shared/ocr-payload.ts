@@ -7,7 +7,7 @@ export interface OcrProgressEvent {
   type: 'progress'
   page: number
   total: number
-  source: string
+  source: 'text-layer' | 'ocr'
   characters: number
 }
 
@@ -27,6 +27,14 @@ export interface OcrQualityPayload {
 
 export type OcrWorkerPayload = OcrProgressEvent | OcrQualityPayload
 
+/** 非负整数：非有限数或负数返回 0 */
+function nonNegInt(value: unknown): number {
+  const num = Number(value)
+  if (!Number.isFinite(num) || num < 0) return 0
+  return Math.max(0, Math.floor(num))
+}
+
+/** 置信度钳位：null/undefined/非有限数返回 undefined，否则钳位到 [0, 1] */
 function clampConfidence(value: unknown): number | undefined {
   if (value === null || value === undefined) return undefined
   const num = Number(value)
@@ -34,12 +42,26 @@ function clampConfidence(value: unknown): number | undefined {
   return Math.max(0, Math.min(1, num))
 }
 
+/** 来源白名单：只允许 text-layer 或 ocr，未知值归为 ocr */
+function sanitizeSource(value: unknown): 'text-layer' | 'ocr' {
+  return value === 'text-layer' ? 'text-layer' : 'ocr'
+}
+
+/** 警告清洗：过滤非字符串、trim、去空、去重、限长 200、限数 5 */
 function sanitizeWarnings(value: unknown): string[] {
   if (!Array.isArray(value)) return []
-  return value
-    .filter((item): item is string => typeof item === 'string')
-    .map((item) => item.slice(0, 200))
-    .slice(0, 5)
+  const seen = new Set<string>()
+  const result: string[] = []
+  for (const item of value) {
+    if (typeof item !== 'string') continue
+    const trimmed = item.trim()
+    if (!trimmed) continue
+    if (seen.has(trimmed)) continue
+    seen.add(trimmed)
+    result.push(trimmed.slice(0, 200))
+    if (result.length >= 5) break
+  }
+  return result
 }
 
 export function parseOcrWorkerPayload(payload: unknown): OcrWorkerPayload | undefined {
@@ -49,26 +71,31 @@ export function parseOcrWorkerPayload(payload: unknown): OcrWorkerPayload | unde
   if (record.done === true) {
     return {
       type: 'quality',
-      totalPages: Math.max(0, Number(record.totalPages) || 0),
-      textLayerPages: Math.max(0, Number(record.textLayerPages) || 0),
-      ocrPages: Math.max(0, Number(record.ocrPages) || 0),
-      emptyPages: Math.max(0, Number(record.emptyPages) || 0),
-      ocrLineCount: Math.max(0, Number(record.ocrLineCount) || 0),
+      totalPages: nonNegInt(record.totalPages),
+      textLayerPages: nonNegInt(record.textLayerPages),
+      ocrPages: nonNegInt(record.ocrPages),
+      emptyPages: nonNegInt(record.emptyPages),
+      ocrLineCount: nonNegInt(record.ocrLineCount),
       averageConfidence: clampConfidence(record.averageConfidence),
-      lowConfidenceLines: Math.max(0, Number(record.lowConfidenceLines) || 0),
-      removedPageNumbers: Math.max(0, Number(record.removedPageNumbers) || 0),
+      lowConfidenceLines: nonNegInt(record.lowConfidenceLines),
+      removedPageNumbers: nonNegInt(record.removedPageNumbers),
       warnings: sanitizeWarnings(record.warnings),
-      characters: Math.max(0, Number(record.characters) || 0)
+      characters: nonNegInt(record.characters)
     }
   }
 
-  if (typeof record.page === 'number' && typeof record.total === 'number') {
+  if (
+    typeof record.page === 'number' &&
+    Number.isFinite(record.page) &&
+    typeof record.total === 'number' &&
+    Number.isFinite(record.total)
+  ) {
     return {
       type: 'progress',
       page: Math.max(1, Math.floor(record.page)),
       total: Math.max(1, Math.floor(record.total)),
-      source: typeof record.source === 'string' ? record.source : 'ocr',
-      characters: Math.max(0, Number(record.characters) || 0)
+      source: sanitizeSource(record.source),
+      characters: nonNegInt(record.characters)
     }
   }
 

@@ -8,7 +8,7 @@ import {
   parseOcrWorkerLine,
   parseOcrWorkerPayload,
   type OcrQualityPayload
-} from '../src/renderer/src/services/ocr-payload'
+} from '../src/shared/ocr-payload'
 
 describe('EssaySaveController (production module)', () => {
   function createController(options?: { saveImpl?: (save: PendingEssaySave) => Promise<void> }): {
@@ -260,5 +260,135 @@ describe('parseOcrWorkerPayload (production module)', () => {
     expect(quality.totalPages).toBe(0)
     expect(quality.averageConfidence).toBeUndefined()
     expect(quality.warnings).toEqual([])
+  })
+})
+
+describe('v0.9.6 hotfix: multi-question failure + revision + destroy + residual stdout', () => {
+  it('retains both failed questions in failedQuestionIds', async () => {
+    const failedQuestions = new Set(['q1', 'q2'])
+    const controller = new EssaySaveController(
+      async (save) => {
+        if (failedQuestions.has(save.questionId)) throw new Error('fail')
+      },
+      () => {}
+    )
+    controller.markDirty('exam1', 'q1', 'answer1')
+    await controller.flushPending()
+    controller.markDirty('exam1', 'q2', 'answer2')
+    await controller.flushPending()
+    const result = await controller.drain()
+    expect(result.hasFailure).toBe(true)
+    expect(result.failedQuestionIds).toContain('q1')
+    expect(result.failedQuestionIds).toContain('q2')
+    expect(result.failedQuestionIds).toHaveLength(2)
+  })
+
+  it('old revision failure + new revision success: retryAll does not replay old answer', async () => {
+    const savedAnswers: Array<{ questionId: string; answer: string[]; revision: number }> = []
+    let shouldFail = true
+    const controller = new EssaySaveController(
+      async (save) => {
+        if (shouldFail) throw new Error('network error')
+        savedAnswers.push(save)
+      },
+      () => {}
+    )
+    // Old revision fails
+    controller.markDirty('exam1', 'q1', '旧答案')
+    await controller.flushPending()
+    const failResult = await controller.drain()
+    expect(failResult.hasFailure).toBe(true)
+    // New revision succeeds
+    shouldFail = false
+    controller.markDirty('exam1', 'q1', '新答案')
+    await controller.flushPending()
+    const successResult = await controller.drain()
+    expect(successResult.hasFailure).toBe(false)
+    // Only new answer should be saved, not the old failed one
+    expect(savedAnswers).toHaveLength(1)
+    expect(savedAnswers[0]?.answer).toEqual(['新答案'])
+    expect(savedAnswers[0]?.revision).toBeGreaterThan(1)
+  })
+
+  it('destroy with unflushed pending still saves the answer', async () => {
+    const saves: PendingEssaySave[] = []
+    const controller = new EssaySaveController(
+      async (save) => {
+        saves.push(save)
+      },
+      () => {}
+    )
+    controller.markDirty('exam1', 'q1', '重要未保存答案')
+    // Do NOT flushPending; destroy should handle it
+    await controller.destroy()
+    expect(saves).toHaveLength(1)
+    expect(saves[0]?.answer).toEqual(['重要未保存答案'])
+  })
+
+  it('parses quality report from last stdout line without trailing newline', () => {
+    const reportJson = JSON.stringify({
+      done: true,
+      totalPages: 5,
+      textLayerPages: 2,
+      ocrPages: 3,
+      emptyPages: 0,
+      ocrLineCount: 150,
+      averageConfidence: 0.85,
+      lowConfidenceLines: 5,
+      removedPageNumbers: 3,
+      warnings: []
+    })
+    // Simulate residual buffer without newline
+    const payload = parseOcrWorkerLine(reportJson)
+    expect(payload?.type).toBe('quality')
+    const quality = payload as OcrQualityPayload
+    expect(quality.totalPages).toBe(5)
+    expect(quality.ocrPages).toBe(3)
+    expect(quality.averageConfidence).toBeCloseTo(0.85)
+  })
+
+  it('sanitizes unknown source to ocr', () => {
+    const payload = parseOcrWorkerPayload({
+      page: 1,
+      total: 10,
+      source: 'unknown-source'
+    })
+    expect(payload?.type).toBe('progress')
+    if (payload?.type === 'progress') {
+      expect(payload.source).toBe('ocr')
+    }
+  })
+
+  it('deduplicates and trims warnings', () => {
+    const payload = parseOcrWorkerPayload({
+      done: true,
+      warnings: ['  warning A  ', 'warning A', '', 'warning B', null, 'warning C']
+    })
+    const quality = payload as OcrQualityPayload
+    expect(quality.warnings).toEqual(['warning A', 'warning B', 'warning C'])
+  })
+
+  it('converts negative numbers to zero', () => {
+    const payload = parseOcrWorkerPayload({
+      done: true,
+      totalPages: -5,
+      ocrPages: -3,
+      lowConfidenceLines: -1
+    })
+    const quality = payload as OcrQualityPayload
+    expect(quality.totalPages).toBe(0)
+    expect(quality.ocrPages).toBe(0)
+    expect(quality.lowConfidenceLines).toBe(0)
+  })
+
+  it('rejects non-finite numeric values', () => {
+    const payload = parseOcrWorkerPayload({
+      done: true,
+      totalPages: Infinity,
+      averageConfidence: NaN
+    })
+    const quality = payload as OcrQualityPayload
+    expect(quality.totalPages).toBe(0)
+    expect(quality.averageConfidence).toBeUndefined()
   })
 })

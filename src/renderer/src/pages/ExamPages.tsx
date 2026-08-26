@@ -313,7 +313,7 @@ export function ExamRunPage(): React.JSX.Element {
   if (!saveControllerRef.current && exam) {
     saveControllerRef.current = new EssaySaveController(
       async (save) => {
-        await invoke({
+        const saved = await invoke<ExamSession>({
           method: 'exam.save',
           params: {
             examId: save.examId,
@@ -324,6 +324,7 @@ export function ExamRunPage(): React.JSX.Element {
             }
           }
         })
+        if (mountedRef.current) setExam(saved)
       },
       (status) => {
         if (mountedRef.current) setSaveStatus(status)
@@ -560,7 +561,7 @@ export function ExamRunPage(): React.JSX.Element {
                 )}
                 {saveStatus === 'error' && !saveBlocked && (
                   <span className="negative" style={{ fontSize: 11 }}>
-                    保存失败，切题时将重试
+                    保存失败
                   </span>
                 )}
                 {saveBlocked && (
