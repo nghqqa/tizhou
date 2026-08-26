@@ -672,7 +672,7 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
                   重试失败文件
                 </Button>
               )}
-              {job.pendingArtifacts > 0 && !RUNNING_STATES.has(job.status) && (
+              {!RUNNING_STATES.has(job.status) && job.pendingArtifacts > 0 && (
                 <>
                   <Button
                     icon={<CheckCircleIcon />}
@@ -690,6 +690,14 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
                   </Button>
                 </>
               )}
+              {!RUNNING_STATES.has(job.status) &&
+                job.pendingArtifacts === 0 &&
+                job.artifacts.length > 0 && (
+                  <span className="pill">
+                    ✓ 全部已处理 · 已批准 {job.approvedArtifacts} · 已拒绝{' '}
+                    {job.artifacts.filter((a) => a.status === 'rejected').length}
+                  </span>
+                )}
               {job.approvedArtifacts > 0 && !RUNNING_STATES.has(job.status) && (
                 <Button
                   appearance="primary"
@@ -760,6 +768,21 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
                     </button>
                   ))}
                 </div>
+                {filteredArtifacts.length === 0 && (
+                  <div className="empty-compact" style={{ padding: '16px 12px' }}>
+                    <span>
+                      {filterStatus === 'pending'
+                        ? '没有待审核产物，当前批次已全部处理'
+                        : filterStatus === 'approved'
+                          ? '没有已批准产物'
+                          : filterStatus === 'rejected'
+                            ? '没有已拒绝产物'
+                            : filterStatus === 'warnings'
+                              ? '没有带警告的产物'
+                              : '当前筛选下没有产物'}
+                    </span>
+                  </div>
+                )}
                 {paginatedArtifacts.map((item) => (
                   <button
                     type="button"
@@ -835,6 +858,18 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
                       content={artifact.markdown.replace(/^---\s*[\s\S]*?\s*---\s*/m, '')}
                     />
                   </>
+                ) : job && job.pendingArtifacts === 0 && job.artifacts.length > 0 ? (
+                  <div className="empty-compact" style={{ padding: '20px 0', flexDirection: 'column', gap: 6, alignItems: 'flex-start' }}>
+                    <strong>本批产物已全部处理</strong>
+                    <span>
+                      已批准 {job.approvedArtifacts} 项 · 已拒绝{' '}
+                      {job.artifacts.filter((a) => a.status === 'rejected').length} 项
+                      {job.approvedArtifacts > 0 && '，可点击上方「发布」入库'}
+                    </span>
+                    <span style={{ fontSize: 'var(--tz-text-xs)', color: 'var(--tz-ink-3)' }}>
+                      在左侧筛选中切换「已批准」或「已拒绝」可查看具体项目
+                    </span>
+                  </div>
                 ) : (
                   <div className="empty-compact" style={{ padding: '20px 0' }}>
                     <span>从左侧选择一项产物开始审核，或点击「全部批准」批量处理</span>
