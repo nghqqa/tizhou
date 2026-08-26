@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="340" viewBox="0 0 1200 340" role="img" aria-labelledby="tz-hero-title tz-hero-desc">
+  <title id="tz-hero-title">题舟 Tizhou</title>
+  <desc id="tz-hero-desc">本地优先的开源考公学习工作台。左侧为朱砂印章标识与题舟名称，右侧展示学习闭环：题本 PDF 本地 OCR 识别、自动切题配对去重、抽查审核一键入库、专项训练真题模考申论、错题复习学习报告。</desc>
+
+  <!-- 宣纸底 -->
+  <rect x="0" y="0" width="1200" height="340" rx="22" fill="#F5F1E8" stroke="#DDD3BD" stroke-width="1.5"/>
+
+  <!-- 印章标识 -->
+  <g id="seal">
+    <rect x="64" y="56" width="96" height="96" rx="16" fill="#B84432"/>
+    <rect x="71" y="63" width="82" height="82" rx="11" fill="none" stroke="#F5F1E8" stroke-width="1.5" opacity="0.55"/>
+    <text x="112" y="126" text-anchor="middle" font-family="Georgia, 'Songti SC', 'SimSun', serif" font-size="60" fill="#F5F1E8">题</text>
+  </g>
+
+  <!-- 标题与标语 -->
+  <g id="title-block" font-family="Georgia, 'Songti SC', 'SimSun', serif">
+    <text x="188" y="126" font-size="76" fill="#2B2620" letter-spacing="6">题舟</text>
+    <text x="66" y="200" font-size="27" fill="#2B2620" letter-spacing="2">题海行舟<tspan fill="#B84432"> · </tspan>终将上岸</text>
+  </g>
+  <text x="66" y="238" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="20" fill="#7A6F5D">本地优先 · 题库自导 · 全程可离线 · AI 助教可选</text>
+
+  <!-- 元信息 -->
+  <g id="meta-pills" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="17" fill="#6B5F4A">
+    <rect x="66" y="264" width="140" height="38" rx="19" fill="#FBF8F0" stroke="#C9BFA9" stroke-width="1"/>
+    <text x="136" y="289" text-anchor="middle">Windows x64</text>
+    <rect x="218" y="264" width="118" height="38" rx="19" fill="#FBF8F0" stroke="#C9BFA9" stroke-width="1"/>
+    <text x="277" y="289" text-anchor="middle">MIT 开源</text>
+    <rect x="348" y="264" width="152" height="38" rx="19" fill="#FBF8F0" stroke="#C9BFA9" stroke-width="1"/>
+    <text x="424" y="289" text-anchor="middle">数据不出本机</text>
+  </g>
+
+  <!-- 分隔线 -->
+  <line x1="676" y1="60" x2="676" y2="284" stroke="#E0D7C3" stroke-width="1.5"/>
+
+  <!-- 学习闭环 -->
+  <g id="workflow">
+    <text x="704" y="68" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="19" fill="#9C8F7B" letter-spacing="3">学习闭环</text>
+    <line x1="710" y1="96" x2="710" y2="280" stroke="#D9CFB9" stroke-width="1.5"/>
+
+    <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="21" fill="#3A332A">
+      <rect x="704" y="85" width="13" height="13" rx="3" fill="#B84432"/>
+      <text x="732" y="97">题本 PDF · 本地 OCR</text>
+
+      <rect x="704" y="131" width="13" height="13" rx="3" fill="#B84432"/>
+      <text x="732" y="143">自动切题 · 配对 · 去重</text>
+
+      <rect x="704" y="177" width="13" height="13" rx="3" fill="#B84432"/>
+      <text x="732" y="189">抽查审核 · 一键入库</text>
+
+      <rect x="704" y="223" width="13" height="13" rx="3" fill="#557363"/>
+      <text x="732" y="235">专项训练 · 真题模考 · 申论</text>
+
+      <rect x="704" y="269" width="13" height="13" rx="3" fill="#557363"/>
+      <text x="732" y="281">错题复习 · 学习报告</text>
+    </g>
+  </g>
+</svg>
