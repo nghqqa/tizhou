@@ -135,6 +135,17 @@ export type KnowledgeBuildFileState =
   | 'skipped'
   | 'cancelled'
 
+export interface OcrQualityReport {
+  totalPages: number
+  textLayerPages: number
+  ocrPages: number
+  emptyPages: number
+  averageConfidence?: number
+  lowConfidenceLines: number
+  removedPageNumbers: number
+  warnings: string[]
+}
+
 export interface KnowledgeBuildFile {
   sourceId: string
   relativePath: string
@@ -143,6 +154,7 @@ export interface KnowledgeBuildFile {
   message?: string
   artifactCount: number
   chunkCount: number
+  ocrQuality?: OcrQualityReport
 }
 
 export type KnowledgeArtifactStatus = 'pending' | 'approved' | 'rejected' | 'published'

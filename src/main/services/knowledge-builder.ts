@@ -24,6 +24,7 @@ import type {
   KnowledgeBuildOptions,
   KnowledgeEngineStatus,
   KnowledgeSourceFile,
+  OcrQualityReport,
   KnowledgeSourceScan,
   Subject,
   VaultIndexResult
@@ -842,14 +843,29 @@ export class KnowledgeBuilderService {
           if (rawSize > MAX_RAW_MARKDOWN_BYTES)
             throw new Error('转换结果超过 20 MB，请先拆分原文件')
           let raw = readFileSync(rawPath, 'utf8').trim()
-          if (raw.length < 50 && engine.ocrAvailable && isPdfFile(file.relativePath)) {
-            file.message = '文本提取不足，正在使用 OCR 识别'
+          // PDF 始终走 OCR worker：worker 内部逐页判断文字层是否足够，
+          // 文字层页直接使用原始文本，扫描页 OCR，混合 PDF 不漏识别
+          if (engine.ocrAvailable && isPdfFile(file.relativePath)) {
+            file.message = '正在逐页检测文字层并识别'
             this.saveJob(job)
-            await this.ocrConvert(job, file, engine.pythonPath, source, rawPath)
+            const quality = await this.ocrConvert(job, file, engine.pythonPath, source, rawPath)
             job.cancelRequested ||= this.loadJob(id).cancelRequested
             if (statSync(rawPath).size > MAX_RAW_MARKDOWN_BYTES)
               throw new Error('OCR 结果超过 20 MB，请先拆分原文件')
             raw = readFileSync(rawPath, 'utf8').trim()
+            // 保存质量报告到文件元数据
+            if (quality) {
+              file.ocrQuality = quality
+              const parts = [
+                `${quality.textLayerPages}/${quality.totalPages} 页文字层`,
+                quality.ocrPages > 0 ? `${quality.ocrPages} 页 OCR` : null,
+                quality.emptyPages > 0 ? `${quality.emptyPages} 页空白` : null,
+                quality.averageConfidence
+                  ? `平均置信度 ${(quality.averageConfidence * 100).toFixed(0)}%`
+                  : null
+              ].filter(Boolean)
+              file.message = `转换完成：${parts.join(' · ')}`
+            }
           }
           if (raw.length < 50)
             throw new Error(
@@ -1332,8 +1348,9 @@ export class KnowledgeBuilderService {
     pythonPath: string,
     sourcePath: string,
     outputPath: string
-  ): Promise<void> {
+  ): Promise<OcrQualityReport | undefined> {
     const worker = this.ocrWorkerPath()
+    let qualityReport: OcrQualityReport | undefined
     await new Promise<void>((resolvePromise, reject) => {
       const child = spawn(pythonPath, [worker, sourcePath, outputPath], {
         windowsHide: true,
@@ -1353,9 +1370,37 @@ export class KnowledgeBuilderService {
         stdoutBuffer = lines.pop() ?? ''
         for (const line of lines) {
           try {
-            const payload = JSON.parse(line) as { page?: number; total?: number }
+            const payload = JSON.parse(line) as {
+              page?: number
+              total?: number
+              source?: string
+              done?: boolean
+              totalPages?: number
+              textLayerPages?: number
+              ocrPages?: number
+              emptyPages?: number
+              averageConfidence?: number
+              lowConfidenceLines?: number
+              removedPageNumbers?: number
+              warnings?: string[]
+            }
+            if (payload.done) {
+              // 最终报告：保存质量数据
+              qualityReport = {
+                totalPages: payload.totalPages ?? 0,
+                textLayerPages: payload.textLayerPages ?? 0,
+                ocrPages: payload.ocrPages ?? 0,
+                emptyPages: payload.emptyPages ?? 0,
+                averageConfidence: payload.averageConfidence,
+                lowConfidenceLines: payload.lowConfidenceLines ?? 0,
+                removedPageNumbers: payload.removedPageNumbers ?? 0,
+                warnings: payload.warnings ?? []
+              }
+              continue
+            }
             if (typeof payload.page === 'number' && typeof payload.total === 'number') {
-              file.message = `OCR 识别中 ${payload.page}/${payload.total} 页`
+              const source = payload.source === 'text-layer' ? '文字层' : 'OCR'
+              file.message = `第 ${payload.page}/${payload.total} 页 · ${source}`
               this.saveJob(job)
             }
           } catch {
@@ -1377,6 +1422,7 @@ export class KnowledgeBuilderService {
         else reject(new Error(stderr.trim() || `OCR 进程退出码 ${code ?? '未知'}`))
       })
     })
+    return qualityReport
   }
 
   private resolveSourceFile(job: StoredJob, file: KnowledgeBuildFile): string {

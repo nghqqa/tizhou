@@ -303,7 +303,17 @@ export function ExamRunPage(): React.JSX.Element {
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const [essayText, setEssayText] = useState('')
   const essayTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
-  const essaySeqRef = useRef(0)
+  // 串行化保存队列：确保旧请求完成后再发新请求，防止乱序覆盖
+  const saveQueueRef = useRef<Promise<void>>(Promise.resolve())
+  const mountedRef = useRef(true)
+
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      if (essayTimerRef.current) clearTimeout(essayTimerRef.current)
+    }
+  }, [])
 
   useEffect(() => {
     void invoke<ExamSession | undefined>({ method: 'exam.active' })
@@ -363,22 +373,26 @@ export function ExamRunPage(): React.JSX.Element {
   }
   async function finish(): Promise<void> {
     if (!exam) return
-    // 交卷前强制保存未 flush 的主观题草稿
+    // 交卷前强制 flush 未保存的主观题草稿（包括空答案）
     if (essayTimerRef.current) {
       clearTimeout(essayTimerRef.current)
       essayTimerRef.current = undefined
     }
-    if (essayText.trim() && current) {
-      const seq = ++essaySeqRef.current
+    if (current && essayText !== currentAnswer[0]) {
+      // 等待队列中的保存完成
+      await saveQueueRef.current
       try {
         await invoke({
           method: 'exam.save',
           params: {
             examId: exam.id,
-            answer: { questionId: current.id, answer: [essayText], durationSeconds: 0 }
+            answer: {
+              questionId: current.id,
+              answer: essayText ? [essayText] : [],
+              durationSeconds: 0
+            }
           }
         })
-        void seq
       } catch {
         // 交卷优先，保存失败不阻断
       }
@@ -397,7 +411,7 @@ export function ExamRunPage(): React.JSX.Element {
     }
   }
 
-  /** 主观题 debounce 保存：600ms 无输入后触发，防止每次按键都写数据库 */
+  /** 主观题 debounce 保存：600ms 无输入后触发 */
   function scheduleEssaySave(text: string): void {
     setEssayText(text)
     setSaveStatus('idle')
@@ -405,33 +419,36 @@ export function ExamRunPage(): React.JSX.Element {
     essayTimerRef.current = setTimeout(() => void flushEssaySave(text), 600)
   }
 
+  /** 串行化保存：通过 promise 链确保前一个请求完成后再发下一个，防止乱序覆盖 */
   async function flushEssaySave(text: string): Promise<void> {
-    if (!exam || !current || !text.trim()) return
-    const seq = ++essaySeqRef.current
+    if (!exam || !current) return
+    const examId = exam.id
+    const questionId = current.id
+    const answer = text ? [text] : []
     setSaveStatus('saving')
-    try {
-      const saved = await invoke<ExamSession>({
-        method: 'exam.save',
-        params: {
-          examId: exam.id,
-          answer: { questionId: current.id, answer: [text], durationSeconds: 0 }
+    saveQueueRef.current = saveQueueRef.current.then(async () => {
+      try {
+        const saved = await invoke<ExamSession>({
+          method: 'exam.save',
+          params: { examId, answer: { questionId, answer, durationSeconds: 0 } }
+        })
+        if (mountedRef.current) {
+          setExam(saved)
+          setSaveStatus('saved')
         }
-      })
-      if (seq === essaySeqRef.current) {
-        setExam(saved)
-        setSaveStatus('saved')
+      } catch {
+        if (mountedRef.current) setSaveStatus('error')
       }
-    } catch {
-      if (seq === essaySeqRef.current) setSaveStatus('error')
-    }
+    })
+    await saveQueueRef.current
   }
 
-  // 切题时 flush 未保存的主观题
+  // 切题时 flush 未保存的主观题（包括空答案）
   useEffect(() => {
     return () => {
       if (essayTimerRef.current) {
         clearTimeout(essayTimerRef.current)
-        if (essayText.trim()) void flushEssaySave(essayText)
+        essayTimerRef.current = undefined
       }
     }
   }, [index])
