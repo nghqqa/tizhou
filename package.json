@@ -1,6 +1,6 @@
 {
   "name": "tizhou",
-  "version": "0.9.9",
+  "version": "1.0.0",
   "private": true,
   "license": "MIT",
   "author": "nghqqa",
@@ -23,6 +23,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "smoke:packaged": "npm run package && node -e \"const{execFileSync}=require('child_process');const r=execFileSync('dist/win-unpacked/题舟.exe',['--smoke-test'],{timeout:30000,encoding:'utf8'});if(!r.includes('SMOKE_READY')){console.error('SMOKE_FAILED:',r);process.exit(1)}console.log('SMOKE_READY confirmed')\"",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },
