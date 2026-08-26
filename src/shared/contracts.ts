@@ -185,6 +185,15 @@ export interface KnowledgeBuildJob {
   outputPath: string
 }
 
+/** 批量审核结果 */
+export interface BatchReviewResult {
+  job: KnowledgeBuildJob
+  processed: number
+  skipped: number
+  failed: number
+  errors: string[]
+}
+
 export interface QuestionFilter {
   subject?: Subject
   category?: string
@@ -581,6 +590,14 @@ export type WorkbenchRequest =
   | {
       method: 'knowledgeBuilder.artifact.review'
       params: { jobId: string; artifactId: string; status: 'approved' | 'rejected' }
+    }
+  | {
+      method: 'knowledgeBuilder.artifacts.reviewMany'
+      params: {
+        jobId: string
+        artifactIds?: string[]
+        status: 'approved' | 'rejected'
+      }
     }
   | { method: 'knowledgeBuilder.publish'; params: { jobId: string } }
   | {

@@ -278,6 +278,12 @@ async function initialize(): Promise<void> {
           request.params.artifactId,
           request.params.status
         )
+      case 'knowledgeBuilder.artifacts.reviewMany':
+        return knowledgeBuilder.reviewArtifacts(
+          request.params.jobId,
+          request.params.artifactIds,
+          request.params.status
+        )
       case 'knowledgeBuilder.publish':
         return knowledgeBuilder.publish(request.params.jobId)
       case 'documents.list':

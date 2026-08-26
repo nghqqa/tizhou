@@ -15,6 +15,7 @@ import {
 import { basename, extname, isAbsolute, join, relative, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import type {
+  BatchReviewResult,
   KnowledgeArtifactDetail,
   KnowledgeArtifactStatus,
   KnowledgeArtifactSummary,
@@ -645,6 +646,56 @@ export class KnowledgeBuilderService {
     job.updatedAt = now()
     this.saveJob(job)
     return this.jobView(job)
+  }
+
+  /** 批量审核：一次 IPC 完成全部状态变更，避免前端逐条调用的性能问题 */
+  reviewArtifacts(
+    jobId: string,
+    artifactIds: string[] | undefined,
+    status: Extract<KnowledgeArtifactStatus, 'approved' | 'rejected'>
+  ): BatchReviewResult {
+    const job = this.loadJob(jobId)
+    if (['queued', 'running', 'cancelling'].includes(job.status))
+      throw new Error('请等待转换任务结束后再审核')
+    const targets = artifactIds?.length
+      ? artifactIds
+      : job.artifactIds.filter((id) => {
+          const artifact = this.loadArtifact(job, id)
+          return artifact.status === 'pending'
+        })
+    let processed = 0
+    let skipped = 0
+    let failed = 0
+    const errors: string[] = []
+    for (const id of targets) {
+      try {
+        const artifact = this.loadArtifact(job, id)
+        if (artifact.status === 'published') {
+          skipped += 1
+          errors.push(`${id}：已发布产物不能修改`)
+          continue
+        }
+        if (artifact.status === status) {
+          skipped += 1
+          continue
+        }
+        artifact.status = status
+        this.saveArtifact(job, artifact)
+        processed += 1
+      } catch (error) {
+        failed += 1
+        errors.push(`${id}：${error instanceof Error ? error.message : '处理失败'}`)
+      }
+    }
+    job.updatedAt = now()
+    this.saveJob(job)
+    return {
+      job: this.jobView(job),
+      processed,
+      skipped,
+      failed,
+      errors: errors.slice(0, 10)
+    }
   }
 
   publish(jobId: string): VaultIndexResult {

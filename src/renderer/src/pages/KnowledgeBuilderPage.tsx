@@ -21,6 +21,7 @@ import {
   WrenchIcon
 } from '@phosphor-icons/react'
 import type {
+  BatchReviewResult,
   KnowledgeArtifactDetail,
   KnowledgeArtifactStatus,
   KnowledgeBuildJob,
@@ -89,6 +90,7 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
   const [reviewPage, setReviewPage] = useState(0)
   const PAGE_SIZE = 50
   const [error, setError] = useState('')
+  const [message, setMessage] = useState('')
 
   const visibleFiles = useMemo(() => {
     if (!scan) return []
@@ -318,15 +320,31 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
       return
     setBusy('review')
     setError('')
+    setMessage('')
     try {
-      let updated: KnowledgeBuildJob | undefined
-      for (const artifactId of pendingIds) {
-        updated = await invoke<KnowledgeBuildJob>({
-          method: 'knowledgeBuilder.artifact.review',
-          params: { jobId: job.id, artifactId, status }
-        })
+      const result = await invoke<BatchReviewResult>({
+        method: 'knowledgeBuilder.artifacts.reviewMany',
+        params: { jobId: job.id, status }
+      })
+      setJob(result.job)
+      // 当前选中项可能被批量处理，重新读取
+      if (artifact) {
+        try {
+          setArtifact(
+            await invoke({
+              method: 'knowledgeBuilder.artifact.get',
+              params: { jobId: job.id, artifactId: artifact.id }
+            })
+          )
+        } catch {
+          setArtifact(undefined)
+        }
       }
-      if (updated) setJob(updated)
+      if (result.failed > 0) {
+        setError(`已${action} ${result.processed} 项，${result.failed} 项失败${result.errors.length ? `：${result.errors[0]}` : ''}`)
+      } else {
+        setMessage(`已${action} ${result.processed} 项`)
+      }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : `批量${action}失败`)
     } finally {
@@ -393,6 +411,11 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
       />
 
       {error && <ErrorState message={error} onRetry={() => setError('')} />}
+      {message && (
+        <div className="answer-panel" style={{ marginBottom: 10 }}>
+          <p className="positive" style={{ margin: 0 }}>{message}</p>
+        </div>
+      )}
 
       <Section
         title="转换环境"
@@ -656,14 +679,14 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
                     disabled={busy === 'review'}
                     onClick={() => void reviewAll('approved')}
                   >
-                    全部批准 {job.pendingArtifacts} 项
+                    {busy === 'review' ? '正在处理…' : `全部批准 ${job.pendingArtifacts} 项`}
                   </Button>
                   <Button
                     icon={<ArrowClockwiseIcon />}
                     disabled={busy === 'review'}
                     onClick={() => void reviewAll('rejected')}
                   >
-                    全部拒绝
+                    {busy === 'review' ? '正在处理…' : '全部拒绝'}
                   </Button>
                 </>
               )}
