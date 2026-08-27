@@ -6,6 +6,21 @@ import { formatFullDate, invoke } from '../api'
 import { MarkdownContent } from '../components/MarkdownContent'
 import { EmptyState, ErrorState, LoadingState, PageHeader, Section } from '../components/ui'
 
+// 下拉预览的优雅截断：压缩空白后在限长内回退到最近的句读，
+// 没有句读可退时才硬切，始终以省略号提示有下文
+function stemPreview(stem: string, max = 60): string {
+  const compact = stem.replace(/\s+/g, '')
+  if (compact.length <= max) return compact
+  const head = compact.slice(0, max)
+  const boundary = Math.max(
+    head.lastIndexOf('。'),
+    head.lastIndexOf('；'),
+    head.lastIndexOf('，'),
+    head.lastIndexOf('、')
+  )
+  return (boundary > 20 ? head.slice(0, boundary + 1) : head) + '…'
+}
+
 export function ShenlunSolutionPage(): React.JSX.Element {
   const [prompts, setPrompts] = useState<Question[]>()
   const [promptId, setPromptId] = useState('')
@@ -127,7 +142,7 @@ export function ShenlunSolutionPage(): React.JSX.Element {
           <Select value={promptId} onChange={(_, data) => setPromptId(data.value)}>
             {prompts.map((prompt) => (
               <option value={prompt.id} key={prompt.id}>
-                {prompt.category}：{prompt.stem.slice(0, 55)}
+                {prompt.category}：{stemPreview(prompt.stem)}
               </option>
             ))}
           </Select>
