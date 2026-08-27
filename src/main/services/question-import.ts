@@ -24,6 +24,8 @@ export interface ParsedSolution {
   /** 解析册在【参考答案】前重印的题干开头，用于配对一致性校验 */
   stemExcerpt?: string
   origin?: { year: number; region: string; rate: number }
+  /** 答案标记内嵌的正确率（如【参考答案及正确率】C，89% → 0.89），无则缺省 */
+  answerRate?: number
 }
 
 export interface DirectQuestion {
@@ -52,6 +54,8 @@ const CHAPTER_TITLE = /^第[一二三四五六七八九十百0-9]{1,4}[篇章套
 const QUESTION_NO = /^(\d{1,3})\s*[.、．]\s*(?!\d)(.*)$/
 const OPTION_NO = /^([A-D])\s*[.、．]?\s*(.+)$/
 const ANSWER_MARK = /【参考答案】\s*([A-D]+)/
+const ANSWER_RATE_MARK = /【参考答案及正确率】\s*([A-D]+)(?:[，,]\s*(\d{1,3})\s*%)?/
+// 花生十三系解析册的加长变体：【参考答案及正确率】C，89%（正确率喂难度映射）
 const META_MARK = /【题型与文段类型】\s*(.+)/
 const EXPLAIN_MARK = /【实战解析】/
 const ORIGIN_MARK = /^[（(]\s*(\d{4})\s*年?\s*([^)）]*?)\s+(\d{1,3})\s*%\s*[)）]/
@@ -77,9 +81,64 @@ export function toLines(raw: string): string[] {
     .map((line) => line.trim())
     .filter(Boolean)
 }
+// 书首目录过滤（双通道规则）：
+// 题本/解析册常在开头整页印「练习题01套…练习题30套」目录，使按序递增的套号状态机在
+// 正文开始前就被推到最大套号（实测解析册 392 页全程错位，只识别出最后一套）。
+// 判定：把所有套标题按相邻间距聚簇；只有当某簇的套号集合在后文【再次】成簇出现时，
+// 该簇才是目录副本并删除——真实正文锚点不会原样重现。无重复证据的小夹具/普通书不受影响。
+function stripTocSetTitleRuns(lines: string[]): string[] {
+  const titleRows: Array<{ row: number; set: number }> = []
+  lines.forEach((line, row) => {
+    const match = line.match(SET_TITLE)
+    if (!match) return
+    titleRows.push({ row, set: Number(match[1] ?? '0') })
+  })
+  if (titleRows.length < 2) return lines
+
+  // 相邻标题行间距 <= TOC_GAP 视为同一簇（簇内保留行间内容不动）
+  const TOC_GAP = 3
+  interface TitleCluster {
+    rows: Array<{ row: number; set: number }>
+  }
+  const clusters: TitleCluster[] = []
+  let clusterBuf: TitleCluster | undefined
+  let lastRow = -10
+  for (const entry of titleRows) {
+    if (!clusterBuf || entry.row - lastRow > TOC_GAP) {
+      clusterBuf = { rows: [entry] }
+      clusters.push(clusterBuf)
+    } else {
+      clusterBuf.rows.push(entry)
+    }
+    lastRow = entry.row
+  }
+
+  // 簇 A 是目录副本当且仅当：其后存在另一簇 B，共享 ≥ 一半的套号（且至少 2 个）
+  const sharedNumbers = (a: TitleCluster, b: TitleCluster): number => {
+    const setsB = new Set(b.rows.map((item) => item.set))
+    return a.rows.filter((item) => setsB.has(item.set)).length
+  }
+  const poisonedClusters = new Set<number>()
+  for (let a = 0; a < clusters.length - 1; a += 1)
+    for (let b = a + 1; b < clusters.length; b += 1) {
+      if (
+        sharedNumbers(clusters[a]!, clusters[b]!) >=
+        Math.max(2, Math.floor(Math.min(clusters[a]!.rows.length, clusters[b]!.rows.length) / 2))
+      ) {
+        poisonedClusters.add(a)
+      }
+    }
+  if (!poisonedClusters.size) return lines
+
+  const removeRows = new Set<number>()
+  for (const clusterIndex of poisonedClusters)
+    for (const item of clusters[clusterIndex]!.rows) removeRows.add(item.row)
+  return lines.filter((_, index) => !removeRows.has(index))
+}
 
 // 题本切题：期望题号状态机；目录页连续标题只认第一行；题号行丢失时跳号续切；选项换行并入末选项
-export function parseQuestionBook(lines: string[]): ParsedQuestion[] {
+export function parseQuestionBook(inputLines: string[]): ParsedQuestion[] {
+  const lines = stripTocSetTitleRuns(inputLines)
   const questions: ParsedQuestion[] = []
   let setNo = 0
   let current: ParsedQuestion | null = null
@@ -164,24 +223,37 @@ export function parseQuestionBook(lines: string[]): ParsedQuestion[] {
 }
 
 // 解析册：只提取【参考答案】【题型与文段类型】【实战解析】标记块
-export function parseSolutionBook(lines: string[]): Map<string, ParsedSolution> {
+// events 参数仅供诊断（传入数组时输出状态机轨迹），生产调用不传
+export function parseSolutionBook(
+  inputLines: string[],
+  events?: string[]
+): Map<string, ParsedSolution> {
+  const lines = stripTocSetTitleRuns(inputLines)
   const solutions = new Map<string, ParsedSolution>()
+  const emit = (message: string): void => {
+    if (events) events.push(message)
+  }
   let setNo = 0
   let current: ParsedSolution | null = null
   let expected = 1
   let inExplanation = false
   let lastLineWasHeader = false
   let excerptLines: string[] = []
+  let lineNumber = 0
   for (const line of lines) {
+    lineNumber += 1
     if (NOISE.test(line)) continue
     const setTitle = line.match(SET_TITLE)
     if (setTitle) {
       const header = Number(setTitle[1] ?? '0')
       // 与题本同规则：连续标题串只认第一行，防目录页推高套号
       if (header > setNo && !lastLineWasHeader) {
+        emit(`SET ${setNo}->${header} @${lineNumber}`)
         setNo = header
         expected = 1
         current = null
+      } else {
+        emit(`SET-IGNORE ${header} @${lineNumber} (cur=${setNo})`)
       }
       lastLineWasHeader = true
       continue
@@ -190,6 +262,7 @@ export function parseSolutionBook(lines: string[]): Map<string, ParsedSolution> 
     const match = line.match(QUESTION_NO)
     if (match) {
       const num = Number(match[1] ?? '0')
+      emit(`Q num=${num} exp=${expected} @${lineNumber}`)
       const rest = match[2] ?? ''
       const origin = rest.match(ORIGIN_MARK)
       const originData = origin
@@ -199,7 +272,9 @@ export function parseSolutionBook(lines: string[]): Map<string, ParsedSolution> 
             rate: Number(origin[3] ?? '0')
           }
         : undefined
-      if (current && num === expected) {
+      if (current && (num === expected || (num > expected && num <= expected + 5))) {
+        // 跳号容错：解析册里常有题干行被吞（如「2.2022年」被当小数），导致后续题号整体
+        // 前移一位。允许 ≤5 的前进跳号按真实题号落位，否则一套之内一旦错位整批失配。
         current = {
           set: setNo,
           num,
@@ -252,11 +327,20 @@ export function parseSolutionBook(lines: string[]): Map<string, ParsedSolution> 
     }
     if (!current) continue
     const answer = line.match(ANSWER_MARK)
-    if (answer) {
+    const rateAnswer = line.match(ANSWER_RATE_MARK)
+    if (answer || (rateAnswer && !current.answer)) {
       // 【参考答案】前的重印文本冻结为配对校验依据
       current.stemExcerpt = excerptLines.join('').slice(0, 160)
       excerptLines = []
-      current.answer = answer[1] ?? ''
+      if (answer) {
+        current.answer = answer[1] ?? ''
+        inExplanation = false
+        continue
+      }
+      current.answer = rateAnswer![1] ?? ''
+      const ratePercent = Number(rateAnswer![2] ?? '')
+      if (Number.isFinite(ratePercent) && ratePercent > 0)
+        current.answerRate = Math.min(1, Math.max(0, ratePercent / 100))
       inExplanation = false
       continue
     }
@@ -606,7 +690,9 @@ export function mergeDirectQuestions(
         continue
       }
     }
-    const rate = solution?.origin?.rate
+    const rate =
+      solution?.origin?.rate ??
+      (solution?.answerRate !== undefined ? solution.answerRate * 100 : undefined)
     const difficulty =
       rate === undefined ? 2 : rate >= 80 ? 1 : rate >= 65 ? 2 : rate >= 50 ? 3 : rate >= 35 ? 4 : 5
     const explanation =
