@@ -623,7 +623,7 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
 
       <Section
         title="原料批次"
-        description="建议先选 1-3 个代表性文件验证质量和费用，再逐步扩大批次。"
+        description="建议先选 1-3 个代表性文件验证质量和费用，再逐步扩大批次。图表密集型内容（如资料分析统计表）OCR 可能还原失真，发布前请重点核对材料数字。"
       >
         <div className="builder-source-row">
           <Field label="原料目录">
