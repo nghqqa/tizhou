@@ -989,7 +989,11 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
                         {artifactStatusLabel(item.status)}
                       </Badge>
                       <small>{item.kind === 'question' ? '题目' : '知识'}</small>
-                      <small>置信度 {Math.round(item.confidence * 100)}%</small>
+                      <small>
+                        {item.generatedBy === 'direct-import'
+                          ? '规则切题'
+                          : `置信度 ${Math.round(item.confidence * 100)}%`}
+                      </small>
                       {item.warnings.length > 0 && (
                         <small className="warning">⚠ {item.warnings.length}</small>
                       )}
@@ -1031,7 +1035,9 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
                       <div>
                         <strong>{artifact.title}</strong>
                         <span>
-                          内容置信度 {Math.round(artifact.confidence * 100)}%
+                          {artifact.generatedBy === 'direct-import'
+                            ? '规则切题（确定性导入）'
+                            : `内容置信度 ${Math.round(artifact.confidence * 100)}%`}
                           {artifact.warnings.length > 0 && ` · ${artifact.warnings.length} 条警告`}
                           {' · '}来源：{artifact.evidenceExcerpt?.slice(0, 60) || '待核验'}
                         </span>

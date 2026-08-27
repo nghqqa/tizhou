@@ -1323,6 +1323,7 @@ export class KnowledgeBuilderService {
               title: safeTitle(item.stem.slice(0, 60), '未命名题目'),
               category: item.category,
               confidence: 1,
+              generatedBy: 'direct-import',
               status: 'pending',
               warnings: [],
               preview: item.stem.slice(0, 180),
@@ -1388,6 +1389,7 @@ export class KnowledgeBuilderService {
               title: safeTitle(unit.title || unit.stem.slice(0, 40), '未命名题目'),
               category: item.category,
               confidence: 1,
+              generatedBy: 'direct-import',
               status: 'pending',
               warnings: unit.explanation
                 ? []
@@ -1528,6 +1530,7 @@ export class KnowledgeBuilderService {
           title,
           category: candidate.category,
           confidence: candidate.confidence,
+          generatedBy: 'model',
           status: 'pending',
           warnings: candidate.warnings,
           preview:

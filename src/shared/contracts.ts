@@ -179,6 +179,8 @@ export interface KnowledgeArtifactSummary {
   title: string
   category: string
   confidence: number
+  /** 产物来源：direct-import = 规则确定性切题（confidence 无测量意义）；model = AI 提炼自报置信度 */
+  generatedBy?: 'direct-import' | 'model'
   status: KnowledgeArtifactStatus
   warnings: string[]
   preview: string
