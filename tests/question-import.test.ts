@@ -192,6 +192,41 @@ describe('essay book parsing', () => {
     )
   })
 
+  it('merges soft-wrapped OCR rows into paragraphs and keeps long questions intact', () => {
+    // 场景一（截图回归）：材料被版面折行成多条，句末标点才分段，其余无缝拼接
+    // 场景二：超长设问句不得被字数上限截断，前后两半都进题干
+    const book = parseEssayBook(
+      toLines(
+        [
+          '第一章 归纳概括',
+          '【训练一】“好品山东”好在哪里',
+          '资料1',
+          '11月11日下午，在北京展览馆举行的“好客山东好品山东”2023北京推介活动',
+          '“好品凭质量”专场推介会上，圣匠鲁班穿越2500年来到现场，',
+          '与几位“好品山东推荐官”携手互动。',
+          '近年来当地贯彻落实《质量发展若干措施》，将分散在各部门、各系统、各区域的品牌，',
+          '整合形成良好的聚合效应，品牌矩阵持续放大增值效应。',
+          '请你结合全部给定资料，谈谈“好品山东”好在',
+          '哪些方面，有哪些经验可供其他省份借鉴推广。',
+          '(2024年国考副省卷)',
+          '要求：全面、准确、有条理，不超过250字。'
+        ].join('\n')
+      )
+    )
+
+    expect(book.units).toHaveLength(1)
+    const unit = book.units[0]!
+    const paragraphs = unit.material.split('\n\n')
+    expect(paragraphs.length).toBeGreaterThan(1)
+    expect(unit.material).toContain('2023北京推介活动“好品凭质量”专场推介会上')
+    expect(unit.material).not.toMatch(/活动\n/)
+    // 段落级采纳：叙事背景段留材料，真正的设问段整体进题干、不截半句
+    expect(unit.material).toContain('贯彻落实《质量发展若干措施》')
+    expect(unit.stem).not.toContain('贯彻落实《质量发展若干措施》')
+    expect(unit.stem).toContain('有哪些经验可供其他省份借鉴推广')
+    expect(unit.year).toBe(2024)
+  })
+
   it('carries cleaned text through units so material has no OCR gaps', () => {
     const book = parseEssayBook(
       toLines(
@@ -253,7 +288,9 @@ describe('essay book parsing', () => {
     expect(first.stem).not.toContain('山东B卷')
     expect(first.year).toBe(2023)
     expect(first.paper).toBe('山东B卷')
-    expect(first.material).toContain('资料2')
+    // 版面标记「资料N」行在拼段时剔除，材料直接以正文开头
+    expect(first.material).not.toContain('资料2')
+    expect(first.material).toContain('社区基金的筹建')
     expect(first.material.length).toBeGreaterThan(80)
 
     const second = book.units[1]!

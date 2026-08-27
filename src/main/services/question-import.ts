@@ -354,16 +354,9 @@ function cleanEssayTitle(value: string): string {
     .trim()
 }
 
-// 设问线索词按行判定：材料尾段误吸附进提问段时逐行剔除，保留真正带设问动词的句子。
-// 延续行（以标点开头或极短的断句）随前一行去留。
-const ESSAY_HINT_CUES =
-  /归纳|概括|分析|指出|谈谈|如何看待|如何理解|如何优化|如何解决|原因|问题|启示|哪些|什么|建议|看法|理解|评价|撰写|简述|说明|措施|对策|思路|提纲|公开信|短评|演讲|报告/
-
-function isHintLine(line: string): boolean {
-  // 延续行只认「以标点开头」的断句；纯短行不豁免（材料残段常是 1~12 字的引号尾/词组）
-  if (ESSAY_HINT_CUES.test(line)) return true
-  return /^[，、；：,]/.test(line)
-}
+// 段落级设问语式：命中且长度受限的段落判定为题干段。
+// 关键词组合成「动宾语式」而非单词——「质量发展若干措施》《xx问题》」这类书名/叙事
+// 不会因孤立名词误命中。
 
 const CJK_CHAR = /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/
 // 全角区（CJK 标点、全角字母数字），空格同样视为断字噪声
@@ -377,6 +370,64 @@ export function normalizeOcrText(value: string): string {
     .replace(new RegExp(`(${CJK_CHAR.source})[ \\t]+(?=${WIDE_CHAR.source})`, 'g'), '$1')
     .replace(/[ \t]{2,}/g, ' ')
     .trim()
+}
+
+const ESSAY_REQUIREMENT_PREFIX = /^要求[:：]/
+
+function startsEssayStructuralLine(line: string): boolean {
+  return (
+    ESSAY_MATERIAL_HEADER.test(line) ||
+    ESSAY_UNIT_MARK.test(line) ||
+    ESSAY_CHAPTER_MARK.test(line) ||
+    ESSAY_REQUIREMENT_PREFIX.test(line) ||
+    ESSAY_ANSWER_HEADER.test(line) ||
+    ESSAY_ORIGIN_MARK.test(line)
+  )
+}
+
+// 段落级设问语式：命中且长度受限的段落判定为题干段候选。
+// 关键词覆盖动宾式与口语式；位置约束（紧邻要求的连续带）由调用方保证。
+const ESSAY_QUESTION_PARAGRAPH =
+  /(请你|请您|^请[根根结]|谈谈|如何理解|如何看待|怎么看|归纳|概括|分析|梳理|提出了?哪些|有哪些|什么问题|原因是什么|启示|撰写|起草|写一篇|宣讲提纲|公开信|新闻稿|短评|汇报)/
+
+// OCR 输出是逐视觉行的：行尾没有句末标点的都是被版面折断的半句话，
+// 与下一行无缝拼接；遇到结构标记（资料头/新训练/要求/答案头/出处）或句子收束才真正分段。
+function joinProseParagraphs(lines: string[]): string[] {
+  const paragraphs: string[] = []
+  let buffer = ''
+  const flush = (): void => {
+    if (buffer.trim()) paragraphs.push(buffer.trim())
+    buffer = ''
+  }
+  for (const raw of lines) {
+    const line = normalizeOcrText(raw)
+    if (!line) continue
+    if (!buffer) {
+      buffer = line
+      continue
+    }
+    if (startsEssayStructuralLine(line)) {
+      flush()
+      buffer = line
+      continue
+    }
+    if (endsSentence(buffer)) {
+      flush()
+      buffer = line
+      continue
+    }
+    buffer += line
+  }
+  flush()
+  return paragraphs
+}
+
+function endsSentence(line: string): boolean {
+  return /[。！？；…”"』」）)]$/.test(line.trim())
+}
+
+function joinProse(lines: string[]): string {
+  return joinProseParagraphs(lines).join('\n\n')
 }
 
 interface EssayUnitEntry {
@@ -409,35 +460,10 @@ function buildEssayUnit(entry: EssayUnitEntry, seq: number): ParsedEssayUnit | u
   }
   const absoluteEnd = requirementIndex >= 0 ? requirementIndex : body.length
 
-  // 从「要求」上一行向上扫描提问段：带设问线索的行进题干，其余误吸附的行归还材料。
-  // 扫描在资料头处停（材料边界），出处行跳过，总字数超 160 视为整段材料不再向前。
-  const stemLines: string[] = [] // 自下而上收集
-  const rejectedLines: string[] = [] // 扫描区内不构成设问的行，同样自下而上
-  let scannedChars = 0
-  let scanCursor = requirementIndex - 1
-  while (scanCursor >= 0) {
-    const line = body[scanCursor] ?? ''
-    if (ESSAY_MATERIAL_HEADER.test(line)) break
-    // 出处行（(2023年山东B卷））单独捕获过；跳过它继续向上收提问句。
-    // OCR 常把出处行拆成两行：「(2026」+「年国考市地卷）」，两种形态都识别
-    if (
-      ESSAY_ORIGIN_MARK.test(line) ||
-      /^[（(]\s*\d{0,4}\s*$/.test(line) ||
-      /^\d{0,4}年[^。]{0,12}[)）]$/.test(line)
-    ) {
-      scanCursor -= 1
-      continue
-    }
-    scannedChars += line.length
-    if (scannedChars > 160) break
-    ;(isHintLine(line) ? stemLines : rejectedLines).push(line)
-    scanCursor -= 1
-  }
-  stemLines.reverse()
-  rejectedLines.reverse()
-  const questionFound = stemLines.length > 0
-
-  // 资料头取「要求」之上的第一个；找不到则整个正文（要求之前）都是材料
+  // 提问段识别在「段落」粒度进行：先按折行拼段（处理 OCR 的逐视觉行输出），
+  // 再用设问语式挑出题干段，其余段落归还材料。
+  // 行级线索词不可靠——叙事文常含「措施」「问题」「建议」等名词（如『质量发展若干措施》』
+  // 会被误判为设问句导致题干截断）。
   let materialHeaderIndex = -1
   for (let index = 0; index < absoluteEnd; index += 1) {
     if (ESSAY_MATERIAL_HEADER.test(body[index] ?? '')) {
@@ -445,23 +471,36 @@ function buildEssayUnit(entry: EssayUnitEntry, seq: number): ParsedEssayUnit | u
       break
     }
   }
-  const materialStart = materialHeaderIndex < 0 ? 0 : materialHeaderIndex
-  const zoneStart = scanCursor + 1 // 扫描区下边界（含）
-  const constantMaterial = body.slice(
-    Math.min(materialStart, absoluteEnd),
-    Math.min(zoneStart, absoluteEnd)
+  const zoneRows = body.slice(materialHeaderIndex + 1, absoluteEnd)
+  const paragraphs = joinProseParagraphs(zoneRows).filter(
+    // 结构残行（资料头/孤行出处等）不参与题干与材料
+    (paragraph) => !(paragraph.length <= 16 && startsEssayStructuralLine(paragraph))
   )
-  const materialParts: string[] = [
-    ...constantMaterial,
-    ...rejectedLines,
-    ...(questionFound ? [] : body.slice(Math.max(zoneStart, materialStart), absoluteEnd))
-  ]
-  const material = materialParts.filter((part) => part.trim()).join('\n')
+  const questionParas: string[] = []
+  // 题干段只从「要求」上方取连续的一段带：典型版式里设问句紧邻出处行与要求，
+  // 叙述性段落即使含弱动词也隔在其上，不应倒灌进题干。
+  for (let index = paragraphs.length - 1; index >= 0; index -= 1) {
+    let paragraph = paragraphs[index]!
+    if (paragraph.length > 320) {
+      // 材料尾段与设问句粘连成超长段时，从最后一个「请」起头截取设问部分
+      const lastRequest = paragraph.lastIndexOf('请')
+      const tail = lastRequest >= 0 ? paragraph.slice(lastRequest) : ''
+      if (tail.length >= 12 && tail.length <= 320 && ESSAY_QUESTION_PARAGRAPH.test(tail))
+        paragraph = tail
+    }
+    if (paragraph.length > 400 || !ESSAY_QUESTION_PARAGRAPH.test(paragraph)) break
+    questionParas.unshift(paragraph)
+  }
+  const questionFound = questionParas.length > 0
 
+  const material = joinProseParagraphs(
+    paragraphs.filter((paragraph) => !questionParas.includes(paragraph))
+  ).join('\n\n')
   const requirementText = requirement ? `要求：${requirement}` : ''
-  let stem = [...stemLines, requirementText].filter(Boolean).join('\n')
+  let stem = joinProseParagraphs(questionParas).join('\n')
   if (!questionFound || stem.replace(/\s+/g, '').length < 10)
     stem = `${entry.title}${requirement ? ` 要求：${requirement}` : ''}`
+  if (questionFound && requirementText) stem = `${stem}\n${requirementText}`
 
   // 完整性门槛：既没材料又没实质题干的单元（纯目录残片等）跳过
   if (material.replace(/\s+/g, '').length < 30 && stem.replace(/\s+/g, '').length < 16)
@@ -475,13 +514,7 @@ function buildEssayUnit(entry: EssayUnitEntry, seq: number): ParsedEssayUnit | u
     material,
     ...(originYear && Number.isFinite(originYear) ? { year: originYear } : {}),
     ...(originPaper ? { paper: originPaper } : {}),
-    explanation:
-      answerIndex >= 0
-        ? body
-            .slice(answerIndex + 1)
-            .join('\n')
-            .trim()
-        : ''
+    explanation: answerIndex >= 0 ? joinProse(body.slice(answerIndex + 1)).trim() : ''
   }
 }
 
