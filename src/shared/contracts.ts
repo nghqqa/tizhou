@@ -105,12 +105,18 @@ export interface KnowledgeSourceScan {
   warnings: string[]
 }
 
+export type OcrAccelerator = 'cpu' | 'dml'
+
 export interface KnowledgeEngineStatus {
   available: boolean
   installing: boolean
   version?: string
   pythonPath?: string
   ocrAvailable: boolean
+  /** OCR 推理后端：dml = DirectML GPU 加速（仅 Windows + 可用显卡时由用户显式启用） */
+  ocrAccelerator?: OcrAccelerator
+  /** 检测到的独立显卡名称（用于决定是否展示 GPU 加速安装入口） */
+  gpuAdapterName?: string
   message: string
   supportedExtensions: string[]
   installProgress?: { phase: string; percent: number }
@@ -590,6 +596,8 @@ export type WorkbenchRequest =
   | { method: 'knowledgeBuilder.source.scan'; params: { path: string } }
   | { method: 'knowledgeBuilder.engine.status'; params?: undefined }
   | { method: 'knowledgeBuilder.engine.install'; params?: undefined }
+  | { method: 'knowledgeBuilder.engine.gpu.install'; params?: undefined }
+  | { method: 'knowledgeBuilder.engine.gpu.remove'; params?: undefined }
   | {
       method: 'knowledgeBuilder.job.start'
       params: { sourcePath: string; fileIds: string[]; options: KnowledgeBuildOptions }

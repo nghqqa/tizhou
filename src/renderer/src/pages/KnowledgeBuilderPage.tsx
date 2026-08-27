@@ -18,7 +18,8 @@ import {
   PlayIcon,
   StopIcon,
   TrashIcon,
-  WrenchIcon
+  WrenchIcon,
+  LightningIcon
 } from '@phosphor-icons/react'
 import type {
   BatchReviewResult,
@@ -188,6 +189,40 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
       setEngine(await invoke({ method: 'knowledgeBuilder.engine.install' }))
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '转换引擎安装失败')
+    } finally {
+      window.clearInterval(poll)
+      setBusy('')
+    }
+  }
+
+  async function toggleGpuAccelerator(): Promise<void> {
+    if (!engine) return
+    const removing = engine.ocrAccelerator === 'dml'
+    setBusy('gpu')
+    setError('')
+    const poll = window.setInterval(() => {
+      void invoke<KnowledgeEngineStatus>({ method: 'knowledgeBuilder.engine.status' })
+        .then(setEngine)
+        .catch(() => undefined)
+    }, 1200)
+    try {
+      setEngine(
+        await invoke<KnowledgeEngineStatus>({
+          method: removing
+            ? 'knowledgeBuilder.engine.gpu.remove'
+            : 'knowledgeBuilder.engine.gpu.install'
+        })
+      )
+      setMessage(
+        removing
+          ? '已恢复 CPU 推理后端，GPU 加速组件已移除。'
+          : 'GPU 加速已启用，扫描式 PDF 的识别速度将显著提升。'
+      )
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'GPU 加速组件操作失败')
+      void invoke<KnowledgeEngineStatus>({ method: 'knowledgeBuilder.engine.status' })
+        .then(setEngine)
+        .catch(() => undefined)
     } finally {
       window.clearInterval(poll)
       setBusy('')
@@ -472,16 +507,38 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
         title="转换环境"
         description="使用独立 Python 环境，不改动系统 Python，也不会把 API Key 交给转换进程。"
         actions={
-          (!engine.available || !engine.ocrAvailable) && (
-            <Button
-              appearance="primary"
-              icon={<WrenchIcon />}
-              disabled={busy === 'engine'}
-              onClick={() => void installEngine()}
-            >
-              {busy === 'engine' ? '正在安装' : engine.available ? '补装 OCR 组件' : '安装转换引擎'}
-            </Button>
-          )
+          <>
+            {engine.available && engine.ocrAvailable && busy !== 'engine' && (
+              <Button
+                appearance={engine.ocrAccelerator === 'dml' ? 'subtle' : 'primary'}
+                icon={<LightningIcon />}
+                disabled={busy === 'gpu'}
+                onClick={() => void toggleGpuAccelerator()}
+              >
+                {busy === 'gpu'
+                  ? engine.ocrAccelerator === 'dml'
+                    ? '正在移除'
+                    : '正在启用'
+                  : engine.ocrAccelerator === 'dml'
+                    ? '移除 GPU 加速'
+                    : '启用 GPU 加速'}
+              </Button>
+            )}
+            {(!engine.available || !engine.ocrAvailable) && (
+              <Button
+                appearance="primary"
+                icon={<WrenchIcon />}
+                disabled={busy === 'engine'}
+                onClick={() => void installEngine()}
+              >
+                {busy === 'engine'
+                  ? '正在安装'
+                  : engine.available
+                    ? '补装 OCR 组件'
+                    : '安装转换引擎'}
+              </Button>
+            )}
+          </>
         }
       >
         <div className="builder-engine-row">
@@ -497,9 +554,19 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
                 OCR 组件（扫描件识别）：
                 {engine.ocrAvailable ? '已就绪' : '未安装，补装后可自动识别扫描式 PDF'}
               </small>
+              {engine.available && engine.ocrAvailable && (
+                <small>
+                  GPU 加速（扫描识别提速，可选）：
+                  {engine.ocrAccelerator === 'dml'
+                    ? `已启用 DirectML${engine.gpuAdapterName ? ` · ${engine.gpuAdapterName}` : ''}`
+                    : engine.gpuAdapterName
+                      ? `未启用 · 检测到 ${engine.gpuAdapterName}，启用后扫描识别约提速 2-3 倍`
+                      : '未启用 · 未检测到独立显卡，当前使用 CPU 推理'}
+                </small>
+              )}
             </div>
           </div>
-          {busy === 'engine' && (
+          {(busy === 'engine' || busy === 'gpu') && (
             <div style={{ display: 'grid', gap: 6, marginTop: 10 }}>
               <ProgressBar
                 value={engine.installProgress ? engine.installProgress.percent / 100 : undefined}

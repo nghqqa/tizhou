@@ -264,6 +264,10 @@ async function initialize(): Promise<void> {
         return knowledgeBuilder.engineStatus()
       case 'knowledgeBuilder.engine.install':
         return knowledgeBuilder.installEngine()
+      case 'knowledgeBuilder.engine.gpu.install':
+        return knowledgeBuilder.installGpuAccelerator()
+      case 'knowledgeBuilder.engine.gpu.remove':
+        return knowledgeBuilder.removeGpuAccelerator()
       case 'knowledgeBuilder.job.start':
         return knowledgeBuilder.startJob(request.params)
       case 'knowledgeBuilder.job.latest':

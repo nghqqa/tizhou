@@ -35,6 +35,12 @@ import { FEATURE_PROMPTS, sourceEnvelope, taskDataEnvelope } from '../../shared/
 import { AiService } from './ai'
 import { ConversionCache } from './conversion-cache'
 import {
+  CPU_ONNXRUNTIME_SPEC,
+  DIRECTML_PACKAGE,
+  pickGpuAdapter,
+  setRapidocrDmlEnabled
+} from './ocr-accelerator'
+import {
   directQuestionMarkdown,
   directSignature,
   mergeDirectQuestions,
@@ -290,6 +296,7 @@ export class KnowledgeBuilderService {
   private installing = false
   private installProgress?: { phase: string; percent: number }
   private engineCache?: KnowledgeEngineStatus
+  private gpuAdapterProbe?: Promise<string | undefined>
 
   constructor(
     dataDirectory: string,
@@ -380,7 +387,13 @@ export class KnowledgeBuilderService {
       this.engineCache.pythonPath &&
       existsSync(this.engineCache.pythonPath)
     )
-      return { ...this.engineCache, installing: this.installing, installProgress: progress }
+      return {
+        ...this.engineCache,
+        ocrAccelerator: this.ocrAcceleratorMode(),
+        gpuAdapterName: await this.detectGpuAdapter(),
+        installing: this.installing,
+        installProgress: progress
+      }
     const candidates = this.pythonCandidates()
     for (const pythonPath of candidates) {
       if (!existsSync(pythonPath)) continue
@@ -395,7 +408,12 @@ export class KnowledgeBuilderService {
           message: `MarkItDown ${version} 已就绪`,
           supportedExtensions: [...SUPPORTED_EXTENSIONS]
         }
-        return { ...this.engineCache, installProgress: progress }
+        return {
+          ...this.engineCache,
+          ocrAccelerator: this.ocrAcceleratorMode(),
+          gpuAdapterName: await this.detectGpuAdapter(),
+          installProgress: progress
+        }
       }
     }
     return {
@@ -462,6 +480,180 @@ export class KnowledgeBuilderService {
       return status
     } catch (error) {
       throw new Error(`转换引擎安装失败：${error instanceof Error ? error.message : '未知错误'}`)
+    } finally {
+      this.installing = false
+    }
+  }
+
+  /** GPU 加速（DirectML）组件：检测、安装、移除。仅 Windows；失败自动回退 CPU 后端 */
+  private rapidocrConfigPath(): string {
+    return join(this.engineDirectory, '.venv', 'Lib', 'site-packages', 'rapidocr', 'config.yaml')
+  }
+
+  private dmlInstalled(): boolean {
+    // onnxruntime-directml 与 CPU 版 import 名相同（onnxruntime），只能靠 dist-info 区分
+    const sitePackages = join(this.engineDirectory, '.venv', 'Lib', 'site-packages')
+    try {
+      return readdirSync(sitePackages).some((entry) =>
+        entry.toLowerCase().startsWith('onnxruntime_directml')
+      )
+    } catch {
+      return false
+    }
+  }
+
+  private dmlEnabled(): boolean {
+    try {
+      return /use_dml:\s*true/.test(readFileSync(this.rapidocrConfigPath(), 'utf8'))
+    } catch {
+      return false
+    }
+  }
+
+  private ocrAcceleratorMode(): 'cpu' | 'dml' {
+    return this.dmlInstalled() && this.dmlEnabled() ? 'dml' : 'cpu'
+  }
+
+  private setRapidocrDml(enabled: boolean): void {
+    const configPath = this.rapidocrConfigPath()
+    if (!existsSync(configPath)) return
+    this.atomicWrite(configPath, setRapidocrDmlEnabled(readFileSync(configPath, 'utf8'), enabled))
+  }
+
+  private detectGpuAdapter(): Promise<string | undefined> {
+    // 显卡型号基本不变，进程生命周期内只探测一次（PowerShell 冷启动 ~200ms，不能进轮询路径）
+    if (!this.gpuAdapterProbe) {
+      this.gpuAdapterProbe = execFileAsync(
+        'powershell',
+        ['-NoProfile', '-Command', '(Get-CimInstance Win32_VideoController).Name -join "`n"'],
+        { timeout: 15_000, windowsHide: true, maxBuffer: 1024 * 1024 }
+      )
+        .then(({ stdout }) => pickGpuAdapter(stdout.split(/\r?\n/)))
+        .catch(() => undefined)
+    }
+    return this.gpuAdapterProbe
+  }
+
+  // 装后探针：初始化 RapidOCR 并捕获 ORT 的回退告警。DML 创建失败时 ORT 会静默降级 CPU，
+  // 只有从日志里识别失败特征才能发现「装了等于没装」——这正是探针要拦住的情况。
+  private async probeDml(pythonPath: string): Promise<boolean> {
+    const snippet = [
+      'import sys, io, contextlib',
+      'try:',
+      '    import onnxruntime as ort',
+      "    if 'DmlExecutionProvider' not in ort.get_available_providers():",
+      "        print('dml-probe: missing-provider'); sys.exit(0)",
+      '    from rapidocr import RapidOCR',
+      '    buf = io.StringIO()',
+      '    with contextlib.redirect_stderr(buf), contextlib.redirect_stdout(buf):',
+      '        RapidOCR()',
+      '    captured = buf.getvalue()',
+      "    bad = 'Failed to create DML' in captured or 'automatically shifted' in captured",
+      "    print('dml-probe:', 'fallback' if bad else 'ok')",
+      'except Exception as error:',
+      "    print('dml-probe: error', error)"
+    ].join('\n')
+    try {
+      const { stdout } = await execFileAsync(pythonPath, ['-c', snippet], {
+        timeout: 180_000,
+        windowsHide: true,
+        maxBuffer: 1024 * 1024,
+        env: { ...process.env, PYTHONUTF8: '1' }
+      })
+      return stdout.includes('dml-probe: ok')
+    } catch {
+      return false
+    }
+  }
+
+  async installGpuAccelerator(): Promise<KnowledgeEngineStatus> {
+    if (this.installing) throw new Error('转换引擎正在安装，请稍候')
+    if (this.runningJobId) throw new Error('知识构建任务运行时不能更新转换引擎')
+    const current = await this.engineStatus()
+    if (!current.available || !current.ocrAvailable || !current.pythonPath)
+      throw new Error('请先安装转换引擎与 OCR 组件，再启用 GPU 加速')
+    this.installing = true
+    try {
+      const pythonPath = current.pythonPath
+      this.installProgress = { phase: '卸载 CPU 推理后端 onnxruntime', percent: 8 }
+      await execFileAsync(pythonPath, ['-m', 'pip', 'uninstall', '-y', 'onnxruntime'], {
+        timeout: 180_000,
+        windowsHide: true,
+        maxBuffer: 1024 * 1024
+      })
+      await this.pipInstallWithProgress(
+        pythonPath,
+        DIRECTML_PACKAGE,
+        25,
+        55,
+        '安装 DirectML 推理后端（DX12 显卡通用）'
+      )
+      this.installProgress = { phase: '启用 GPU 推理开关', percent: 86 }
+      this.setRapidocrDml(true)
+      this.installProgress = { phase: '验证 GPU 推理是否真实生效', percent: 92 }
+      if (!(await this.probeDml(pythonPath))) {
+        // 显卡驱动不支持/初始化失败：自动回退，绝不让用户停在「装了等于没装」的状态
+        this.installProgress = { phase: 'GPU 未生效，自动回退 CPU 推理后端', percent: 95 }
+        await execFileAsync(pythonPath, ['-m', 'pip', 'uninstall', '-y', 'onnxruntime-directml'], {
+          timeout: 180_000,
+          windowsHide: true,
+          maxBuffer: 1024 * 1024
+        })
+        await execFileAsync(
+          pythonPath,
+          ['-m', 'pip', 'install', '--disable-pip-version-check', CPU_ONNXRUNTIME_SPEC],
+          { timeout: 20 * 60_000, windowsHide: true, maxBuffer: 2 * 1024 * 1024 }
+        )
+        this.setRapidocrDml(false)
+        this.engineCache = undefined
+        throw new Error(
+          '本机显卡不支持 DirectML 加速，已自动回退 CPU 后端（识别质量与速度不受影响）'
+        )
+      }
+      this.engineCache = undefined
+      this.installProgress = { phase: 'GPU 加速已启用', percent: 100 }
+      return await this.engineStatus()
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith('本机显卡不支持')) throw error
+      throw new Error(
+        `GPU 加速组件安装失败：${error instanceof Error ? error.message : '未知错误'}`
+      )
+    } finally {
+      this.installing = false
+    }
+  }
+
+  async removeGpuAccelerator(): Promise<KnowledgeEngineStatus> {
+    if (this.installing) throw new Error('转换引擎正在安装，请稍候')
+    if (this.runningJobId) throw new Error('知识构建任务运行时不能更新转换引擎')
+    const current = await this.engineStatus()
+    if (!current.available || !current.pythonPath)
+      throw new Error('转换引擎尚未安装，无需移除 GPU 加速')
+    if (!this.dmlInstalled()) throw new Error('当前未启用 GPU 加速')
+    this.installing = true
+    try {
+      const pythonPath = current.pythonPath
+      this.installProgress = { phase: '卸载 DirectML 推理后端', percent: 15 }
+      await execFileAsync(pythonPath, ['-m', 'pip', 'uninstall', '-y', 'onnxruntime-directml'], {
+        timeout: 180_000,
+        windowsHide: true,
+        maxBuffer: 1024 * 1024
+      })
+      this.installProgress = { phase: '恢复 CPU 推理后端 onnxruntime', percent: 45 }
+      await execFileAsync(
+        pythonPath,
+        ['-m', 'pip', 'install', '--disable-pip-version-check', CPU_ONNXRUNTIME_SPEC],
+        { timeout: 20 * 60_000, windowsHide: true, maxBuffer: 2 * 1024 * 1024 }
+      )
+      this.installProgress = { phase: '恢复 CPU 推理开关', percent: 90 }
+      this.setRapidocrDml(false)
+      this.engineCache = undefined
+      this.installProgress = { phase: '已恢复 CPU 推理', percent: 100 }
+      return await this.engineStatus()
+    } catch (error) {
+      throw new Error(
+        `GPU 加速组件移除失败：${error instanceof Error ? error.message : '未知错误'}`
+      )
     } finally {
       this.installing = false
     }
@@ -881,7 +1073,7 @@ export class KnowledgeBuilderService {
               job.cancelRequested ||= this.loadJob(id).cancelRequested
               if (job.cancelRequested) throw new Error('任务已取消')
             } else {
-              file.message = '正在逐页检测文字层并识别'
+              file.message = `正在逐页检测文字层并识别${this.ocrAcceleratorMode() === 'dml' ? '（GPU 加速）' : ''}`
               this.saveJob(job)
               ocrQuality = await this.ocrConvert(job, file, engine.pythonPath, source, rawPath)
               job.cancelRequested ||= this.loadJob(id).cancelRequested
