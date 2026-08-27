@@ -117,6 +117,8 @@ export interface KnowledgeEngineStatus {
   ocrAccelerator?: OcrAccelerator
   /** 检测到的独立显卡名称（用于决定是否展示 GPU 加速安装入口） */
   gpuAdapterName?: string
+  /** 转换组件 pip 安装源偏好：'auto'（探活优选）或镜像 id */
+  pipMirrorId?: string
   message: string
   supportedExtensions: string[]
   installProgress?: { phase: string; percent: number }
@@ -600,6 +602,7 @@ export type WorkbenchRequest =
   | { method: 'knowledgeBuilder.engine.install'; params?: undefined }
   | { method: 'knowledgeBuilder.engine.gpu.install'; params?: undefined }
   | { method: 'knowledgeBuilder.engine.gpu.remove'; params?: undefined }
+  | { method: 'knowledgeBuilder.engine.mirror.set'; params: { id: string } }
   | {
       method: 'knowledgeBuilder.job.start'
       params: { sourcePath: string; fileIds: string[]; options: KnowledgeBuildOptions }

@@ -21,6 +21,7 @@ import {
   WrenchIcon,
   LightningIcon
 } from '@phosphor-icons/react'
+import { PIP_MIRROR_OPTIONS, pipMirrorLabel } from '@shared/pip-mirrors'
 import type {
   BatchReviewResult,
   KnowledgeArtifactDetail,
@@ -225,6 +226,24 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
         .catch(() => undefined)
     } finally {
       window.clearInterval(poll)
+      setBusy('')
+    }
+  }
+
+  async function setMirror(mirrorId: string): Promise<void> {
+    if (!engine) return
+    setBusy('mirror')
+    setError('')
+    try {
+      setEngine(
+        await invoke<KnowledgeEngineStatus>({
+          method: 'knowledgeBuilder.engine.mirror.set',
+          params: { id: mirrorId }
+        })
+      )
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : '安装源设置失败')
+    } finally {
       setBusy('')
     }
   }
@@ -578,6 +597,27 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
               </small>
             </div>
           )}
+          <div className="builder-mirror-row" style={{ marginTop: 14 }}>
+            <Field label="组件安装源" style={{ maxWidth: 320 }}>
+              <Select
+                value={engine.pipMirrorId ?? 'auto'}
+                disabled={busy !== ''}
+                onChange={(_, data) => void setMirror(data.value)}
+              >
+                {PIP_MIRROR_OPTIONS.map((option) => (
+                  <option value={option.id} key={option.id}>
+                    {option.label}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <small className="muted-copy">
+              作用于转换组件的安装、补装与修复，不会改动系统 pip 配置。
+              {engine.pipMirrorId === 'auto'
+                ? '自动模式在每次安装开始时对官方源与国内镜像测速，选最快的国内源。'
+                : `当前钉死：${pipMirrorLabel(engine.pipMirrorId)}。`}
+            </small>
+          </div>
         </div>
       </Section>
 

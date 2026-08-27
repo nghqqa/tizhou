@@ -268,6 +268,9 @@ async function initialize(): Promise<void> {
         return knowledgeBuilder.installGpuAccelerator()
       case 'knowledgeBuilder.engine.gpu.remove':
         return knowledgeBuilder.removeGpuAccelerator()
+      case 'knowledgeBuilder.engine.mirror.set':
+        await knowledgeBuilder.setPipMirror(request.params.id)
+        return knowledgeBuilder.engineStatus()
       case 'knowledgeBuilder.job.start':
         return knowledgeBuilder.startJob(request.params)
       case 'knowledgeBuilder.job.latest':

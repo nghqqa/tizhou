@@ -41,6 +41,14 @@ import {
   setRapidocrDmlEnabled
 } from './ocr-accelerator'
 import {
+  envPipIndexUrl,
+  mirrorById,
+  normalizeMirrorPreference,
+  pickMirrorByProbes,
+  probeMirror
+} from './pip-mirror'
+import { PIP_MIRRORS } from '../../shared/pip-mirrors'
+import {
   directQuestionMarkdown,
   directSignature,
   mergeDirectQuestions,
@@ -297,6 +305,7 @@ export class KnowledgeBuilderService {
   private installProgress?: { phase: string; percent: number }
   private engineCache?: KnowledgeEngineStatus
   private gpuAdapterProbe?: Promise<string | undefined>
+  private resolvedPipIndex?: { url: string; label: string }
 
   constructor(
     dataDirectory: string,
@@ -391,6 +400,7 @@ export class KnowledgeBuilderService {
         ...this.engineCache,
         ocrAccelerator: this.ocrAcceleratorMode(),
         gpuAdapterName: await this.detectGpuAdapter(),
+        pipMirrorId: this.pipMirrorPreference(),
         installing: this.installing,
         installProgress: progress
       }
@@ -412,6 +422,7 @@ export class KnowledgeBuilderService {
           ...this.engineCache,
           ocrAccelerator: this.ocrAcceleratorMode(),
           gpuAdapterName: await this.detectGpuAdapter(),
+          pipMirrorId: this.pipMirrorPreference(),
           installProgress: progress
         }
       }
@@ -420,6 +431,7 @@ export class KnowledgeBuilderService {
       available: false,
       installing: this.installing,
       ocrAvailable: false,
+      pipMirrorId: this.pipMirrorPreference(),
       message: '尚未安装独立 MarkItDown 转换环境',
       supportedExtensions: [...SUPPORTED_EXTENSIONS],
       installProgress: progress
@@ -443,34 +455,41 @@ export class KnowledgeBuilderService {
           maxBuffer: 2 * 1024 * 1024
         })
       }
-      // 分组件安装并解析 pip 输出推进进度：大块是 OCR 模型与推理运行时
+      // 分组件安装并解析 pip 输出推进进度：大块是 OCR 模型与推理运行时。
+      // 安装源在批次开始时解析一次（探活优选或用户钉死），整批共用。
+      const pipIndex = await this.resolvePipIndex()
+      this.installProgress = { phase: `安装源：${pipIndex.label}`, percent: 3 }
       await this.pipInstallWithProgress(
         pythonPath,
         `markitdown[pdf,docx,pptx,xlsx,xls,outlook]==${MARKITDOWN_VERSION}`,
         5,
         25,
-        '安装文档转换组件 MarkItDown'
+        '安装文档转换组件 MarkItDown',
+        pipIndex.url
       )
       await this.pipInstallWithProgress(
         pythonPath,
         OCR_PACKAGES[0]!,
         30,
         20,
-        '安装 OCR 组件 RapidOCR（含识别模型）'
+        '安装 OCR 组件 RapidOCR（含识别模型）',
+        pipIndex.url
       )
       await this.pipInstallWithProgress(
         pythonPath,
         OCR_PACKAGES[1]!,
         50,
         38,
-        '安装推理运行时 onnxruntime（体积较大）'
+        '安装推理运行时 onnxruntime（体积较大）',
+        pipIndex.url
       )
       await this.pipInstallWithProgress(
         pythonPath,
         OCR_PACKAGES[2]!,
         88,
         8,
-        '安装 PDF 渲染组件 pypdfium2'
+        '安装 PDF 渲染组件 pypdfium2',
+        pipIndex.url
       )
       this.installProgress = { phase: '验证安装结果', percent: 97 }
       this.engineCache = undefined
@@ -581,12 +600,14 @@ export class KnowledgeBuilderService {
         windowsHide: true,
         maxBuffer: 1024 * 1024
       })
+      const pipIndex = await this.resolvePipIndex()
       await this.pipInstallWithProgress(
         pythonPath,
         DIRECTML_PACKAGE,
         25,
         55,
-        '安装 DirectML 推理后端（DX12 显卡通用）'
+        '安装 DirectML 推理后端（DX12 显卡通用）',
+        pipIndex.url
       )
       this.installProgress = { phase: '启用 GPU 推理开关', percent: 86 }
       this.setRapidocrDml(true)
@@ -640,9 +661,18 @@ export class KnowledgeBuilderService {
         maxBuffer: 1024 * 1024
       })
       this.installProgress = { phase: '恢复 CPU 推理后端 onnxruntime', percent: 45 }
+      const pipIndex = await this.resolvePipIndex()
       await execFileAsync(
         pythonPath,
-        ['-m', 'pip', 'install', '--disable-pip-version-check', CPU_ONNXRUNTIME_SPEC],
+        [
+          '-m',
+          'pip',
+          'install',
+          '--disable-pip-version-check',
+          '--index-url',
+          pipIndex.url,
+          CPU_ONNXRUNTIME_SPEC
+        ],
         { timeout: 20 * 60_000, windowsHide: true, maxBuffer: 2 * 1024 * 1024 }
       )
       this.installProgress = { phase: '恢复 CPU 推理开关', percent: 90 }
@@ -659,19 +689,74 @@ export class KnowledgeBuilderService {
     }
   }
 
+  // ---- pip 安装源：安装时探活优选，可手动钉死；只影响本应用的 pip 命令，不动系统配置 ----
+
+  private mirrorPreferencePath(): string {
+    return join(this.engineDirectory, 'pip-mirror.json')
+  }
+
+  private pipMirrorPreference(): string {
+    try {
+      const parsed = JSON.parse(readFileSync(this.mirrorPreferencePath(), 'utf8')) as {
+        mirrorId?: string
+      }
+      return normalizeMirrorPreference(parsed.mirrorId)
+    } catch {
+      return 'auto'
+    }
+  }
+
+  async setPipMirror(mirrorId: string): Promise<void> {
+    const preference = normalizeMirrorPreference(mirrorId)
+    this.atomicWrite(
+      this.mirrorPreferencePath(),
+      JSON.stringify({ mirrorId: preference, updatedAt: new Date().toISOString() }, null, 2)
+    )
+    this.resolvedPipIndex = undefined
+  }
+
+  private async resolvePipIndex(): Promise<{ url: string; label: string }> {
+    if (this.resolvedPipIndex) return this.resolvedPipIndex
+    // 用户环境变量显式指定的源优先——那是用户自己配置的环境，不应被应用覆盖
+    const fromEnv = envPipIndexUrl()
+    if (fromEnv) return (this.resolvedPipIndex = { url: fromEnv, label: '环境变量 PIP_INDEX_URL' })
+    const preference = this.pipMirrorPreference()
+    if (preference !== 'auto') {
+      const mirror = mirrorById(preference)
+      if (mirror) return (this.resolvedPipIndex = { url: mirror.indexUrl, label: mirror.label })
+    }
+    const probes = await Promise.all(
+      PIP_MIRRORS.map(async (mirror) => {
+        const startedAt = Date.now()
+        const reachable = await probeMirror(mirror.indexUrl)
+        return { ...mirror, reachable, elapsedMs: Date.now() - startedAt }
+      })
+    )
+    const picked = pickMirrorByProbes(probes)
+    return (this.resolvedPipIndex = { url: picked.indexUrl, label: picked.label })
+  }
+
   // 逐包安装并按 pip 输出行(Collecting/Downloading/Successfully)估算完成度，驱动安装进度条
   private async pipInstallWithProgress(
     pythonPath: string,
     spec: string,
     base: number,
     span: number,
-    phase: string
+    phase: string,
+    indexUrl?: string
   ): Promise<void> {
     this.installProgress = { phase, percent: base }
     await new Promise<void>((resolvePromise, reject) => {
       const child = spawn(
         pythonPath,
-        ['-m', 'pip', 'install', '--disable-pip-version-check', spec],
+        [
+          '-m',
+          'pip',
+          'install',
+          '--disable-pip-version-check',
+          ...(indexUrl ? ['--index-url', indexUrl] : []),
+          spec
+        ],
         {
           windowsHide: true,
           shell: false,
