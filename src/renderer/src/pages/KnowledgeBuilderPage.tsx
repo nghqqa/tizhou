@@ -886,7 +886,10 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
               <div key={file.sourceId}>
                 <span title={file.relativePath}>{file.relativePath}</span>
                 <Badge appearance="outline">{file.state}</Badge>
-                <small>{file.message ?? '等待处理'}</small>
+                <small>
+                  {file.message ?? '等待处理'}
+                  {file.fromCache && ' · 缓存命中'}
+                </small>
                 {file.ocrQuality && <OcrQualitySummary report={file.ocrQuality} />}
               </div>
             ))}

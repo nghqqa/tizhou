@@ -159,6 +159,8 @@ export interface KnowledgeBuildFile {
   size: number
   state: KnowledgeBuildFileState
   message?: string
+  /** 转换结果来自本地缓存（源文件与转换器均未变化），本次未实际执行 OCR/MarkItDown */
+  fromCache?: boolean
   artifactCount: number
   chunkCount: number
   ocrQuality?: OcrQualityReport

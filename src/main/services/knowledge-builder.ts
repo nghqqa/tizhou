@@ -1086,6 +1086,7 @@ export class KnowledgeBuilderService {
             )
           if (!cached) await this.conversionCache.store(source, converter, rawPath, ocrQuality)
           const raw = readFileSync(rawPath, 'utf8').trim()
+          file.fromCache = Boolean(cached)
           // 保存质量报告到文件元数据
           if (ocrQuality) {
             file.ocrQuality = ocrQuality
