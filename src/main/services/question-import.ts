@@ -502,9 +502,9 @@ function buildEssayUnit(entry: EssayUnitEntry, seq: number): ParsedEssayUnit | u
     stem = `${entry.title}${requirement ? ` 要求：${requirement}` : ''}`
   if (questionFound && requirementText) stem = `${stem}\n${requirementText}`
 
-  // 完整性门槛：既没材料又没实质题干的单元（纯目录残片等）跳过
-  if (material.replace(/\s+/g, '').length < 30 && stem.replace(/\s+/g, '').length < 16)
-    return undefined
+  // 完整性门槛：材料是申论练习的必要条件——没有材料的题目（纯目录残片、题干兜底单元）一律跳过。
+  // 仅凭长标题放行会让目录幽灵以「标题=题干、零材料」形态污染审核列表。
+  if (material.replace(/\s+/g, '').length < 40) return undefined
 
   return {
     seq,
@@ -532,17 +532,22 @@ export function parseEssayBook(lines: string[]): ParsedEssayBook {
     }
     const unitMatch = line.match(ESSAY_UNIT_MARK)
     if (unitMatch) {
-      // 目录页会先印一遍单元标题（无正文）；同名单元取最后一次出现（带正文的那个）
-      const entry: EssayUnitEntry = {
-        chapter,
-        title: cleanEssayTitle(unitMatch[1] ?? ''),
-        body: []
-      }
-      const existing = entries.findIndex(
-        (candidate) => candidate.chapter === entry.chapter && candidate.title === entry.title
+      // 目录页会先印一遍单元标题（无正文）；同名单元取最后一次出现（带正文的那个）。
+      // OCR 损坏真实单元头时按「标题互相包含」认亲，防止目录残条目以空材料存活。
+      const title = cleanEssayTitle(unitMatch[1] ?? '')
+      let twinIndex = entries.findIndex(
+        (candidate) => candidate.chapter === chapter && candidate.title === title
       )
-      if (existing >= 0) entries.splice(existing, 1)
-      entries.push(entry)
+      if (twinIndex < 0 && title.length >= 8) {
+        twinIndex = entries.findIndex(
+          (candidate) =>
+            candidate.chapter === chapter &&
+            (title.includes(candidate.title) || candidate.title.includes(title)) &&
+            Math.min(candidate.title.length, title.length) >= 6
+        )
+      }
+      if (twinIndex >= 0) entries.splice(twinIndex, 1)
+      entries.push({ chapter, title, body: [] })
       continue
     }
     const last = entries[entries.length - 1]
