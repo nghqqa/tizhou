@@ -2048,3 +2048,25 @@ a {
   transition: none !important;
   animation: none !important;
 }
+
+/* ================================================================
+   申论作答 · 宽屏双栏（题目+材料 | 作答+解析）
+   ================================================================ */
+.page-solution {
+  width: min(1780px, 100%);
+}
+.essay-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 24px;
+}
+@media (min-width: 1280px) {
+  .essay-columns {
+    grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
+    align-items: start;
+  }
+}
+.page-solution .essay-material {
+  max-width: none;
+  max-height: min(52vh, 640px);
+}

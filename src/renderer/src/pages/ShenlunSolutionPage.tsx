@@ -100,7 +100,7 @@ export function ShenlunSolutionPage(): React.JSX.Element {
       </div>
     )
   return (
-    <div className="page">
+    <div className="page page-solution">
       <PageHeader
         eyebrow="SHENLUN"
         title="申论作答"
@@ -137,34 +137,40 @@ export function ShenlunSolutionPage(): React.JSX.Element {
           <span className="pill">难度 {current?.difficulty}</span>
           <span className="pill">{content.replace(/\s/g, '').length} 字</span>
         </div>
-        {current?.material && (
-          <div className="essay-material">
-            <h3>给定资料</h3>
-            <MarkdownContent content={current.material} sourceFilePath={current.filePath} />
+        <div className="essay-columns">
+          <div className="essay-col">
+            {current?.material && (
+              <div className="essay-material">
+                <h3>给定资料</h3>
+                <MarkdownContent content={current.material} sourceFilePath={current.filePath} />
+              </div>
+            )}
+            <p className="question-stem">{current?.stem}</p>
           </div>
-        )}
-        <p className="question-stem">{current?.stem}</p>
-        <TabList
-          selectedValue={view}
-          onTabSelect={(_, data) => setView(data.value as 'write' | 'reference')}
-        >
-          <Tab value="write">我的作答</Tab>
-          <Tab value="reference">参考解析</Tab>
-        </TabList>
-        {view === 'write' ? (
-          <textarea
-            className="essay-editor"
-            value={content}
-            onChange={(event) => setContent(event.target.value)}
-            placeholder="建议先列要点，再组织成完整答案。草稿会在停止输入后自动保存。"
-          />
-        ) : (
-          <div className="answer-panel">
-            <h3>参考要点</h3>
-            <p>{current?.answer.join('；')}</p>
-            <p>{current?.explanation}</p>
+          <div className="essay-col">
+            <TabList
+              selectedValue={view}
+              onTabSelect={(_, data) => setView(data.value as 'write' | 'reference')}
+            >
+              <Tab value="write">我的作答</Tab>
+              <Tab value="reference">参考解析</Tab>
+            </TabList>
+            {view === 'write' ? (
+              <textarea
+                className="essay-editor"
+                value={content}
+                onChange={(event) => setContent(event.target.value)}
+                placeholder="建议先列要点，再组织成完整答案。草稿会在停止输入后自动保存。"
+              />
+            ) : (
+              <div className="answer-panel">
+                <h3>参考要点</h3>
+                <p>{current?.answer.join('；')}</p>
+                <p>{current?.explanation}</p>
+              </div>
+            )}
           </div>
-        )}
+        </div>
       </Section>
       {evaluating && (
         <Section>
