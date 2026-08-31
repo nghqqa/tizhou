@@ -48,6 +48,9 @@ import {
   probeMirror
 } from './pip-mirror'
 import { PIP_MIRRORS } from '../../shared/pip-mirrors'
+
+// 文档结构解析组件（RapidAI 生态，表格还原/图形保真/阅读顺序）
+const STRUCTURED_PACKAGE = 'rapid-doc==0.9.10'
 import {
   directQuestionMarkdown,
   directSignature,
@@ -395,26 +398,31 @@ export class KnowledgeBuilderService {
       this.engineCache?.available &&
       this.engineCache.pythonPath &&
       existsSync(this.engineCache.pythonPath)
-    )
+    ) {
+      const cachedPythonPath = this.engineCache.pythonPath
       return {
         ...this.engineCache,
         ocrAccelerator: this.ocrAcceleratorMode(),
         gpuAdapterName: await this.detectGpuAdapter(),
         pipMirrorId: this.pipMirrorPreference(),
+        structuredParseAvailable: await this.structuredParseAvailable(cachedPythonPath),
         installing: this.installing,
         installProgress: progress
       }
+    }
     const candidates = this.pythonCandidates()
     for (const pythonPath of candidates) {
       if (!existsSync(pythonPath)) continue
       const version = await this.markitdownVersion(pythonPath)
       if (version) {
+        const structuredParseAvailable = await this.structuredParseAvailable(pythonPath)
         this.engineCache = {
           available: true,
           installing: this.installing,
           version,
           pythonPath,
           ocrAvailable: await this.ocrComponentsAvailable(pythonPath),
+          structuredParseAvailable,
           message: `MarkItDown ${version} 已就绪`,
           supportedExtensions: [...SUPPORTED_EXTENSIONS]
         }
@@ -423,6 +431,7 @@ export class KnowledgeBuilderService {
           ocrAccelerator: this.ocrAcceleratorMode(),
           gpuAdapterName: await this.detectGpuAdapter(),
           pipMirrorId: this.pipMirrorPreference(),
+          structuredParseAvailable,
           installProgress: progress
         }
       }
@@ -432,6 +441,7 @@ export class KnowledgeBuilderService {
       installing: this.installing,
       ocrAvailable: false,
       pipMirrorId: this.pipMirrorPreference(),
+      structuredParseAvailable: false,
       message: '尚未安装独立 MarkItDown 转换环境',
       supportedExtensions: [...SUPPORTED_EXTENSIONS],
       installProgress: progress
@@ -486,9 +496,17 @@ export class KnowledgeBuilderService {
       await this.pipInstallWithProgress(
         pythonPath,
         OCR_PACKAGES[2]!,
-        88,
-        8,
+        84,
+        6,
         '安装 PDF 渲染组件 pypdfium2',
+        pipIndex.url
+      )
+      await this.pipInstallWithProgress(
+        pythonPath,
+        STRUCTURED_PACKAGE,
+        90,
+        6,
+        '安装文档结构解析组件 RapidDoc（表格还原）',
         pipIndex.url
       )
       this.installProgress = { phase: '验证安装结果', percent: 97 }
@@ -1044,6 +1062,17 @@ export class KnowledgeBuilderService {
       staged.push({ artifact, target, content })
     }
     for (const item of staged) this.atomicWrite(item.target, item.content)
+    // 结构解析产出的图片资产随 md 一同入库（materials 内相对引用 images/…）
+    const rawImagesDir = join(job.outputPath, 'raw', 'images')
+    if (existsSync(rawImagesDir)) {
+      const vaultImagesDir = join(targetRoot, '直导题库', 'images')
+      mkdirSync(vaultImagesDir, { recursive: true })
+      for (const imageName of readdirSync(rawImagesDir)) {
+        const from = join(rawImagesDir, imageName)
+        const to = join(vaultImagesDir, imageName)
+        if (!existsSync(to)) copyFileSync(from, to)
+      }
+    }
     const result = this.vaults.connect(targetRoot)
     for (const item of staged) {
       item.artifact.status = 'published'
@@ -1949,6 +1978,20 @@ export class KnowledgeBuilderService {
       return stdout.trim() || undefined
     } catch {
       return undefined
+    }
+  }
+
+  private async structuredParseAvailable(pythonPath: string): Promise<boolean> {
+    try {
+      await execFileAsync(pythonPath, ['-c', 'import rapid_doc'], {
+        timeout: 30_000,
+        windowsHide: true,
+        maxBuffer: 1024 * 1024,
+        env: { ...process.env, PYTHONUTF8: '1' }
+      })
+      return true
+    } catch {
+      return false
     }
   }
 

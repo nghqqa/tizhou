@@ -113,6 +113,8 @@ export interface KnowledgeEngineStatus {
   version?: string
   pythonPath?: string
   ocrAvailable: boolean
+  /** 文档结构解析组件（表格还原/图形保真，RapidDoc）是否就绪 */
+  structuredParseAvailable: boolean
   /** OCR 推理后端：dml = DirectML GPU 加速（仅 Windows + 可用显卡时由用户显式启用） */
   ocrAccelerator?: OcrAccelerator
   /** 检测到的独立显卡名称（用于决定是否展示 GPU 加速安装入口） */

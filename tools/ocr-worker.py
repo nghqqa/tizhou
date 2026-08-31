@@ -177,14 +177,79 @@ def filter_lines(
     }
 
 
+# ---- 结构解析模式（RapidDoc）：表格还原 + 图形保真 + 阅读顺序 ----
+def normalize_rapiddoc_markdown(text: str) -> str:
+    text = text.replace('\\~', '~')
+    out_lines: list[str] = []
+    for line in text.split('\n'):
+        option_hits = [
+            (m.start(1), m.group(1))
+            for m in re.finditer(r'([A-D])[.、．]\s*[^0-9\s]', line)
+        ]
+        ordered = 'ABCD'
+        picks: list[int] = []
+        expect_idx = 0
+        for pos, key in option_hits:
+            if expect_idx < len(ordered) and key == ordered[expect_idx]:
+                picks.append(pos)
+                expect_idx += 1
+        if len(picks) >= 2:
+            parts: list[str] = []
+            for i, pos in enumerate(picks):
+                end = picks[i + 1] if i + 1 < len(picks) else len(line)
+                parts.append(line[pos:end].strip())
+            stem = line[: picks[0]].strip()
+            if stem:
+                parts.insert(0, stem)
+            out_lines.extend(parts)
+            continue
+        out_lines.append(line)
+    return '\n'.join(out_lines)
+
+def run_structured(source: Path, output: Path) -> int:
+    try:
+        from rapid_doc.main import RapidDoc
+        from rapid_doc.data.data_reader_writer import FileBasedDataWriter
+    except ImportError:
+        report({'done': True, 'structuredMissing': True, 'totalPages': 0, 'textLayerPages': 0,
+                'ocrPages': 0, 'emptyPages': 1, 'ocrLineCount': 0, 'lowConfidenceLines': 0,
+                'removedPageNumbers': 0, 'warnings': ['结构解析组件未安装'], 'characters': 0})
+        return 3
+    parent = output.parent
+    images_dir = parent / 'images'
+    images_dir.mkdir(parents=True, exist_ok=True)
+    doc = RapidDoc(table_enable=True, formula_enable=False, lang='ch',
+                   output_dir=str(parent),
+                   md_writer=FileBasedDataWriter(str(parent)),
+                   image_writer=FileBasedDataWriter(str(images_dir)))
+    result = doc(str(source))
+    markdown = normalize_rapiddoc_markdown(result.markdown)
+    output.write_text(markdown, encoding='utf-8')
+    total_pages = 0
+    try:
+        import pypdfium2 as pdfium_mod
+        total_pages = len(pdfium_mod.PdfDocument(str(source)))
+    except Exception:
+        pass
+    report({'done': True, 'structured': True, 'characters': len(markdown), 'totalPages': total_pages,
+            'textLayerPages': 0, 'ocrPages': total_pages, 'emptyPages': 0, 'ocrLineCount': 0,
+            'averageConfidence': None, 'lowConfidenceLines': 0, 'removedPageNumbers': 0,
+            'warnings': ['结构解析模式：表格已还原为 Markdown 表格，图片保真存至 images/ 目录']})
+    return 0
+
 def main() -> int:
-    if len(sys.argv) != 3:
-        raise ValueError('usage: ocr-worker.py <local-input> <markdown-output>')
+    if len(sys.argv) not in (3, 4):
+        raise ValueError('usage: ocr-worker.py <local-input> <markdown-output> [--structured]')
 
     source = Path(sys.argv[1]).resolve(strict=True)
     output = Path(sys.argv[2]).resolve()
     if not source.is_file():
         raise ValueError('input must be a local regular file')
+    structured_mode = len(sys.argv) == 4 and sys.argv[3] == '--structured'
+    if structured_mode and source.suffix.lower() in IMAGE_SUFFIXES:
+        raise ValueError('结构解析模式仅支持 PDF 输入')
+    if structured_mode:
+        return run_structured(source, output)
 
     output.parent.mkdir(parents=True, exist_ok=True)
 

@@ -543,7 +543,7 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
                     : '启用 GPU 加速'}
               </Button>
             )}
-            {(!engine.available || !engine.ocrAvailable) && (
+            {(!engine.available || !engine.ocrAvailable || !engine.structuredParseAvailable) && (
               <Button
                 appearance="primary"
                 icon={<WrenchIcon />}
@@ -552,9 +552,9 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
               >
                 {busy === 'engine'
                   ? '正在安装'
-                  : engine.available
-                    ? '补装 OCR 组件'
-                    : '安装转换引擎'}
+                  : !engine.available
+                    ? '安装转换引擎'
+                    : '补装缺失组件'}
               </Button>
             )}
           </>
@@ -573,6 +573,14 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
                 OCR 组件（扫描件识别）：
                 {engine.ocrAvailable ? '已就绪' : '未安装，补装后可自动识别扫描式 PDF'}
               </small>
+              {engine.available && (
+                <small>
+                  结构解析组件（表格还原 / 图形保真）：
+                  {engine.structuredParseAvailable
+                    ? '已就绪（资料分析等图表密集内容自动启用）'
+                    : '未安装，补装后资料分析类书籍可还原统计表格'}
+                </small>
+              )}
               {engine.available && engine.ocrAvailable && (
                 <small>
                   GPU 加速（扫描识别提速，可选）：
