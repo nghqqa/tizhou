@@ -55,8 +55,15 @@ export class ConversionCache {
   // converter 由调用方拼接版本信息（如 markitdown@0.1.6 / ocr@<模型包组合>），
   // 转换器升级通过键变化天然使旧条目失效。
   async fetch(sourcePath: string, converter: string): Promise<CachedConversion | undefined> {
+    console.error('[CC][fetch] in:', converter, sourcePath)
     try {
       const key = await this.keyFor(sourcePath, converter)
+      console.error(
+        '[CC][fetch] key:',
+        key,
+        'exists:',
+        existsSync(join(this.directory, key + '.md'))
+      )
       const markdownPath = join(this.directory, `${key}.md`)
       const metaPath = join(this.directory, `${key}.json`)
       if (!existsSync(markdownPath) || !existsSync(metaPath)) return undefined
@@ -74,6 +81,7 @@ export class ConversionCache {
     markdownSourcePath: string,
     ocrQuality?: OcrQualityReport
   ): Promise<void> {
+    console.error('[CC][store] in:', converter, sourcePath)
     try {
       const key = await this.keyFor(sourcePath, converter)
       const info = statSync(sourcePath)

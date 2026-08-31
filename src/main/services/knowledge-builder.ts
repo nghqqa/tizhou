@@ -1062,7 +1062,7 @@ export class KnowledgeBuilderService {
       staged.push({ artifact, target, content })
     }
     for (const item of staged) this.atomicWrite(item.target, item.content)
-    // 结构解析产出的图片资产随 md 一同入库（materials 内相对引用 images/…）
+    // 结构解析产出的图片资产随 md 入库（材料内相对引用 images/…）
     const rawImagesDir = join(job.outputPath, 'raw', 'images')
     if (existsSync(rawImagesDir)) {
       const vaultImagesDir = join(targetRoot, '直导题库', 'images')
@@ -1168,10 +1168,14 @@ export class KnowledgeBuilderService {
           // PDF 始终由 OCR worker 处理：worker 内部逐页判断文字层是否足够，
           // 文字层页直接使用原始文本，扫描页 OCR，混合 PDF 不漏识别；
           // MarkItDown 首跑的结果必然被覆盖，OCR 可用时不再先跑一遍。
+          const useStructured = engine.structuredParseAvailable && isPdfFile(file.relativePath)
           const useOcr = engine.ocrAvailable && isPdfFile(file.relativePath)
-          const converter = useOcr
-            ? `ocr@${OCR_PACKAGES.join('+')}`
-            : `markitdown@${MARKITDOWN_VERSION}`
+          let structuredOk: boolean | undefined = true
+          const converter = useStructured
+            ? `structured@${STRUCTURED_PACKAGE}`
+            : useOcr
+              ? `ocr@${OCR_PACKAGES.join('+')}`
+              : `markitdown@${MARKITDOWN_VERSION}`
           let ocrQuality: OcrQualityReport | undefined
           const cached = await this.conversionCache.fetch(source, converter)
           if (cached) {
@@ -1179,24 +1183,43 @@ export class KnowledgeBuilderService {
             job.cancelRequested ||= this.loadJob(id).cancelRequested
             if (job.cancelRequested) throw new Error('任务已取消')
             ocrQuality = cached.ocrQuality
-          } else {
-            if (!useOcr) {
-              file.message = '正在转换为 Markdown'
-              this.saveJob(job)
-              await this.convert(engine.pythonPath, workerPath, source, rawPath)
-              job.cancelRequested ||= this.loadJob(id).cancelRequested
-              if (job.cancelRequested) throw new Error('任务已取消')
-            } else {
-              file.message = `正在逐页检测文字层并识别${this.ocrAcceleratorMode() === 'dml' ? '（GPU 加速）' : ''}`
+          } else if (useStructured) {
+            file.message = '结构解析中（表格还原 / 图形保真）'
+            this.saveJob(job)
+            const structuredResult = await this.structuredConvert(
+              engine.pythonPath,
+              source,
+              rawPath
+            )
+            structuredOk = structuredResult.ok
+            job.cancelRequested ||= this.loadJob(id).cancelRequested
+            if (job.cancelRequested) throw new Error('任务已取消')
+            if (!structuredOk) {
+              // 结构解析失败：回退逐页 OCR，保证批次不中断
+              file.message = '结构解析不可用，回退 OCR 识别'
               this.saveJob(job)
               ocrQuality = await this.ocrConvert(job, file, engine.pythonPath, source, rawPath)
               job.cancelRequested ||= this.loadJob(id).cancelRequested
               if (job.cancelRequested) throw new Error('任务已取消')
             }
+          } else if (!useOcr) {
+            file.message = '正在转换为 Markdown'
+            this.saveJob(job)
+            await this.convert(engine.pythonPath, workerPath, source, rawPath)
+            job.cancelRequested ||= this.loadJob(id).cancelRequested
+            if (job.cancelRequested) throw new Error('任务已取消')
+          } else {
+            file.message = `正在逐页检测文字层并识别${this.ocrAcceleratorMode() === 'dml' ? '（GPU 加速）' : ''}`
+            this.saveJob(job)
+            ocrQuality = await this.ocrConvert(job, file, engine.pythonPath, source, rawPath)
+            job.cancelRequested ||= this.loadJob(id).cancelRequested
+            if (job.cancelRequested) throw new Error('任务已取消')
           }
           if (statSync(rawPath).size > MAX_RAW_MARKDOWN_BYTES)
             throw new Error(
-              useOcr ? 'OCR 结果超过 20 MB，请先拆分原文件' : '转换结果超过 20 MB，请先拆分原文件'
+              useStructured || useOcr
+                ? 'OCR 结果超过 20 MB，请先拆分原文件'
+                : '转换结果超过 20 MB，请先拆分原文件'
             )
           if (!cached) await this.conversionCache.store(source, converter, rawPath, ocrQuality)
           const raw = readFileSync(rawPath, 'utf8').trim()
@@ -1783,6 +1806,50 @@ export class KnowledgeBuilderService {
         this.runningChild = undefined
         if (code === 0 && existsSync(outputPath)) resolvePromise()
         else reject(new Error(stderr.trim() || `MarkItDown 进程退出码 ${code ?? '未知'}`))
+      })
+    })
+  }
+
+  /** 结构解析模式：spawn ocr-worker --structured（RapidDoc 表格还原/图形保真）。失败回退 OCR */
+  private async structuredConvert(
+    pythonPath: string,
+    sourcePath: string,
+    rawPath: string
+  ): Promise<{ ok: boolean }> {
+    return new Promise((resolvePromise) => {
+      const workerPath = this.workerPath()
+      const child = spawn(pythonPath, [workerPath, sourcePath, rawPath, '--structured'], {
+        windowsHide: true,
+        shell: false,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: { ...process.env, PYTHONUTF8: '1' }
+      })
+      this.runningChild = child
+      let done = false
+      const finish = (ok: boolean): void => {
+        this.runningChild = undefined
+        resolvePromise({ ok })
+      }
+      child.stdout.setEncoding('utf8')
+      child.stdout.on('data', (chunk: string) => {
+        for (const line of chunk.split('\n')) {
+          if (parseOcrWorkerLine(line)?.type === 'quality') {
+            done = true
+            break
+          }
+        }
+      })
+      child.stderr.on('data', (chunk: string) => {
+        void chunk
+      })
+      const timer = setTimeout(() => child.kill(), 60 * 60_000)
+      child.once('error', () => {
+        clearTimeout(timer)
+        finish(false)
+      })
+      child.once('close', (code) => {
+        clearTimeout(timer)
+        finish(done && code === 0)
       })
     })
   }

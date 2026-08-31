@@ -1,4 +1,12 @@
-import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -495,6 +503,7 @@ describe('knowledge builder', () => {
       ).id
     )
     expect(jobA.status).toBe('completed')
+    console.log('PROBE jobA done, conversions =', conversions)
     expect(conversions).toBe(1)
 
     const second = buildService()
@@ -511,6 +520,17 @@ describe('knowledge builder', () => {
     )
     expect(jobB.status).toBe('completed')
     // 第二个任务命中缓存：转换引擎不再被调用，但 raw 结果照常就位（唯一来源是缓存拷贝）
+    console.log('PROBE jobA done, conversions =', conversions)
+    console.log('PROBE jobB conversions =', conversions)
+    const cacheDirA = join(data, 'knowledge-builder', 'conversion-cache')
+    console.log('cache dir files:', readdirSync(cacheDirA))
+    const cacheB = (
+      second as unknown as {
+        conversionCache: { fetch: (s: string, c: string) => Promise<unknown> }
+      }
+    ).conversionCache
+    const directHit = await cacheB.fetch(join(source, '方法.txt'), 'markitdown@0.1.6')
+    console.log('direct fetch hit:', directHit !== undefined)
     expect(conversions).toBe(1)
     const cachedRawPath = join(
       data,
