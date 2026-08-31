@@ -1465,7 +1465,7 @@ export class KnowledgeBuilderService {
           }
         }
         job.status = staged > 0 ? 'review' : 'completed'
-        job.message = staged
+        job.message = `[批次 9/1 00:0x 构建] ` + (staged
           ? `已切出 ${staged} 题${
               stagedEssays
                 ? `，其中申论主观题 ${stagedEssays} 道（无参考答案，发布后经「申论作答」页 AI 批改练习）`
@@ -1479,7 +1479,7 @@ export class KnowledgeBuilderService {
               ? `直导完成：全部题本被配对校验拦截（疑似套号错位），未生成产物`
               : trainingMarkers >= 3
                 ? `直导完成：检测到 ${trainingMarkers} 处训练式标题但未能稳定切分出题目——这本书大概率是主观题教材，请改用「模型提炼」模式导入`
-                : '直导完成：未切出题目（未识别出题目或全部缺少答案）'
+                : '直导完成：未切出题目（未识别出题目或全部缺少答案）')
       } else {
         const artifacts = job.artifactIds.map((artifactId) => this.loadArtifact(job, artifactId))
         job.status = artifacts.some((artifact) => artifact.status === 'pending')
