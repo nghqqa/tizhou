@@ -184,7 +184,7 @@ def normalize_rapiddoc_markdown(text: str) -> str:
     for line in text.split('\n'):
         option_hits = [
             (m.start(1), m.group(1))
-            for m in re.finditer(r'([A-D])[.、．]\s*[^0-9\s]', line)
+            for m in re.finditer(r'([A-D])[.、．]\s*\S', line)
         ]
         ordered = 'ABCD'
         picks: list[int] = []

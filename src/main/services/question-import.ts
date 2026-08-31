@@ -51,7 +51,7 @@ export interface DirectQuestion {
 
 const SET_TITLE = /^练习题\s*0*(\d{1,3})\s*套?\s*$/
 const CHAPTER_TITLE = /^第[一二三四五六七八九十百0-9]{1,4}[篇章套]/
-const QUESTION_NO = /^(\d{1,3})\s*[.、．]\s*(?!\d)(.*)$/
+const QUESTION_NO = /^(\d{1,3})\s*[.、．](?!\d)\s*(.*)$/
 const OPTION_NO = /^([A-D])\s*[.、．]?\s*(.+)$/
 const ANSWER_MARK = /【参考答案】\s*([A-D]+)/
 const ANSWER_RATE_MARK = /【参考答案及正确率】\s*([A-D]+)(?:[，,]\s*(\d{1,3})\s*%)?/
