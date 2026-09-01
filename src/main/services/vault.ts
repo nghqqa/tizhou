@@ -413,7 +413,9 @@ export class VaultService {
 
   readAssetDataUrl(sourceFilePath: string, assetPath: string): string {
     const vault = this.database.getActiveVault()
-    if (!vault || vault.isBuiltin) throw new Error('当前知识库没有可读取的本地附件')
+    // 内置托管库在磁盘上同样有真实目录（结构解析的图片附件随发布写入），
+    // 与外部库一致走路径包含校验，不再按 isBuiltin 一票拒绝
+    if (!vault) throw new Error('当前没有激活的知识库')
     const root = realpathSync(vault.path)
     const source = realpathSync(resolve(sourceFilePath))
     if (!this.isWithin(root, source)) throw new Error('附件来源文档不属于当前知识库')

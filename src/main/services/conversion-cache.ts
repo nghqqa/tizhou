@@ -62,6 +62,17 @@ export class ConversionCache {
       if (!existsSync(markdownPath) || !existsSync(metaPath)) return undefined
       const meta = JSON.parse(readFileSync(metaPath, 'utf8')) as CacheMeta
       if (meta.converter !== converter) return undefined
+      if (converter.startsWith('structured@') && meta.ocrQuality?.structured !== true) {
+        // 历史缺陷：结构解析失败回退 OCR 的结果曾被错存进 structured@ 键，
+        // 每次命中都会永久短路真正的结构解析——视为未命中并清除，让下次导入重试
+        try {
+          rmSync(markdownPath, { force: true })
+          rmSync(metaPath, { force: true })
+        } catch {
+          /* 清理失败按未命中处理 */
+        }
+        return undefined
+      }
       return { markdownPath, ocrQuality: meta.ocrQuality }
     } catch {
       return undefined

@@ -155,6 +155,8 @@ export interface OcrQualityReport {
   lowConfidenceLines: number
   removedPageNumbers: number
   warnings: string[]
+  /** 结构解析模式产出（表格还原 + 图片保真）；逐页 OCR 无此标记 */
+  structured?: boolean
 }
 
 export interface KnowledgeBuildFile {

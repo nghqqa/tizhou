@@ -249,8 +249,17 @@ async function initialize(): Promise<void> {
         return database!.listCategories(request.params?.subject)
       case 'vault.facets':
         return database!.getQuestionFacets(request.params?.subject)
-      case 'vault.asset':
-        return vaults.readAssetDataUrl(request.params.sourceFilePath, request.params.assetPath)
+      case 'vault.asset': {
+        try {
+          return vaults.readAssetDataUrl(request.params.sourceFilePath, request.params.assetPath)
+        } catch {
+          // 暂存产物（任务 raw 目录）不在知识库内——回退到任务目录校验读取
+          return knowledgeBuilder.readJobAssetDataUrl(
+            request.params.sourceFilePath,
+            request.params.assetPath
+          )
+        }
+      }
       case 'knowledgeBuilder.source.choose': {
         const selected = await dialog.showOpenDialog(mainWindow!, {
           title: '选择未整理的知识库原料目录',

@@ -23,6 +23,8 @@ export interface OcrQualityPayload {
   removedPageNumbers: number
   warnings: string[]
   characters: number
+  /** 结构解析模式产出（表格还原 + 图片保真），用于缓存条目正名 */
+  structured?: boolean
 }
 
 export type OcrWorkerPayload = OcrProgressEvent | OcrQualityPayload
@@ -80,7 +82,8 @@ export function parseOcrWorkerPayload(payload: unknown): OcrWorkerPayload | unde
       lowConfidenceLines: nonNegInt(record.lowConfidenceLines),
       removedPageNumbers: nonNegInt(record.removedPageNumbers),
       warnings: sanitizeWarnings(record.warnings),
-      characters: nonNegInt(record.characters)
+      characters: nonNegInt(record.characters),
+      ...(record.structured === true ? { structured: true } : {})
     }
   }
 

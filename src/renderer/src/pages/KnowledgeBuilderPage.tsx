@@ -65,10 +65,15 @@ function getDisplayJobStatus(job: KnowledgeBuildJob): string {
 /** OCR 质量摘要：区分文字层页/OCR页/置信度，不与 AI 模型置信度混淆 */
 function OcrQualitySummary({ report }: { report: OcrQualityReport }): React.JSX.Element {
   const parts: string[] = []
-  if (report.textLayerPages > 0) parts.push(`文字层 ${report.textLayerPages} 页`)
-  if (report.ocrPages > 0) parts.push(`OCR ${report.ocrPages} 页`)
-  if (report.averageConfidence != null) {
-    parts.push(`OCR 置信度 ${(report.averageConfidence * 100).toFixed(0)}%`)
+  if (report.structured) {
+    parts.push(`结构解析 ${report.ocrPages} 页`)
+    parts.push('表格还原 · 图片保真')
+  } else {
+    if (report.textLayerPages > 0) parts.push(`文字层 ${report.textLayerPages} 页`)
+    if (report.ocrPages > 0) parts.push(`OCR ${report.ocrPages} 页`)
+    if (report.averageConfidence != null) {
+      parts.push(`OCR 置信度 ${(report.averageConfidence * 100).toFixed(0)}%`)
+    }
   }
   if (report.emptyPages > 0) parts.push(`${report.emptyPages} 页空白`)
   const lowConfRatio = report.ocrLineCount > 0 ? report.lowConfidenceLines / report.ocrLineCount : 0
@@ -1104,6 +1109,11 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
                     )}
                     <MarkdownContent
                       content={artifact.markdown.replace(/^---\s*[\s\S]*?\s*---\s*/m, '')}
+                      sourceFilePath={
+                        job
+                          ? `${job.outputPath.replace(/[\\/]+$/, '')}/raw/${artifact.sourceId}.md`
+                          : undefined
+                      }
                     />
                   </>
                 ) : job && job.pendingArtifacts === 0 && job.artifacts.length > 0 ? (

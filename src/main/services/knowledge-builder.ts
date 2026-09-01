@@ -13,7 +13,7 @@ import {
   unlinkSync,
   writeFileSync
 } from 'node:fs'
-import { basename, extname, isAbsolute, join, relative, resolve } from 'node:path'
+import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import type {
   BatchReviewResult,
@@ -1177,6 +1177,8 @@ export class KnowledgeBuilderService {
             : useOcr
               ? `ocr@${OCR_PACKAGES.join('+')}`
               : `markitdown@${MARKITDOWN_VERSION}`
+          // 兜底回退 OCR 时改用 ocr@ 键缓存，structured@ 键留待重试
+          let effectiveConverter = converter
           let ocrQuality: OcrQualityReport | undefined
           const cached = await this.conversionCache.fetch(source, converter)
           if (cached) {
@@ -1193,10 +1195,13 @@ export class KnowledgeBuilderService {
               rawPath
             )
             structuredOk = structuredResult.ok
+            if (structuredResult.quality) ocrQuality = structuredResult.quality
             job.cancelRequested ||= this.loadJob(id).cancelRequested
             if (job.cancelRequested) throw new Error('任务已取消')
             if (!structuredOk) {
-              // 结构解析失败：回退逐页 OCR，保证批次不中断
+              // 结构解析失败：回退逐页 OCR 保证批次不中断；兜底结果按 ocr@ 键缓存，
+              // structured@ 键留待重试——错存会让毒缓存永久短路结构解析
+              effectiveConverter = `ocr@${OCR_PACKAGES.join('+')}`
               file.message = '结构解析不可用，回退 OCR 识别'
               this.saveJob(job)
               ocrQuality = await this.ocrConvert(job, file, engine.pythonPath, source, rawPath)
@@ -1222,7 +1227,8 @@ export class KnowledgeBuilderService {
                 ? 'OCR 结果超过 20 MB，请先拆分原文件'
                 : '转换结果超过 20 MB，请先拆分原文件'
             )
-          if (!cached) await this.conversionCache.store(source, converter, rawPath, ocrQuality)
+          if (!cached)
+            await this.conversionCache.store(source, effectiveConverter, rawPath, ocrQuality)
           const raw = readFileSync(rawPath, 'utf8').trim()
           file.fromCache = Boolean(cached)
           // 保存质量报告到文件元数据
@@ -1248,10 +1254,14 @@ export class KnowledgeBuilderService {
             )
           file.state = 'converted'
           file.message = cached
-            ? ocrQuality?.averageConfidence
-              ? `缓存命中：平均置信度 ${(ocrQuality.averageConfidence * 100).toFixed(0)}%`
-              : '缓存命中：复用上次转换结果'
-            : 'Markdown 转换完成'
+            ? ocrQuality?.structured
+              ? '缓存命中：结构解析结果已复用（图表保真）'
+              : ocrQuality?.averageConfidence
+                ? `缓存命中：平均置信度 ${(ocrQuality.averageConfidence * 100).toFixed(0)}%`
+                : '缓存命中：复用上次转换结果'
+            : useStructured
+              ? '结构解析完成（表格还原 / 图形保真）'
+              : 'Markdown 转换完成'
           this.saveJob(job)
           if (job.options.mode === 'direct') {
             const directLines = toLines(raw)
@@ -1841,9 +1851,10 @@ export class KnowledgeBuilderService {
     pythonPath: string,
     sourcePath: string,
     rawPath: string
-  ): Promise<{ ok: boolean }> {
+  ): Promise<{ ok: boolean; quality?: OcrQualityReport }> {
     return new Promise((resolvePromise) => {
-      const workerPath = this.workerPath()
+      // --structured 由 ocr-worker.py 实现；markitdown-worker 不认识该参数（历史上曾调错脚本导致恒回退）
+      const workerPath = this.ocrWorkerPath()
       const child = spawn(pythonPath, [workerPath, sourcePath, rawPath, '--structured'], {
         windowsHide: true,
         shell: false,
@@ -1852,15 +1863,18 @@ export class KnowledgeBuilderService {
       })
       this.runningChild = child
       let done = false
+      let quality: OcrQualityReport | undefined
       const finish = (ok: boolean): void => {
         this.runningChild = undefined
-        resolvePromise({ ok })
+        resolvePromise({ ok, quality })
       }
       child.stdout.setEncoding('utf8')
       child.stdout.on('data', (chunk: string) => {
         for (const line of chunk.split('\n')) {
-          if (parseOcrWorkerLine(line)?.type === 'quality') {
+          const parsed = parseOcrWorkerLine(line)
+          if (parsed?.type === 'quality') {
             done = true
+            quality = parsed
             break
           }
         }
@@ -2152,6 +2166,39 @@ export class KnowledgeBuilderService {
     const path = candidates.find((candidate) => existsSync(candidate))
     if (!path) throw new Error('OCR 本地识别脚本缺失')
     return path
+  }
+
+  // 暂存产物的图片附件读取：来源文档与附件都必须落在知识构建根目录（任务 raw 输出）内
+  readJobAssetDataUrl(sourceFilePath: string, assetPath: string): string {
+    const root = realpathSync(this.rootDirectory)
+    const source = realpathSync(resolve(sourceFilePath))
+    const sourceRel = relative(root, source)
+    if (!(sourceRel === '' || (!sourceRel.startsWith('..') && !isAbsolute(sourceRel))))
+      throw new Error('附件来源文档不在知识构建任务目录内')
+    let decoded: string
+    try {
+      decoded = decodeURIComponent(assetPath.split(/[?#]/, 1)[0] ?? '')
+    } catch {
+      throw new Error('附件路径编码无效')
+    }
+    if (!decoded || /^[a-z][a0-9+.-]*:/i.test(decoded))
+      throw new Error('只允许读取任务目录内的相对附件')
+    const candidate = resolve(dirname(source), decoded)
+    if (!existsSync(candidate) || !statSync(candidate).isFile()) throw new Error('附件文件不存在')
+    const file = realpathSync(candidate)
+    const fileRel = relative(root, file)
+    if (!(fileRel === '' || (!fileRel.startsWith('..') && !isAbsolute(fileRel))))
+      throw new Error('附件路径超出任务目录')
+    const mime =
+      {
+        '.png': 'image/png',
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.gif': 'image/gif',
+        '.webp': 'image/webp'
+      }[extname(file).toLowerCase()] ?? ''
+    if (!mime) throw new Error('不支持的附件类型')
+    return `data:${mime};base64,${readFileSync(file).toString('base64')}`
   }
 
   private recoverInterruptedJobs(): void {

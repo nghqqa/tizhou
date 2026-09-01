@@ -62,6 +62,49 @@ describe('conversion cache', () => {
     await expect(cache.fetch(sourcePath, 'markitdown@0.1.6')).resolves.toBeUndefined()
   })
 
+  it('purges OCR fallback results mistakenly stored under the structured@ key', async () => {
+    const cacheDirectory = temporaryDirectory('tizhou-ccache-poison-')
+    const sourceDirectory = temporaryDirectory('tizhou-ccache-poison-src-')
+    const rawDirectory = temporaryDirectory('tizhou-ccache-poison-raw-')
+    const sourcePath = join(sourceDirectory, '题本.pdf')
+    writeFileSync(sourcePath, 'PDF-POISON')
+    const markdownPath = join(rawDirectory, 'raw.md')
+    writeFileSync(markdownPath, 'OCR 纯文本结果', 'utf8')
+    const cache = new ConversionCache(cacheDirectory)
+
+    // 历史缺陷形态：结构解析失败回退 OCR 的结果（带逐页 OCR 质量报告）被错存进 structured@ 键
+    await cache.store(sourcePath, 'structured@rapid-doc==0.9.10', markdownPath, {
+      totalPages: 3,
+      textLayerPages: 0,
+      ocrPages: 3,
+      emptyPages: 0,
+      averageConfidence: 0.98,
+      ocrLineCount: 100,
+      lowConfidenceLines: 1,
+      removedPageNumbers: 3,
+      warnings: []
+    })
+    await expect(cache.fetch(sourcePath, 'structured@rapid-doc==0.9.10')).resolves.toBeUndefined()
+    // 毒条目已被清除（自愈），不会复活
+    expect(readdirSync(cacheDirectory).filter((name) => name.endsWith('.md'))).toHaveLength(0)
+
+    // 带 structured 标记的真正结构解析结果正常命中
+    await cache.store(sourcePath, 'structured@rapid-doc==0.9.10', markdownPath, {
+      totalPages: 3,
+      textLayerPages: 0,
+      ocrPages: 3,
+      emptyPages: 0,
+      ocrLineCount: 0,
+      lowConfidenceLines: 0,
+      removedPageNumbers: 0,
+      warnings: ['结构解析模式：表格已还原为 Markdown 表格，图片保真存至 images/ 目录'],
+      structured: true
+    })
+    const hit = await cache.fetch(sourcePath, 'structured@rapid-doc==0.9.10')
+    expect(hit).toBeDefined()
+    expect(hit?.ocrQuality?.structured).toBe(true)
+  })
+
   it('treats corrupted cache metadata as a miss instead of failing', async () => {
     const cacheDirectory = temporaryDirectory('tizhou-ccache-corrupt-')
     const sourceDirectory = temporaryDirectory('tizhou-ccache-corrupt-src-')
