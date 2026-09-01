@@ -82,7 +82,7 @@ export function mergeByDocumentOrder(
       const explanation =
         [solution.qtype, solution.explanation].filter(Boolean).join('\n\n') || '该题暂未提供解析。'
       items.push({
-        id: `kb-s${createHash('sha256')
+        id: `kb-b${createHash('sha256')
           .update(`${options.sourceFile}\n${set}-${index}`)
           .digest('hex')
           .slice(0, 19)}`,
