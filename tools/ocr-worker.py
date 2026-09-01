@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import sys
 from pathlib import Path
 
@@ -225,6 +226,12 @@ def run_structured(source: Path, output: Path) -> int:
     result = doc(str(source))
     markdown = normalize_rapiddoc_markdown(result.markdown)
     output.write_text(markdown, encoding='utf-8')
+    # RapidDoc 把图片写进 <output_dir>/<源名>/auto/images/，而 markdown 里的引用是
+    # images/<hash>.png（相对输出目录）——把散落的图片收拢到 images/，使引用与文件对齐
+    for pattern in ('*/auto/images/*', '*/images/*'):
+        for scattered in parent.glob(pattern):
+            if scattered.is_file():
+                shutil.copy2(str(scattered), str(images_dir / scattered.name))
     total_pages = 0
     try:
         import pypdfium2 as pdfium_mod

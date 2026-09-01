@@ -51,7 +51,7 @@ export interface DirectQuestion {
   material?: string
 }
 
-const SET_TITLE = /^练习题\s*0*(\d{1,3})\s*套?\s*$/
+const SET_TITLE = /^#{0,4}\s*练习题\s*0*(\d{1,3})\s*套?\s*#*\s*$/
 const CHAPTER_TITLE = /^第[一二三四五六七八九十百0-9]{1,4}[篇章套]/
 const QUESTION_NO = /^(\d{1,3})\s*[.、．](?!\d)\s*(.*)$/
 const OPTION_NO = /^([A-D])\s*[.、．]?\s*(.+)$/
@@ -138,10 +138,11 @@ function stripTocSetTitleRuns(lines: string[]): string[] {
   return lines.filter((_, index) => !removeRows.has(index))
 }
 
-// 套内共享材料行拼合为材料文本（过滤纯页码行）
+// 套内共享材料行拼合为材料文本（过滤纯页码行与混入的套标题行——结构解析 md 的标题常带 # 前缀）
 function materialText(materialLines: string[]): string | undefined {
   const cleaned = materialLines
     .filter((line) => !/^\d{1,3}$/.test(line))
+    .filter((line) => !/^#{0,6}\s*练习题\s*\d+\s*套?\s*#*\s*$/.test(line))
     .join('\n\n')
     .trim()
   return cleaned.length >= 30 ? cleaned : undefined

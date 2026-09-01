@@ -88,7 +88,7 @@ describe('conversion cache', () => {
     // 毒条目已被清除（自愈），不会复活
     expect(readdirSync(cacheDirectory).filter((name) => name.endsWith('.md'))).toHaveLength(0)
 
-    // 带 structured 标记的真正结构解析结果正常命中
+    // 带 structured 标记但缺图片归档 → 视为不完整，清除重转
     await cache.store(sourcePath, 'structured@rapid-doc==0.9.10', markdownPath, {
       totalPages: 3,
       textLayerPages: 0,
@@ -100,9 +100,32 @@ describe('conversion cache', () => {
       warnings: ['结构解析模式：表格已还原为 Markdown 表格，图片保真存至 images/ 目录'],
       structured: true
     })
+    await expect(cache.fetch(sourcePath, 'structured@rapid-doc==0.9.10')).resolves.toBeUndefined()
+
+    // structured 标记 + 图片归档齐备 → 命中并返回归档目录
+    const imagesDirectory = temporaryDirectory('tizhou-ccache-poison-img-')
+    writeFileSync(join(imagesDirectory, '51f66.png'), 'PNG-BYTES')
+    await cache.store(
+      sourcePath,
+      'structured@rapid-doc==0.9.10',
+      markdownPath,
+      {
+        totalPages: 3,
+        textLayerPages: 0,
+        ocrPages: 3,
+        emptyPages: 0,
+        ocrLineCount: 0,
+        lowConfidenceLines: 0,
+        removedPageNumbers: 0,
+        warnings: ['结构解析模式：表格已还原为 Markdown 表格，图片保真存至 images/ 目录'],
+        structured: true
+      },
+      imagesDirectory
+    )
     const hit = await cache.fetch(sourcePath, 'structured@rapid-doc==0.9.10')
     expect(hit).toBeDefined()
     expect(hit?.ocrQuality?.structured).toBe(true)
+    expect(readFileSync(join(hit!.imagesDir!, '51f66.png'), 'utf8')).toBe('PNG-BYTES')
   })
 
   it('treats corrupted cache metadata as a miss instead of failing', async () => {

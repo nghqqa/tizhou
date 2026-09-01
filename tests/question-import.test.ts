@@ -985,3 +985,22 @@ describe('knowledge builder direct mode', () => {
     expect(job.message).toContain('申论主观题')
   }, 35_000)
 })
+
+describe('结构解析 markdown 容错（资料分析600题结构模式实测形态）', () => {
+  it('带 # 前缀的套标题照常开套，且套标题不混入材料', () => {
+    const questions = parseQuestionBook([
+      '# 练习题01套',
+      '一、根据所给材料，回答1～5题。',
+      '2022年全国发电量8.5万亿千瓦时，同比增长3.4%，其中火电与新能源结构持续调整变化。',
+      '1. 2021年7月份，全国发电量大约是多少亿千瓦时：',
+      'A. 1.2',
+      'B. 1.5',
+      'C. 1.8',
+      'D. 2.0'
+    ])
+    expect(questions).toHaveLength(1)
+    expect(questions[0]?.set).toBe(1)
+    expect(questions[0]?.material).not.toContain('练习题01套')
+    expect(questions[0]?.material).toContain('发电量')
+  })
+})

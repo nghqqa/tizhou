@@ -9,6 +9,7 @@ import {
   readdirSync,
   realpathSync,
   renameSync,
+  rmSync,
   statSync,
   unlinkSync,
   writeFileSync
@@ -1183,6 +1184,19 @@ export class KnowledgeBuilderService {
           const cached = await this.conversionCache.fetch(source, converter)
           if (cached) {
             copyFileSync(cached.markdownPath, rawPath)
+            // 结构解析命中：把缓存的图片归档原样恢复到任务 raw/images，否则 markdown 引用悬空
+            if (cached.imagesDir) {
+              try {
+                const imagesTarget = join(dirname(rawPath), 'images')
+                rmSync(imagesTarget, { recursive: true, force: true })
+                mkdirSync(imagesTarget, { recursive: true })
+                for (const name of readdirSync(cached.imagesDir)) {
+                  copyFileSync(join(cached.imagesDir, name), join(imagesTarget, name))
+                }
+              } catch {
+                // 图片恢复失败只影响图表附件，不阻塞文本管线
+              }
+            }
             job.cancelRequested ||= this.loadJob(id).cancelRequested
             if (job.cancelRequested) throw new Error('任务已取消')
             ocrQuality = cached.ocrQuality
@@ -1228,7 +1242,13 @@ export class KnowledgeBuilderService {
                 : '转换结果超过 20 MB，请先拆分原文件'
             )
           if (!cached)
-            await this.conversionCache.store(source, effectiveConverter, rawPath, ocrQuality)
+            await this.conversionCache.store(
+              source,
+              effectiveConverter,
+              rawPath,
+              ocrQuality,
+              useStructured && structuredOk ? join(dirname(rawPath), 'images') : undefined
+            )
           const raw = readFileSync(rawPath, 'utf8').trim()
           file.fromCache = Boolean(cached)
           // 保存质量报告到文件元数据
@@ -1426,7 +1446,7 @@ export class KnowledgeBuilderService {
             bookFile.artifactCount = bookStaged
             bookFile.message = `切出 ${bookStaged} 题${
               merged.verifiable
-                ? `，配对校验 ${merged.verifiable - merged.skippedMisaligned}/${merged.verifiable} 通过`
+                ? `，配对校验 ${Math.max(0, merged.verifiable - merged.skippedMisaligned)}/${merged.verifiable} 通过`
                 : ''
             }`
           }

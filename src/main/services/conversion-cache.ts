@@ -19,6 +19,8 @@ import type { OcrQualityReport } from '../../shared/contracts'
 export interface CachedConversion {
   markdownPath: string
   ocrQuality?: OcrQualityReport
+  /** 结构解析结果的图片归档目录（缓存内）；命中时由调用方复制回任务 raw/images */
+  imagesDir?: string
 }
 
 interface CacheMeta {
@@ -37,6 +39,30 @@ async function sha256File(path: string): Promise<string> {
     stream.on('error', reject)
     stream.on('end', () => resolvePromise(hash.digest('hex')))
   })
+}
+
+function directoryHasFiles(path: string): boolean {
+  try {
+    return readdirSync(path).length > 0
+  } catch {
+    return false
+  }
+}
+
+function directoryBytes(path: string): number {
+  try {
+    let total = 0
+    for (const name of readdirSync(path)) {
+      try {
+        total += statSync(join(path, name)).size
+      } catch {
+        /* 忽略瞬时不可读条目 */
+      }
+    }
+    return total
+  } catch {
+    return 0
+  }
 }
 
 export class ConversionCache {
@@ -62,16 +88,21 @@ export class ConversionCache {
       if (!existsSync(markdownPath) || !existsSync(metaPath)) return undefined
       const meta = JSON.parse(readFileSync(metaPath, 'utf8')) as CacheMeta
       if (meta.converter !== converter) return undefined
-      if (converter.startsWith('structured@') && meta.ocrQuality?.structured !== true) {
-        // 历史缺陷：结构解析失败回退 OCR 的结果曾被错存进 structured@ 键，
-        // 每次命中都会永久短路真正的结构解析——视为未命中并清除，让下次导入重试
-        try {
-          rmSync(markdownPath, { force: true })
-          rmSync(metaPath, { force: true })
-        } catch {
-          /* 清理失败按未命中处理 */
+      const imagesArchive = join(this.directory, `${key}-images`)
+      if (converter.startsWith('structured@')) {
+        // 结构解析的 markdown 引用 images/ 附件：质量报告须带 structured 标记、图片归档必须存在。
+        // 历史缺陷条目（OCR 兜底错存、或只存了 md 没存图片）视为未命中并清除，让下次导入重转
+        if (meta.ocrQuality?.structured !== true || !directoryHasFiles(imagesArchive)) {
+          try {
+            rmSync(markdownPath, { force: true })
+            rmSync(metaPath, { force: true })
+            rmSync(imagesArchive, { recursive: true, force: true })
+          } catch {
+            /* 清理失败按未命中处理 */
+          }
+          return undefined
         }
-        return undefined
+        return { markdownPath, ocrQuality: meta.ocrQuality, imagesDir: imagesArchive }
       }
       return { markdownPath, ocrQuality: meta.ocrQuality }
     } catch {
@@ -83,7 +114,8 @@ export class ConversionCache {
     sourcePath: string,
     converter: string,
     markdownSourcePath: string,
-    ocrQuality?: OcrQualityReport
+    ocrQuality?: OcrQualityReport,
+    imagesDir?: string
   ): Promise<void> {
     try {
       const key = await this.keyFor(sourcePath, converter)
@@ -97,6 +129,15 @@ export class ConversionCache {
       }
       writeFileSync(join(this.directory, `${key}.json`), JSON.stringify(meta, null, 2), 'utf8')
       copyFileSync(markdownSourcePath, join(this.directory, `${key}.md`))
+      if (imagesDir && directoryHasFiles(imagesDir)) {
+        // 结构解析的图片随行归档：缓存命中时原样复制回任务目录，否则 markdown 引用会悬空
+        const archive = join(this.directory, `${key}-images`)
+        rmSync(archive, { recursive: true, force: true })
+        mkdirSync(archive, { recursive: true })
+        for (const name of readdirSync(imagesDir)) {
+          copyFileSync(join(imagesDir, name), join(archive, name))
+        }
+      }
       this.evict()
     } catch {
       // 缓存写入失败不影响任务本身
@@ -125,7 +166,12 @@ export class ConversionCache {
       if (!name.endsWith('.md')) continue
       try {
         const info = statSync(join(this.directory, name))
-        entries.push({ key: name.slice(0, -3), bytes: info.size, mtimeMs: info.mtimeMs })
+        const key = name.slice(0, -3)
+        entries.push({
+          key,
+          bytes: info.size + directoryBytes(join(this.directory, `${key}-images`)),
+          mtimeMs: info.mtimeMs
+        })
       } catch {
         /* 忽略瞬时不可读条目 */
       }
@@ -141,6 +187,7 @@ export class ConversionCache {
         total -= entry.bytes
         rmSync(mdPath, { force: true })
         rmSync(metaPath, { force: true })
+        rmSync(join(this.directory, `${entry.key}-images`), { recursive: true, force: true })
       } catch {
         /* 下次 evict 再试 */
       }
