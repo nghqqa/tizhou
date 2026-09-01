@@ -13,6 +13,8 @@ export interface ParsedQuestion {
   num: number
   stem: string
   options: DirectOption[]
+  /** 该题所属套的共享材料（统计表/文字资料），资料分析类书籍专用 */
+  material?: string
 }
 
 export interface ParsedSolution {
@@ -136,6 +138,15 @@ function stripTocSetTitleRuns(lines: string[]): string[] {
   return lines.filter((_, index) => !removeRows.has(index))
 }
 
+// 套内共享材料行拼合为材料文本（过滤纯页码行）
+function materialText(materialLines: string[]): string | undefined {
+  const cleaned = materialLines
+    .filter((line) => !/^\d{1,3}$/.test(line))
+    .join('\n\n')
+    .trim()
+  return cleaned.length >= 30 ? cleaned : undefined
+}
+
 // 题本切题：期望题号状态机；目录页连续标题只认第一行；题号行丢失时跳号续切；选项换行并入末选项
 export function parseQuestionBook(inputLines: string[]): ParsedQuestion[] {
   const lines = stripTocSetTitleRuns(inputLines)
@@ -145,6 +156,8 @@ export function parseQuestionBook(inputLines: string[]): ParsedQuestion[] {
   let expected = 1
   let nextOption: string | null = null
   let lastLineWasHeader = false
+  // 套内共享材料：套标题之后、第一道题之前的统计表/文字资料，附着给套内每道题
+  let setMaterial: string[] = []
   const closeQuestion = () => {
     if (current && current.stem) questions.push(current)
   }
@@ -160,6 +173,7 @@ export function parseQuestionBook(inputLines: string[]): ParsedQuestion[] {
         current = null
         expected = 1
         nextOption = null
+        setMaterial = []
       }
       lastLineWasHeader = true
       continue
@@ -171,14 +185,20 @@ export function parseQuestionBook(inputLines: string[]): ParsedQuestion[] {
       const rest = match[2] ?? ''
       if (!current && num === 1) {
         if (setNo === 0) setNo = 1
-        current = { set: setNo, num: 1, stem: rest, options: [] }
+        current = {
+          set: setNo,
+          num: 1,
+          stem: rest,
+          options: [],
+          material: materialText(setMaterial)
+        }
         expected = 2
         nextOption = 'A'
         continue
       }
       if (num === expected && current) {
         closeQuestion()
-        current = { set: setNo, num, stem: rest, options: [] }
+        current = { set: setNo, num, stem: rest, options: [], material: materialText(setMaterial) }
         expected = num + 1
         nextOption = 'A'
         continue
@@ -186,7 +206,13 @@ export function parseQuestionBook(inputLines: string[]): ParsedQuestion[] {
       if (num === 1 && current && current.num >= 5) {
         closeQuestion()
         setNo += 1
-        current = { set: setNo, num: 1, stem: rest, options: [] }
+        current = {
+          set: setNo,
+          num: 1,
+          stem: rest,
+          options: [],
+          material: materialText(setMaterial)
+        }
         expected = 2
         nextOption = 'A'
         continue
@@ -199,6 +225,11 @@ export function parseQuestionBook(inputLines: string[]): ParsedQuestion[] {
         nextOption = 'A'
         continue
       }
+    }
+    // 题目未开始时：非题号/选项的正文行累积为该套共享材料（统计表/文字资料）
+    if (!current) {
+      setMaterial.push(line)
+      continue
     }
     if (current && nextOption) {
       const option = line.match(OPTION_NO)
@@ -714,6 +745,7 @@ export function mergeDirectQuestions(
       difficulty,
       stem: question.stem,
       options: question.options,
+      material: question.material,
       answer: answerText.split(''),
       explanation
     })
