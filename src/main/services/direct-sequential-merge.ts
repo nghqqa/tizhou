@@ -109,6 +109,7 @@ export function mergeByDocumentOrder(
                     : 5,
         stem: question.stem,
         options: question.options,
+        material: question.material,
         answer: answerText.split(''),
         explanation
       })
