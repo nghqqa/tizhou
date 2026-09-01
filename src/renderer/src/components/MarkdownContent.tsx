@@ -1,13 +1,27 @@
 import { useEffect, useMemo, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import rehypeKatex from 'rehype-katex'
+import rehypeRaw from 'rehype-raw'
+import rehypeSanitize, { defaultSchema } from 'rehype-sanitize'
+import type { Schema } from 'hast-util-sanitize'
 import remarkGfm from 'remark-gfm'
+import type { PluggableList } from 'unified'
 import { invoke } from '../api'
 
 // 插件与组件映射必须是稳定引用：内联字面量会让 react-markdown 在每次父组件
 // 重渲染时整树重建，图片随之重新走 IPC 加载，表现为点击后闪“正在读取图片”。
 const REMARK_PLUGINS = [remarkGfm]
-const REHYPE_PLUGINS = [rehypeKatex]
+// 结构解析还原的统计表是带合并单元格的 HTML（rowspan/colspan），GFM 管道表格表达不了；
+// rehype-raw 渲染原始 HTML，rehype-sanitize 白名单放行表格属性并拦截导入文件中的恶意标记。
+const SANITIZE_SCHEMA: Schema = {
+  ...defaultSchema,
+  attributes: {
+    ...defaultSchema.attributes,
+    td: [...(defaultSchema.attributes?.td ?? []), 'colspan', 'rowspan'],
+    th: [...(defaultSchema.attributes?.th ?? []), 'colspan', 'rowspan']
+  }
+}
+const REHYPE_PLUGINS: PluggableList = [rehypeRaw, [rehypeSanitize, SANITIZE_SCHEMA], rehypeKatex]
 
 // 资源 data URL 缓存：题目重渲染或重访时不再重复请求主进程
 const assetUrlCache = new Map<string, string>()
