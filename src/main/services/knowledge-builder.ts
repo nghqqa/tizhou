@@ -40,6 +40,7 @@ import {
   pickGpuAdapter,
   setRapidocrDmlEnabled
 } from './ocr-accelerator'
+import { mergeByDocumentOrder } from './direct-sequential-merge'
 import {
   envPipIndexUrl,
   mirrorById,
@@ -1254,7 +1255,7 @@ export class KnowledgeBuilderService {
           this.saveJob(job)
           if (job.options.mode === 'direct') {
             const directLines = toLines(raw)
-            const solutionMarks = (raw.match(/【参考答案】/g) ?? []).length
+            const solutionMarks = (raw.match(/【参考答案(及正确率)?】/g) ?? []).length
             if (solutionMarks >= 3) {
               const solutions = parseSolutionBook(directLines)
               for (const [key, value] of solutions) directSolutions.set(key, value)
@@ -1336,13 +1337,36 @@ export class KnowledgeBuilderService {
         const existingSignatures = this.vaults.questionSignatures(targetRoot)
         const batchSeen = new Set<string>()
         for (const book of directBooks) {
-          const merged = mergeDirectQuestions(book.questions, directSolutions, book.groups, {
+          let merged = mergeDirectQuestions(book.questions, directSolutions, book.groups, {
             subject,
             category: `${subjectLabel}-直导题库`,
             sourceFile: book.relativePath,
             tags: job.options.tags
           })
           const bookFile = job.files.find((file) => file.sourceId === book.sourceId)
+          // 顺序配对兜底：套号钥匙配对失败（中止或近零产出）而解析册有答案时，
+          // 按文档顺序位置配对，并用题干相似度逐对验证——两本书的题目顺序天然一致
+          if ((merged.aborted || merged.items.length === 0) && directSolutions.size > 0) {
+            const sequential = mergeByDocumentOrder(book.questions, directSolutions, {
+              subject,
+              category: `${subjectLabel}-直导题库`,
+              sourceFile: book.relativePath,
+              tags: job.options.tags
+            })
+            if (sequential.items.length > merged.items.length) {
+              merged = {
+                items: sequential.items,
+                skippedNoAnswer: sequential.skippedNoAnswer,
+                skippedIncomplete: sequential.skippedIncomplete,
+                skippedMisaligned: sequential.skippedMisaligned,
+                verifiable: sequential.items.length,
+                aborted: false
+              }
+              if (bookFile) {
+                bookFile.message = `套号配对失败，已按文档顺序配对 ${sequential.items.length} 题`
+              }
+            }
+          }
           if (merged.aborted) {
             // 整书对齐率过低：题本与解析册疑似套号错位，拦截防止题目批量配错答案
             abortedBooks += 1
@@ -1465,21 +1489,23 @@ export class KnowledgeBuilderService {
           }
         }
         job.status = staged > 0 ? 'review' : 'completed'
-        job.message = `[批次 9/1 00:0x 构建] ` + (staged
-          ? `已切出 ${staged} 题${
-              stagedEssays
-                ? `，其中申论主观题 ${stagedEssays} 道（无参考答案，发布后经「申论作答」页 AI 批改练习）`
-                : ''
-            }（配对验证错位剔除 ${skippedMisaligned}、无答案跳过 ${skippedNoAnswer}、不完整 ${skippedIncomplete}、与现有题库重复 ${skippedDuplicate}）——请抽查后「全部批准」并「发布」入库${
-              abortedBooks ? `；${abortedBooks} 本书因疑似套号错位被拦截` : ''
-            }`
-          : skippedDuplicate
-            ? `直导完成：${skippedDuplicate} 题与现有题库重复，未生成新题${abortedBooks ? `；${abortedBooks} 本书因疑似套号错位被拦截` : ''}`
-            : abortedBooks
-              ? `直导完成：全部题本被配对校验拦截（疑似套号错位），未生成产物`
-              : trainingMarkers >= 3
-                ? `直导完成：检测到 ${trainingMarkers} 处训练式标题但未能稳定切分出题目——这本书大概率是主观题教材，请改用「模型提炼」模式导入`
-                : '直导完成：未切出题目（未识别出题目或全部缺少答案）')
+        job.message =
+          `[批次 9/1 00:0x 构建] ` +
+          (staged
+            ? `已切出 ${staged} 题${
+                stagedEssays
+                  ? `，其中申论主观题 ${stagedEssays} 道（无参考答案，发布后经「申论作答」页 AI 批改练习）`
+                  : ''
+              }（配对验证错位剔除 ${skippedMisaligned}、无答案跳过 ${skippedNoAnswer}、不完整 ${skippedIncomplete}、与现有题库重复 ${skippedDuplicate}）——请抽查后「全部批准」并「发布」入库${
+                abortedBooks ? `；${abortedBooks} 本书因疑似套号错位被拦截` : ''
+              }`
+            : skippedDuplicate
+              ? `直导完成：${skippedDuplicate} 题与现有题库重复，未生成新题${abortedBooks ? `；${abortedBooks} 本书因疑似套号错位被拦截` : ''}`
+              : abortedBooks
+                ? `直导完成：全部题本被配对校验拦截（疑似套号错位），未生成产物`
+                : trainingMarkers >= 3
+                  ? `直导完成：检测到 ${trainingMarkers} 处训练式标题但未能稳定切分出题目——这本书大概率是主观题教材，请改用「模型提炼」模式导入`
+                  : '直导完成：未切出题目（未识别出题目或全部缺少答案）')
       } else {
         const artifacts = job.artifactIds.map((artifactId) => this.loadArtifact(job, artifactId))
         job.status = artifacts.some((artifact) => artifact.status === 'pending')
@@ -2050,8 +2076,9 @@ export class KnowledgeBuilderService {
 
   private async structuredParseAvailable(pythonPath: string): Promise<boolean> {
     try {
+      // 冷启动时杀毒软件首次扫描 venv 可能拖慢 import，30s 不够用
       await execFileAsync(pythonPath, ['-c', 'import rapid_doc'], {
-        timeout: 30_000,
+        timeout: 120_000,
         windowsHide: true,
         maxBuffer: 1024 * 1024,
         env: { ...process.env, PYTHONUTF8: '1' }
