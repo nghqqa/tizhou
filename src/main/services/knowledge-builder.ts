@@ -1170,7 +1170,12 @@ export class KnowledgeBuilderService {
           // PDF 始终由 OCR worker 处理：worker 内部逐页判断文字层是否足够，
           // 文字层页直接使用原始文本，扫描页 OCR，混合 PDF 不漏识别；
           // MarkItDown 首跑的结果必然被覆盖，OCR 可用时不再先跑一遍。
-          const useStructured = engine.structuredParseAvailable && isPdfFile(file.relativePath)
+          // 解析册/答案册是纯文本流：结构重排会挤压相邻题块（实测解析串题、配对校验失效），
+          // 题本保留结构化的表格/图片保真，解析册直接走逐页 OCR。
+          const useStructured =
+            engine.structuredParseAvailable &&
+            isPdfFile(file.relativePath) &&
+            !/解析|答案/.test(basename(file.relativePath))
           const useOcr = engine.ocrAvailable && isPdfFile(file.relativePath)
           let structuredOk: boolean | undefined = true
           const converter = useStructured
@@ -1249,6 +1254,26 @@ export class KnowledgeBuilderService {
               ocrQuality,
               useStructured && structuredOk ? join(dirname(rawPath), 'images') : undefined
             )
+          // 文件名没带「解析/答案」字样的解析册兜底：转换完成后按参考答案标记密度识别，
+          // 改用逐页 OCR 文本切块（结果按 ocr@ 键缓存，此后秒级复用）
+          if (useStructured) {
+            const structuredText = readFileSync(rawPath, 'utf8')
+            if ((structuredText.match(/【参考答案(及正确率)?】/g) ?? []).length >= 3) {
+              file.message = '解析册：结构重排不利切块，改用逐页 OCR 文本'
+              this.saveJob(job)
+              const ocrConverterKey = `ocr@${OCR_PACKAGES.join('+')}`
+              const ocrCached = await this.conversionCache.fetch(source, ocrConverterKey)
+              if (ocrCached) {
+                copyFileSync(ocrCached.markdownPath, rawPath)
+                ocrQuality = ocrCached.ocrQuality
+              } else {
+                ocrQuality = await this.ocrConvert(job, file, engine.pythonPath, source, rawPath)
+                await this.conversionCache.store(source, ocrConverterKey, rawPath, ocrQuality)
+              }
+              job.cancelRequested ||= this.loadJob(id).cancelRequested
+              if (job.cancelRequested) throw new Error('任务已取消')
+            }
+          }
           const raw = readFileSync(rawPath, 'utf8').trim()
           file.fromCache = Boolean(cached)
           // 保存质量报告到文件元数据
