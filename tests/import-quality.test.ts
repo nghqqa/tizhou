@@ -1,6 +1,7 @@
-// 导入质量模型：数字异常/表格一致性/切分完整度/结构噪声
+// 导入质量模型：数字异常/表格一致性/切分完整度/结构噪声/解析清洗
 import { describe, expect, it } from 'vitest'
 import {
+  cleanExplanation,
   isNumberStreamLine,
   quarantineNumberStreamLine,
   questionCompleteness,
@@ -105,5 +106,62 @@ describe('HTML 表格一致性（RapidDoc 还原形态）', () => {
     expect(result.tables).toBe(2)
     expect(result.ragged).toBe(1)
     expect(result.confidence).toBe(0.5)
+  })
+})
+
+describe('cleanExplanation（解析清洗阶段）', () => {
+  it('行内水印只移除宣传片段，正文与数值原样保留', () => {
+    const result = cleanExplanation(
+      '则春节假期旅游收入占比≈9%，答案为 A 选项。公考最新资料、更新进度微信SKA674'
+    )
+    expect(result.cleaned).not.toContain('公考最新资料')
+    expect(result.cleaned).not.toContain('微信SKA674')
+    expect(result.cleaned).toContain('则春节假期旅游收入占比≈9%，答案为 A 选项。')
+    expect(result.removedWatermarks.length).toBeGreaterThan(0)
+  })
+
+  it('句中的①②③保留为步骤编号，孤立圆圈标记移入审计块', () => {
+    const withSteps = cleanExplanation('①先确定同比变化方向；②再比较基期和现期；③得出结论。')
+    expect(withSteps.cleaned).toContain('①先确定同比变化方向')
+    expect(withSteps.cleaned).not.toContain('原始图表标记')
+    const isolated = cleanExplanation('解析正文一句话。\n①②\n更多解析。')
+    expect(isolated.cleaned).toContain('[原始图表标记：①②]')
+  })
+
+  it('公式、百分比、金额、年份、负数原样保留', () => {
+    const raw =
+      '2022年收入6397 亿元，同比下降17.7%；占比33.5%，为25.30 亿。6390-5980≈410，比值1.24÷2.07，区间2017～2022 年，比为6:1，减少-29.5%。'
+    const result = cleanExplanation(raw)
+    for (const token of [
+      '6397 亿元',
+      '17.7%',
+      '33.5%',
+      '25.30 亿',
+      '6390-5980≈410',
+      '2017～2022 年',
+      '1.24÷2.07',
+      '6:1',
+      '-29.5%'
+    ]) {
+      expect(result.cleaned).toContain(token)
+    }
+  })
+
+  it('短行段落重建：中文行相接不加空格，步骤行保持独立', () => {
+    const result = cleanExplanation(
+      '定位文字材料第一段，\n2018年收入为1.3\n万亿元，则倍数约1.2。\n①先看基期；\n②再看现期。'
+    )
+    expect(result.cleaned).toContain('定位文字材料第一段，2018年收入为1.3万亿元，则倍数约1.2。')
+    expect(result.cleaned).toContain('①先看基期；')
+  })
+
+  it('虚词结尾的断行被标记为疑似断句', () => {
+    const result = cleanExplanation('定位文字材料第二段，只给出了该')
+    expect(result.readabilityWarnings.some((w) => w.includes('疑似 OCR 断句'))).toBe(true)
+  })
+
+  it('解析只剩数字或符号时告警', () => {
+    const result = cleanExplanation('3488 3793 4000')
+    expect(result.readabilityWarnings.some((w) => w.includes('只剩数字或符号'))).toBe(true)
   })
 })

@@ -1593,7 +1593,8 @@ export class KnowledgeBuilderService {
                 ...(pairingUnconfirmed
                   ? ['配对待确认：题本与解析未通过相似度校验，答案需人工核对']
                   : []),
-                ...(offsetAdjusted ? [`套内配对错位已按内容相似度校正 ${offsetAdjusted} 套`] : [])
+                ...(offsetAdjusted ? ['答案已通过相似度校正，建议抽查'] : []),
+                ...(item.cleanupWarnings ?? [])
               ],
               preview: item.stem.slice(0, 180),
               markdown,
@@ -1615,7 +1616,7 @@ export class KnowledgeBuilderService {
                     pairingUnconfirmed ? '（配对待确认）' : ''
                   }`
                 : ''
-            }`
+            }${book.qualityWarnings?.length || pairingUnconfirmed ? ' · 需要人工抽查' : ''}`
           }
         }
         // 申论直导通道：主观题没有标准答案也允许入库——「申论作答」页对空参考要点有

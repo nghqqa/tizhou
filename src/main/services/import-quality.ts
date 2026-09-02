@@ -196,3 +196,150 @@ export function stripStructuralNoise(lines: string[]): { lines: string[]; remove
   const kept = lines.filter((line) => !STRUCTURAL_NOISE_LINE.test(line))
   return { lines: kept, removed: lines.length - kept.length }
 }
+
+// ---- 解析文本清洗阶段：parseSolutionBook 之后、生成题目之前的纯函数 ----
+// 原则：不猜语义、不改数值；水印只删宣传片段；圆圈数字分类而非删除；
+// 断句问题只告警提示人工对照，不自动补写。
+
+const WATERMARK_TRAINS = [
+  /公考最新资料[、，]?\s*更新进度微信\S*/g,
+  /微信SKA\d+/g,
+  /公众号[：:]\S+/g,
+  /超格学员专用/g,
+  /资料分析600[贴折]/g,
+  /(?:^|[\s，、。])花生十[三]?(?=\s*[，、。]|(?:\s|$))/g
+] as const
+
+const CIRCLE_MARK = /[①②③④⑤⑥⑦⑧⑨⑩]/
+const STEP_MARK_START = /^\s*[①②③④⑤⑥⑦⑧⑨⑩]/
+const AUDIT_PREFIX = '> '
+const ENDS_WITH_PARAGRAPH_PUNCT = /[。；：！？”」』]$/
+const ENDS_WITH_STOPWORD = /(的|在|和|比|该|与|及|或|占|为)$/
+
+export interface ExplanationCleanupResult {
+  cleaned: string
+  removedWatermarks: string[]
+  removedFragments: string[]
+  preservedNumericTokens: string[]
+  suspiciousFragments: string[]
+  readabilityWarnings: string[]
+}
+
+/** 圆圈数字分类：孤立即无句子上下文（整行只有标记及其零星数字）→ 审计块；
+ *  句中则保留为原书的步骤编号，不做改动。 */
+function classifyCircleMarks(line: string): { text: string; audited: boolean } {
+  if (!CIRCLE_MARK.test(line)) return { text: line, audited: false }
+  const stripped = line.replace(/[①②③④⑤⑥⑦⑧⑨⑩]/g, '').replace(/[\s\d.,，。、%％～～-]/g, '')
+  if (stripped.length === 0) {
+    const marks = (line.match(/[①②③④⑤⑥⑦⑧⑨⑩]/g) ?? []).join('')
+    return { text: `${AUDIT_PREFIX}[原始图表标记：${marks}]`, audited: true }
+  }
+  return { text: line, audited: false }
+}
+
+/** 段落重建：中文行直接相接（不加空格），短行并入同段；审计块、步骤编号行、
+ *  数字流行占位保持独立。禁止无脑 lines.join(' ')。 */
+function rebuildParagraphs(lines: string[]): string[] {
+  const output: string[] = []
+  let paragraph = ''
+  const flush = (): void => {
+    if (paragraph.trim()) output.push(paragraph.trim())
+    paragraph = ''
+  }
+  for (const line of lines) {
+    const trimmed = line.trim()
+    if (!trimmed) {
+      flush()
+      continue
+    }
+    if (
+      trimmed.startsWith(AUDIT_PREFIX) ||
+      STEP_MARK_START.test(trimmed) ||
+      trimmed.startsWith('【') ||
+      trimmed.startsWith('#') ||
+      isNumberStreamLine(trimmed)
+    ) {
+      flush()
+      output.push(trimmed)
+      continue
+    }
+    if (!paragraph) {
+      paragraph = trimmed
+      continue
+    }
+    // 中文相邻不加空格；前段以 ASCII 字母数字结尾且新行以 ASCII 开头时补一个空格
+    const prevEnd = paragraph.slice(-1)
+    const nextStart = trimmed.slice(0, 1)
+    const needsSpace = /[A-Za-z0-9%）)]/.test(prevEnd) && /[A-Za-z0-9（(]/.test(nextStart)
+    paragraph += (needsSpace ? ' ' : '') + trimmed
+    if (ENDS_WITH_PARAGRAPH_PUNCT.test(trimmed)) flush()
+  }
+  flush()
+  return output
+}
+
+export function cleanExplanation(raw: string): ExplanationCleanupResult {
+  const removedWatermarks: string[] = []
+  const removedFragments: string[] = []
+  const preservedNumericTokens: string[] = []
+  const suspiciousFragments: string[] = []
+  const readabilityWarnings: string[] = []
+
+  // 1) 行级清洗：水印片段剥离（保留审计记录）+ 圆圈数字分类
+  const classified: string[] = []
+  for (const rawLine of raw.split(/\r?\n/)) {
+    let line = rawLine.trim()
+    if (!line) {
+      classified.push('')
+      continue
+    }
+    for (const pattern of WATERMARK_TRAINS) {
+      line = line.replace(pattern, (match) => {
+        removedWatermarks.push(match.trim())
+        return ' '
+      })
+    }
+    line = line.replace(/\s{2,}/g, ' ').trim()
+    if (!line) {
+      classified.push('')
+      continue
+    }
+    const circle = classifyCircleMarks(line)
+    classified.push(circle.text)
+  }
+
+  // 2) 审计块收集（数字串占位已由 quarantineNumberStreamLine 在上游产出）
+  for (const line of classified) {
+    if (line.includes('图表数字串，OCR 无法确认语义'))
+      preservedNumericTokens.push(line.replace(AUDIT_PREFIX, '').slice(0, 80))
+  }
+
+  // 3) 段落重建
+  const rebuilt = rebuildParagraphs(classified)
+
+  // 4) 可读性检查（只告警，不补写语义）
+  const prose = rebuilt.filter((line) => !line.startsWith(AUDIT_PREFIX)).join('\n')
+  if (removedWatermarks.length === 0 && /公考最新资料|微信SKA\d+|超格学员专用/.test(prose))
+    readabilityWarnings.push('解析仍存在已知水印，请人工清理')
+  if (/\d[.,]?\s+\d[.,]?\s+\d[.,]?\s+\d/.test(prose))
+    readabilityWarnings.push('解析存在疑似 OCR 断句，请对照原图')
+  const open = (prose.match(/（/g) ?? []).length
+  const close = (prose.match(/）/g) ?? []).length
+  if (open !== close) readabilityWarnings.push('解析存在未闭合括号，可能存在断行丢失')
+  for (const line of rebuilt) {
+    if (line.startsWith(AUDIT_PREFIX) || line.startsWith('【') || line.startsWith('>')) continue
+    if (ENDS_WITH_STOPWORD.test(line.trim()) && line.trim().length > 4)
+      readabilityWarnings.push('解析存在疑似 OCR 断句，请对照原图')
+  }
+  if (prose.replace(/\s/g, '').length > 0 && prose.replace(/[\d\s.,%％～～-]/g, '').length === 0)
+    readabilityWarnings.push('解析只剩数字或符号，请对照原图')
+
+  return {
+    cleaned: rebuilt.join('\n'),
+    removedWatermarks: [...new Set(removedWatermarks)],
+    removedFragments,
+    preservedNumericTokens: [...new Set(preservedNumericTokens)],
+    suspiciousFragments,
+    readabilityWarnings: [...new Set(readabilityWarnings)]
+  }
+}

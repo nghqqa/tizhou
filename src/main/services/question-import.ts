@@ -3,6 +3,7 @@
 // 或书尾「第N篇 + 1-5:BBDBC」分组答案页。
 import { createHash } from 'node:crypto'
 import {
+  cleanExplanation,
   quarantineNumberStreamLine,
   stripStructuralNoise,
   stripWatermarkFragments
@@ -35,6 +36,8 @@ export interface ParsedSolution {
   origin?: { year: number; region: string; rate: number }
   /** 答案标记内嵌的正确率（如【参考答案及正确率】C，89% → 0.89），无则缺省 */
   answerRate?: number
+  /** 解析清洗阶段的可读性/水印警告（人工审核提示） */
+  cleanupWarnings?: string[]
 }
 
 export interface DirectQuestion {
@@ -60,6 +63,8 @@ export interface DirectQuestion {
   groupId?: string
   /** 组内小题序号 */
   groupOrder?: number
+  /** 解析清洗警告（水印/断句/括号未闭），人工审核提示 */
+  cleanupWarnings?: string[]
 }
 
 const SET_TITLE = /^#{0,4}\s*练习题\s*0*(\d{1,3})\s*套?\s*#*\s*$/
@@ -428,6 +433,16 @@ export function parseSolutionBook(
       current.explanation += (current.explanation ? '\n' : '') + quarantineNumberStreamLine(line)
     else excerptLines.push(line)
   }
+  // 解析清洗阶段：水印剥离/圆圈数字分类/段落重建/可读性检查（纯函数，可独立测试）
+  for (const solution of solutions.values()) {
+    if (!solution.explanation) continue
+    const cleanup = cleanExplanation(solution.explanation)
+    solution.explanation = cleanup.cleaned
+    const warnings = [...cleanup.readabilityWarnings]
+    if (cleanup.removedWatermarks.length)
+      warnings.unshift(`解析已清洗 ${cleanup.removedWatermarks.length} 个水印片段`)
+    if (warnings.length) solution.cleanupWarnings = warnings
+  }
   return solutions
 }
 
@@ -790,6 +805,7 @@ export function mergeDirectQuestions(
       stem: question.stem,
       options: question.options,
       material: question.material,
+      cleanupWarnings: solution?.cleanupWarnings,
       answer: answerText.split(''),
       explanation
     })
