@@ -1004,3 +1004,17 @@ describe('结构解析 markdown 容错（资料分析600题结构模式实测形
     expect(questions[0]?.material).toContain('发电量')
   })
 })
+
+describe('OCR 波浪线噪声收敛', () => {
+  it('连续 ~~ 收敛为单字符，不再触发 GFM 删除线渲染', () => {
+    const lines = toLines(
+      [
+        '2022年第三季度=4566-2988~~1600亿元',
+        '2022年第四季度=6292-4566~~1700~~亿元、2023年第三季度~~2915-1443~~=1500亿元'
+      ].join('\n')
+    )
+    expect(lines[0]).not.toContain('~~')
+    expect(lines[1]).not.toContain('~~')
+    expect(lines[1]).toContain('~1700~亿元')
+  })
+})

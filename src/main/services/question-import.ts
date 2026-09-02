@@ -85,6 +85,9 @@ export function toLines(raw: string): string[] {
   return raw
     .split(/\r?\n/)
     .map((line) => line.trim())
+    // OCR 常把 ≈/波浪符号识别成 ~~，而 ~~ 在 GFM 里是删除线语法——
+    // 收敛为单字符，避免解析文本中两个约等号之间的内容被整段划掉
+    .map((line) => line.replace(/~{2,}/g, '~'))
     .filter(Boolean)
 }
 // 书首目录过滤（双通道规则）：
