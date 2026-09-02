@@ -203,7 +203,19 @@ export interface KnowledgeArtifactSummary {
   status: KnowledgeArtifactStatus
   warnings: string[]
   preview: string
+  /** 能力边界分类：非 text-supported 的产物默认禁止自动发布 */
+  capability?: ImportCapability
+  /** 人工已在原始页面上确认内容正确（解除发布限制） */
+  humanConfirmed?: boolean
 }
+
+/** 导入能力边界：诚实标注每份资料能被自动结构化到什么程度 */
+export type ImportCapability =
+  | 'text-supported'
+  | 'table-review'
+  | 'image-only-review'
+  | 'graphic-review'
+  | 'unsupported-auto-structure'
 
 export interface KnowledgeArtifactDetail extends KnowledgeArtifactSummary {
   markdown: string
@@ -640,6 +652,8 @@ export type WorkbenchRequest =
         jobId: string
         artifactId: string
         status: 'pending' | 'approved' | 'rejected'
+        /** 人工确认「已查看原始页面并确认内容正确」，解除能力边界发布限制 */
+        confirmHumanReview?: boolean
       }
     }
   | {

@@ -343,3 +343,35 @@ export function cleanExplanation(raw: string): ExplanationCleanupResult {
     readabilityWarnings: [...new Set(readabilityWarnings)]
   }
 }
+
+// ---- 能力边界收敛：诚实标注每份资料能被自动结构化到什么程度 ----
+import type { ImportCapability } from '../../shared/contracts'
+
+export const CAPABILITY_LABELS: Record<ImportCapability, string> = {
+  'text-supported': '文字题 · 可自动导入',
+  'table-review': '统计图/复杂表格 · 建议人工抽查',
+  'image-only-review': '图片题 · 人工审核',
+  'graphic-review': '图形推理图片题 · 暂不支持自动结构化',
+  'unsupported-auto-structure': '无法可靠结构化 · 仅保留原始资料'
+}
+
+export interface CapabilityInput {
+  structured: boolean
+  questionCount: number
+  completeCount: number
+  tableCount: number
+  numericAnomalies: number
+  graphicCandidate: boolean
+  figureImages: number
+  solutionMarks: number
+}
+
+export function classifyFileCapability(input: CapabilityInput): ImportCapability {
+  if (input.graphicCandidate) return 'graphic-review'
+  if (input.questionCount === 0) {
+    if (input.structured && input.figureImages >= 5) return 'image-only-review'
+    return 'unsupported-auto-structure'
+  }
+  if (input.tableCount > 0 || input.numericAnomalies >= 10) return 'table-review'
+  return 'text-supported'
+}

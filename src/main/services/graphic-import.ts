@@ -29,6 +29,11 @@ export interface GraphicExtraction extends GraphicStats {
   notes: string[]
 }
 
+/** 实验性图形题自动结构化开关：默认关闭。
+ *  图形规律与图片选项语义不做自动判定，图推资料默认只保留原始页面进人工审核；
+ *  绑定代码保留供显式开启后验证，其结果不得显示为「高质量」或 ready。 */
+export const GRAPHIC_AUTO_STRUCTURE = { enabled: false } as const
+
 /** 图推路由判定：页面里存在足够的「题号 + 图片」页时才走图形通道，避免误伤普通文本书 */
 export function isGraphicCandidate(regions: StructuredRegions): boolean {
   const byPage = groupByPage(regions.regions)
@@ -247,4 +252,62 @@ export function mergeGraphicQuestions(
     itemWarnings.push(warnings)
   }
   return { items, itemWarnings, paired, unpaired }
+}
+
+export interface GraphicPreservation {
+  id: string
+  title: string
+  markdown: string
+  warnings: string[]
+}
+
+/** 图推默认通道（自动结构化关闭）：逐页保留原始页面图片与 OCR 文字，进人工审核。
+ *  不生成可练习题目、不判规律、不绑选项——资料不丢失，能力边界诚实可见。 */
+export function buildGraphicPreservation(
+  regions: StructuredRegions,
+  sourceFile: string
+): GraphicPreservation[] {
+  const noise = pageNoiseTexts(regions.regions)
+  const byPage = groupByPage(regions.regions)
+  const items: GraphicPreservation[] = []
+  for (const [page, blocks] of byPage) {
+    const images = blocks.filter((block) => block.type === 'image' && block.imgPath)
+    if (images.length === 0) continue
+    const texts = blocks
+      .filter((block) => block.type === 'text' && !noise.has(block.text.trim()))
+      .map((block) => block.text.trim())
+      .filter(Boolean)
+    const id = `kb-p${createHash('sha256')
+      .update(`${sourceFile}\npage-${page}`)
+      .digest('hex')
+      .slice(0, 19)}`
+    items.push({
+      id,
+      title: `图形推理图片题 · 第 ${page + 1} 页`,
+      markdown: [
+        '---',
+        'kind: "document"',
+        `subject: "xingce"`,
+        `category: "图形推理-原始页面"`,
+        `title: ${JSON.stringify(`图形推理图片题 · 第 ${page + 1} 页`)}`,
+        'generatedBy: "direct-import"',
+        '---',
+        '',
+        `# 原始页面（第 ${page + 1} 页）`,
+        '',
+        '图形推理图片题：暂不支持自动识别图形规律和图片选项。原始页面已保留，请人工审核后再处理。',
+        '',
+        '## 原始页面图片',
+        '',
+        ...images.map((image) => `![](images/${image.imgPath.split('/').pop()})`),
+        '',
+        ...(texts.length ? ['## 页面文字（OCR）', '', ...texts, ''] : [])
+      ].join('\n'),
+      warnings: [
+        '图形推理图片题：暂不支持自动识别图形规律和图片选项。',
+        '原始页面已保留，请人工审核后再处理。'
+      ]
+    })
+  }
+  return items
 }

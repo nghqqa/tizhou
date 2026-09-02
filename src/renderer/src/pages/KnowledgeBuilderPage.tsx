@@ -133,6 +133,8 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
   const [job, setJob] = useState<KnowledgeBuildJob>()
   const [artifact, setArtifact] = useState<KnowledgeArtifactDetail>()
   const [busy, setBusy] = useState('')
+  // 能力边界产物的人工确认：勾选「我已查看原始页面并确认内容正确」后解除发布限制
+  const [humanConfirmed, setHumanConfirmed] = useState(false)
   const [filterStatus, setFilterStatus] = useState<
     'all' | 'pending' | 'approved' | 'rejected' | 'warnings'
   >('all')
@@ -351,6 +353,7 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
     if (!job) return
     setBusy('artifact')
     setError('')
+    setHumanConfirmed(false)
     try {
       setArtifact(
         await invoke({
@@ -372,7 +375,12 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
     try {
       const updated = await invoke<KnowledgeBuildJob>({
         method: 'knowledgeBuilder.artifact.review',
-        params: { jobId: job.id, artifactId: artifact.id, status }
+        params: {
+          jobId: job.id,
+          artifactId: artifact.id,
+          status,
+          confirmHumanReview: status === 'approved' && humanConfirmed
+        }
       })
       setJob(updated)
       setArtifact(
@@ -1077,6 +1085,23 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
                           </Button>
                         </div>
                       )}
+                      {artifact.status === 'pending' &&
+                        artifact.capability &&
+                        artifact.capability !== 'text-supported' && (
+                          <div className="builder-warning-list">
+                            <span>
+                              系统能力边界：此资料包含图片型内容。题舟不会自动猜测图形规律、图表数字或图片选项。请以原始页面为准，人工核对后再批准。
+                            </span>
+                            <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                              <input
+                                type="checkbox"
+                                checked={humanConfirmed}
+                                onChange={(event) => setHumanConfirmed(event.target.checked)}
+                              />
+                              我已查看原始页面并确认内容正确
+                            </label>
+                          </div>
+                        )}
                       {artifact.status === 'rejected' && (
                         <div className="builder-status-row">
                           <span className="pill">已拒绝</span>

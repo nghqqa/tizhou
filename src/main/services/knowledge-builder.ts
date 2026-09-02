@@ -18,6 +18,7 @@ import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 
 import { promisify } from 'node:util'
 import type {
   BatchReviewResult,
+  ImportCapability,
   KnowledgeArtifactDetail,
   KnowledgeArtifactStatus,
   KnowledgeArtifactSummary,
@@ -42,9 +43,17 @@ import {
   setRapidocrDmlEnabled
 } from './ocr-accelerator'
 import { mergeByDocumentOrder } from './direct-sequential-merge'
-import { loadStructuredRegions, scanNumericAnomalies, scanTableQuality } from './import-quality'
 import {
+  CAPABILITY_LABELS,
+  classifyFileCapability,
+  loadStructuredRegions,
+  scanNumericAnomalies,
+  scanTableQuality
+} from './import-quality'
+import {
+  buildGraphicPreservation,
   extractGraphicQuestions,
+  GRAPHIC_AUTO_STRUCTURE,
   isGraphicCandidate,
   mergeGraphicQuestions
 } from './graphic-import'
@@ -302,6 +311,20 @@ function chunkText(value: string): string[] {
   }
   flush()
   return chunks.slice(0, MAX_CHUNKS_PER_FILE)
+}
+
+/** 发布门禁：能力边界产物（图推/图片题/表格待核）与配对待确认的产物，
+ *  未人工确认前不允许发布。纯函数，便于单测。 */
+export function partitionByPublishGate<
+  T extends { capability?: ImportCapability; humanConfirmed?: boolean; warnings: string[] }
+>(artifacts: T[]): { allowed: T[]; blocked: T[] } {
+  const isGated = (artifact: T): boolean =>
+    (Boolean(artifact.capability) && artifact.capability !== 'text-supported') ||
+    artifact.warnings.some((warning) => warning.includes('配对待确认'))
+  return {
+    allowed: artifacts.filter((artifact) => !isGated(artifact) || artifact.humanConfirmed),
+    blocked: artifacts.filter((artifact) => isGated(artifact) && !artifact.humanConfirmed)
+  }
 }
 
 export class KnowledgeBuilderService {
@@ -971,7 +994,8 @@ export class KnowledgeBuilderService {
   reviewArtifact(
     jobId: string,
     artifactId: string,
-    status: Extract<KnowledgeArtifactStatus, 'pending' | 'approved' | 'rejected'>
+    status: Extract<KnowledgeArtifactStatus, 'pending' | 'approved' | 'rejected'>,
+    confirmHumanReview = false
   ): KnowledgeBuildJob {
     const job = this.loadJob(jobId)
     if (['queued', 'running', 'cancelling'].includes(job.status))
@@ -979,6 +1003,7 @@ export class KnowledgeBuilderService {
     if (!job.artifactIds.includes(artifactId)) throw new Error('产物不属于该任务')
     const artifact = this.loadArtifact(job, artifactId)
     if (artifact.status === 'published') throw new Error('已发布产物不能改回审核状态')
+    if (confirmHumanReview && status === 'approved') artifact.humanConfirmed = true
     // 恢复待审核只允许从已拒绝或已批准状态
     if (status === 'pending' && artifact.status === 'pending')
       throw new Error('该产物已处于待审核状态')
@@ -1046,7 +1071,15 @@ export class KnowledgeBuilderService {
     const approved = job.artifactIds
       .map((id) => this.loadArtifact(job, id))
       .filter((artifact) => artifact.status === 'approved')
+    // 发布门禁：能力边界（图推/图片题/表格待核）与配对待确认的产物，
+    // 必须人工在审核中显式确认后才允许进入题库；未确认的一律拦下
+    const { allowed, blocked } = partitionByPublishGate(approved)
     if (!approved.length) throw new Error('没有已批准且尚未发布的产物')
+    if (!allowed.length)
+      throw new Error(
+        `没有可发布的产物：${blocked.length} 项处于能力边界限制（图形推理图片题/配对待确认等），` +
+          '请在审核详情中查看原始页面并勾选人工确认后重试'
+      )
     // 直导任务发布到目标库的「直导题库」子目录（活动用户库原位；内置示例库回退应用自管库）
     const isDirect = job.options.mode === 'direct'
     const activeVault = this.vaults.ensureBuiltinVault()
@@ -1088,7 +1121,8 @@ export class KnowledgeBuilderService {
     }
     job.status = 'completed'
     job.message = isDirect
-      ? `已发布 ${staged.length} 题到${directToUserVault ? '当前题库' : '应用管理知识库'}的「直导题库」目录并完成重索引`
+      ? `已发布 ${staged.length} 题到${directToUserVault ? '当前题库' : '应用管理知识库'}的「直导题库」目录并完成重索引` +
+        (blocked.length ? `；${blocked.length} 项因能力边界未发布，需人工确认` : '')
       : `已发布 ${staged.length} 个产物并切换到应用管理知识库`
     job.updatedAt = now()
     this.saveJob(job)
@@ -1160,6 +1194,16 @@ export class KnowledgeBuilderService {
         }
         /** 书级质量警告（数字异常/表格残缺/噪声剥离），随产物落审核页 */
         qualityWarnings?: string[]
+        /** 能力边界分类（题本通道） */
+        capability?: ImportCapability
+      }> = []
+      // 能力边界保留通道：图推/图片题/无法结构化的资料——不生成题目，保留原始资料进人工审核
+      const directPreservation: Array<{
+        sourceId: string
+        relativePath: string
+        capability: ImportCapability
+        summary: string
+        docs: Array<{ id: string; title: string; markdown: string; warnings: string[] }>
       }> = []
       const directEssays: Array<{
         sourceId: string
@@ -1352,7 +1396,9 @@ export class KnowledgeBuilderService {
             } else {
               const questions = parseQuestionBook(directLines)
               const essays = parseEssayBook(directLines)
-              trainingMarkers += solutionMarks === 0 ? countEssayTrainingMarks(directLines) : 0
+              const fileTrainingMarks =
+                solutionMarks === 0 ? countEssayTrainingMarks(directLines) : 0
+              trainingMarkers += fileTrainingMarks
               // 通道按产出规模择优：申论书的 OCR 残渣常让客观题解析器切出个位数伪题，
               // 按"客观题>0 就走客观题"会把整本申论错送管线（实测夸夸刷 58 单元 vs 3 伪题）。
               // 反向同理，行测题本的偶发训练字样不会盖过数百道客观题。
@@ -1361,12 +1407,31 @@ export class KnowledgeBuilderService {
               const regions = useStructured
                 ? loadStructuredRegions(join(dirname(rawPath), 'images'))
                 : undefined
+              const graphicCandidate = regions ? isGraphicCandidate(regions) : false
               const graphic =
-                regions && isGraphicCandidate(regions)
-                  ? extractGraphicQuestions(regions)
+                graphicCandidate && GRAPHIC_AUTO_STRUCTURE.enabled
+                  ? extractGraphicQuestions(regions!)
                   : undefined
               const textUsable = questions.filter((question) => question.options.length >= 2).length
-              if (
+              if (graphicCandidate && !GRAPHIC_AUTO_STRUCTURE.enabled) {
+                // 能力边界收敛：图形推理默认不做自动结构化（实验性绑定默认关闭）——
+                // 逐页保留原始页面图片与 OCR 文字，进人工审核；资料不丢失、能力边界诚实可见
+                const pages = buildGraphicPreservation(regions!, file.relativePath)
+                directPreservation.push({
+                  sourceId: file.sourceId,
+                  relativePath: file.relativePath,
+                  capability: 'graphic-review',
+                  docs: pages.map((page) => ({
+                    id: page.id,
+                    title: page.title,
+                    markdown: page.markdown,
+                    warnings: [...page.warnings, ...qualityWarnings]
+                  })),
+                  summary: `图形推理图片题 · 暂不支持自动结构化：已保留 ${pages.length} 页原始页面，请人工审核`
+                })
+                file.state = 'ready'
+                file.message = `${CAPABILITY_LABELS['graphic-review']} · 已保留 ${pages.length} 页原始页面，请人工审核`
+              } else if (
                 graphic &&
                 graphic.questions.length >= 3 &&
                 textUsable < graphic.questions.length
@@ -1393,10 +1458,11 @@ export class KnowledgeBuilderService {
                     notes: graphic.notes,
                     summary: `图推：切出 ${graphic.questions.length} 题（整图版式 ${graphic.singleFigureGroups}、四图绑定 ${graphic.boundOptionGroups}、待人工核对 ${graphic.incompleteOptionQuestions}、未绑定图片 ${graphic.unboundImages}）`
                   },
-                  qualityWarnings
+                  qualityWarnings,
+                  capability: 'graphic-review'
                 })
                 file.state = 'ready'
-                file.message = `题本：${graphic.questions.length} 题走图形通道，批次结束后生成待审核产物`
+                file.message = `${CAPABILITY_LABELS['graphic-review']} · ${graphic.questions.length} 题走实验性图形通道（发布需人工确认）`
               } else if (essays.units.length >= questions.length && essays.units.length > 0) {
                 directEssays.push({
                   sourceId: file.sourceId,
@@ -1405,16 +1471,70 @@ export class KnowledgeBuilderService {
                 })
                 file.state = 'ready'
                 file.message = `切出 ${essays.units.length} 道申论题（无参考答案），批次结束后生成待审核产物`
+              } else if (questions.length === 0 && fileTrainingMarks === 0) {
+                // 能力边界降级：无题可切——保留原始资料与诊断信息，不硬造题目
+                const figureImages =
+                  regions?.regions.filter((r) => r.type === 'image' && r.imgPath).length ?? 0
+                const capability: ImportCapability =
+                  useStructured && figureImages >= 5
+                    ? 'image-only-review'
+                    : 'unsupported-auto-structure'
+                directPreservation.push({
+                  sourceId: file.sourceId,
+                  relativePath: file.relativePath,
+                  capability,
+                  summary: CAPABILITY_LABELS[capability],
+                  docs: [
+                    {
+                      id: `kb-u${hash(file.relativePath).slice(0, 19)}`,
+                      title: '保留原始资料 · 未能自动结构化',
+                      markdown: [
+                        '---',
+                        'kind: "document"',
+                        'category: "原始资料"',
+                        'generatedBy: "direct-import"',
+                        '---',
+                        '',
+                        '# 保留原始资料',
+                        '',
+                        capability === 'image-only-review'
+                          ? '本资料主要内容为图片，系统已保留全部页面图片与 OCR 文本，不自动生成可发布题目。'
+                          : '当前资料无法可靠结构化，系统仅保留原始资料与诊断信息。',
+                        '',
+                        '## 转换文本（节选）',
+                        '',
+                        raw.slice(0, 2000)
+                      ].join('\n'),
+                      warnings: [
+                        CAPABILITY_LABELS[capability],
+                        '原始 PDF、OCR 文本与页面图片均已保留，请人工处理后入库。'
+                      ]
+                    }
+                  ]
+                })
+                file.state = 'ready'
+                file.message = `${CAPABILITY_LABELS[capability]} · 原始资料已保留`
               } else {
+                const capability = classifyFileCapability({
+                  structured: useStructured,
+                  questionCount: questions.length,
+                  completeCount: textUsable,
+                  tableCount: tables.tables,
+                  numericAnomalies: numeric.count,
+                  graphicCandidate: false,
+                  figureImages: 0,
+                  solutionMarks
+                })
                 directBooks.push({
                   sourceId: file.sourceId,
                   relativePath: file.relativePath,
                   questions,
                   groups: parseAnswerGroups(directLines),
-                  qualityWarnings
+                  qualityWarnings,
+                  capability
                 })
                 file.state = 'ready'
-                file.message = `题本：切出 ${questions.length} 题，批次结束后自动合并发布`
+                file.message = `${CAPABILITY_LABELS[capability]} · 切出 ${questions.length} 题，批次结束后自动合并发布`
               }
             }
           } else if (job.options.mode === 'convert-only') {
@@ -1463,6 +1583,46 @@ export class KnowledgeBuilderService {
         const targetRoot = activeVault.isBuiltin ? this.managedVaultDirectory : activeVault.path
         const existingSignatures = this.vaults.questionSignatures(targetRoot)
         const batchSeen = new Set<string>()
+        // 能力边界保留通道：图推/图片题/无法结构化的资料——不生成题目，保留原始资料进人工审核
+        for (const preserved of directPreservation) {
+          const bookFile = job.files.find((file) => file.sourceId === preserved.sourceId)
+          let preservedStaged = 0
+          for (const doc of preserved.docs) {
+            if (batchSeen.has(doc.id)) {
+              skippedDuplicate += 1
+              continue
+            }
+            batchSeen.add(doc.id)
+            const artifact: StoredArtifact = {
+              id: doc.id,
+              jobId: job.id,
+              sourceId: preserved.sourceId,
+              sourcePath: preserved.relativePath,
+              relativeSourcePath: preserved.relativePath,
+              kind: 'document',
+              subject,
+              title: safeTitle(doc.title, doc.id),
+              category: '原始资料',
+              confidence: 1,
+              generatedBy: 'direct-import',
+              status: 'pending',
+              warnings: doc.warnings,
+              preview: doc.title,
+              markdown: doc.markdown,
+              evidenceExcerpt: doc.title,
+              capability: preserved.capability
+            }
+            this.saveArtifact(job, artifact)
+            if (!job.artifactIds.includes(artifact.id)) job.artifactIds.push(artifact.id)
+            staged += 1
+            preservedStaged += 1
+          }
+          if (bookFile) {
+            bookFile.state = 'ready'
+            bookFile.artifactCount = preservedStaged
+            bookFile.message = preserved.summary
+          }
+        }
         for (const book of directBooks) {
           const bookFile = job.files.find((file) => file.sourceId === book.sourceId)
           if (book.graphic) {
@@ -1495,7 +1655,8 @@ export class KnowledgeBuilderService {
                 ],
                 preview: item.stem.slice(0, 180),
                 markdown: directQuestionMarkdown(item),
-                evidenceExcerpt: item.stem.slice(0, 80)
+                evidenceExcerpt: item.stem.slice(0, 80),
+                capability: 'graphic-review'
               }
               this.saveArtifact(job, artifact)
               if (!job.artifactIds.includes(artifact.id)) job.artifactIds.push(artifact.id)
@@ -1596,6 +1757,7 @@ export class KnowledgeBuilderService {
                 ...(offsetAdjusted ? ['答案已通过相似度校正，建议抽查'] : []),
                 ...(item.cleanupWarnings ?? [])
               ],
+              capability: book.capability,
               preview: item.stem.slice(0, 180),
               markdown,
               evidenceExcerpt: item.stem.slice(0, 80)

@@ -298,7 +298,8 @@ async function initialize(): Promise<void> {
         return knowledgeBuilder.reviewArtifact(
           request.params.jobId,
           request.params.artifactId,
-          request.params.status
+          request.params.status,
+          request.params.confirmHumanReview
         )
       case 'knowledgeBuilder.artifacts.reviewMany':
         return knowledgeBuilder.reviewArtifacts(
