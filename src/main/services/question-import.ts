@@ -90,6 +90,9 @@ export function toLines(raw: string): string[] {
       // 任意两个波浪线之间的解析会被整段划掉——统一替换为全角～（中文区间标准写法），
       // 读感不变且彻底脱离 Markdown 触发条件
       .map((line) => line.replace(/~+/g, '～'))
+      // 解析册每套末尾印的「【全篇答案】CBADD」汇总行会扫进最后一题的解析，
+      // 剥掉标记与答案字母（行内其他内容保留，独立成行则整行过滤）
+      .map((line) => line.replace(/【全篇答案】[A-D]{2,}/g, '').trim())
       .filter(Boolean)
   )
 }

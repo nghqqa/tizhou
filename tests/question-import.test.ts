@@ -1018,3 +1018,18 @@ describe('OCR 波浪线噪声收敛', () => {
     expect(lines[1]).toContain('～1700～亿元')
   })
 })
+
+describe('全篇答案汇总行剥离', () => {
+  it('行尾的【全篇答案】CBADD 被剥掉，行内其余内容保留；独立成行则整行过滤', () => {
+    const lines = toLines(
+      [
+        '图2016～2021年全国数据及互联网业务收入发展情况【全篇答案】CBADD',
+        '【全篇答案】BDADC',
+        '正常解析内容'
+      ].join('\n')
+    )
+    expect(lines).toHaveLength(2)
+    expect(lines[0]).toBe('图2016～2021年全国数据及互联网业务收入发展情况')
+    expect(lines[1]).toBe('正常解析内容')
+  })
+})
