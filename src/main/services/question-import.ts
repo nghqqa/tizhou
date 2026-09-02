@@ -2,10 +2,13 @@
 // 版式假设来自实测的花生/四海/超格系题本：套标题 + 「N. 题干 + A-D 选项」+ 解析册【参考答案】标记块，
 // 或书尾「第N篇 + 1-5:BBDBC」分组答案页。
 import { createHash } from 'node:crypto'
+import { quarantineNumberStreamLine, stripStructuralNoise } from './import-quality'
 
 export interface DirectOption {
   key: string
   text: string
+  /** 图形题选项图片（images/ 相对路径）；图片选项允许 text 为空 */
+  image?: string
 }
 
 export interface ParsedQuestion {
@@ -82,19 +85,19 @@ const ESSAY_LEADER_LINE = /^[.。…·•]{2,}\s*\d{0,4}$/
 const ESSAY_PAGE_NUMBER = /^\d{1,4}$/
 
 export function toLines(raw: string): string[] {
-  return (
-    raw
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      // OCR 把 ≈ 与数值区间都识别成半角 ~，而 GFM 单双波浪线（~/~~）都是删除线语法，
-      // 任意两个波浪线之间的解析会被整段划掉——统一替换为全角～（中文区间标准写法），
-      // 读感不变且彻底脱离 Markdown 触发条件
-      .map((line) => line.replace(/~+/g, '～'))
-      // 解析册每套末尾印的「【全篇答案】CBADD」汇总行会扫进最后一题的解析，
-      // 剥掉标记与答案字母（行内其他内容保留，独立成行则整行过滤）
-      .map((line) => line.replace(/【全篇答案】[A-D]{2,}/g, '').trim())
-      .filter(Boolean)
-  )
+  const lines = raw
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    // OCR 把 ≈ 与数值区间都识别成半角 ~，而 GFM 单双波浪线（~/~~）都是删除线语法，
+    // 任意两个波浪线之间的解析会被整段划掉——统一替换为全角～（中文区间标准写法），
+    // 读感不变且彻底脱离 Markdown 触发条件
+    .map((line) => line.replace(/~+/g, '～'))
+    // 解析册每套末尾印的「【全篇答案】CBADD」汇总行会扫进最后一题的解析，
+    // 剥掉标记与答案字母（行内其他内容保留，独立成行则整行过滤）
+    .map((line) => line.replace(/【全篇答案】[A-D]{2,}/g, '').trim())
+    .filter(Boolean)
+  // 「请回答1～5题」等组题指引行不是题干也不是材料——过滤（不允许当普通题干）
+  return stripStructuralNoise(lines).lines
 }
 // 书首目录过滤（双通道规则）：
 // 题本/解析册常在开头整页印「练习题01套…练习题30套」目录，使按序递增的套号状态机在
@@ -399,7 +402,8 @@ export function parseSolutionBook(
       inExplanation = true
       continue
     }
-    if (inExplanation) current.explanation += (current.explanation ? '\n' : '') + line
+    if (inExplanation)
+      current.explanation += (current.explanation ? '\n' : '') + quarantineNumberStreamLine(line)
     else excerptLines.push(line)
   }
   return solutions
@@ -852,7 +856,16 @@ export function directQuestionMarkdown(question: DirectQuestion): string {
     '',
     ...(question.material ? ['## 材料', '', question.material, ''] : []),
     ...(question.options.length
-      ? ['## 选项', '', ...question.options.map((option) => `${option.key}. ${option.text}`), '']
+      ? [
+          '## 选项',
+          '',
+          ...question.options.map((option) =>
+            option.image
+              ? `${option.key}. ${option.text ? `${option.text} ` : ''}![选项${option.key}](${option.image})`
+              : `${option.key}. ${option.text}`
+          ),
+          ''
+        ]
       : []),
     '## 答案',
     '',

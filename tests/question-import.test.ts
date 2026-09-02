@@ -1033,3 +1033,23 @@ describe('全篇答案汇总行剥离', () => {
     expect(lines[1]).toBe('正常解析内容')
   })
 })
+
+describe('解析数字流隔离', () => {
+  it('解析里的坐标轴数字流替换为占位标记', () => {
+    const lines = toLines(
+      [
+        '1. 甲比乙多多少：',
+        '【参考答案】A',
+        '【题型与文段类型】简单计算',
+        '【实战解析】',
+        '3488 3793 4000 4350 5210 6110 7210 8310',
+        '则甲比乙多 10%。'
+      ].join('\n')
+    )
+    const solutions = parseSolutionBook(lines)
+    const explanation = solutions.get('1-1')?.explanation ?? ''
+    expect(explanation).toContain('图表数据区已隔离')
+    expect(explanation).toContain('则甲比乙多 10%')
+    expect(explanation).not.toContain('3488')
+  })
+})

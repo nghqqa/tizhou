@@ -207,6 +207,66 @@ def normalize_rapiddoc_markdown(text: str) -> str:
         out_lines.append(line)
     return '\n'.join(out_lines)
 
+def extract_regions(result) -> tuple[list, int]:
+    """从 RapidDoc 输出提取版面块（类型/页码/坐标/图片路径/文本）。
+
+    content_list_json 是阅读序的块列表，块带 type（text/image/table/discarded）、
+    page_idx 与 bbox。discarded 即版面模型判定弃置的水印/页眉页脚。
+    """
+    blocks = getattr(result, 'content_list_json', None)
+    if not isinstance(blocks, list):
+        return [], 0
+    regions = []
+    pages = 0
+    for block in blocks:
+        if not isinstance(block, dict):
+            continue
+        page = int(block.get('page_idx') or 0)
+        pages = max(pages, page + 1)
+        regions.append({
+            'type': str(block.get('type') or 'text'),
+            'page': page,
+            'bbox': [round(float(v)) for v in (block.get('bbox') or []) if isinstance(v, (int, float))],
+            'imgPath': str(block.get('img_path') or ''),
+            'text': str(block.get('text') or '')[:200],
+        })
+    return regions, pages
+
+
+def edge_noise_strings(regions: list) -> set:
+    """跨页重复的页眉/页脚与 discarded 水印文本。
+
+    只删「重复出现 + 位于页面边缘/被版面模型弃置」的文本：discarded 块文本
+    （≥3 字符）+ 在 ≥3 个不同页面顶部（y1<160）重复出现的短文本。
+    正文中的品牌名、出处不在此列（不满足跨页边缘重复条件）。
+    """
+    from collections import Counter
+    noise = {r['text'].strip() for r in regions
+             if r['type'] == 'discarded' and len(r['text'].strip()) >= 3}
+    top_texts = Counter()
+    for r in regions:
+        bbox = r.get('bbox') or []
+        if r['type'] == 'text' and len(bbox) == 4:
+            y1 = bbox[3]
+            if y1 < 160 and 3 <= len(r['text'].strip()) <= 40:
+                top_texts[r['text'].strip()] += 1
+    noise.update(text for text, count in top_texts.items() if count >= 3)
+    return noise
+
+
+def strip_edge_noise(markdown: str, regions: list) -> tuple[str, int, list]:
+    """从 markdown 中剥离边缘噪声文本，返回（新文本，剥离次数，样本）。"""
+    removed = 0
+    samples = []
+    for text in sorted(edge_noise_strings(regions), key=len, reverse=True):
+        occurrences = markdown.count(text)
+        if occurrences:
+            markdown = markdown.replace(text, '')
+            removed += occurrences
+            samples.append(text)
+    return markdown, removed, samples[:10]
+
+
 def run_structured(source: Path, output: Path) -> int:
     try:
         from rapid_doc.main import RapidDoc
@@ -225,6 +285,8 @@ def run_structured(source: Path, output: Path) -> int:
                    image_writer=FileBasedDataWriter(str(images_dir)))
     result = doc(str(source))
     markdown = normalize_rapiddoc_markdown(result.markdown)
+    regions, region_pages = extract_regions(result)
+    markdown, removed_noise, noise_samples = strip_edge_noise(markdown, regions)
     output.write_text(markdown, encoding='utf-8')
     # RapidDoc 把图片写进 <output_dir>/<源名>/auto/images/，而 markdown 里的引用是
     # images/<hash>.png（相对输出目录）——把散落的图片收拢到 images/，使引用与文件对齐
@@ -232,16 +294,33 @@ def run_structured(source: Path, output: Path) -> int:
         for scattered in parent.glob(pattern):
             if scattered.is_file():
                 shutil.copy2(str(scattered), str(images_dir / scattered.name))
+    # 版面块清单随图片归档走缓存（命中时随 images/ 一起恢复），图推绑定与质量评估依赖
+    table_regions = sum(1 for r in regions if r['type'] == 'table')
+    image_regions = sum(1 for r in regions if r['type'] == 'image' and r['imgPath'])
+    discarded_regions = sum(1 for r in regions if r['type'] == 'discarded')
+    try:
+        (images_dir / '_regions.json').write_text(json.dumps({
+            'pages': region_pages,
+            'regions': regions,
+            'removedNoise': removed_noise,
+            'noiseSamples': noise_samples,
+        }, ensure_ascii=False), encoding='utf-8')
+    except Exception:
+        pass
     total_pages = 0
     try:
         import pypdfium2 as pdfium_mod
         total_pages = len(pdfium_mod.PdfDocument(str(source)))
     except Exception:
         pass
-    report({'done': True, 'structured': True, 'characters': len(markdown), 'totalPages': total_pages,
+    report({'done': True, 'structured': True, 'characters': len(markdown),
+            'totalPages': total_pages,
             'textLayerPages': 0, 'ocrPages': total_pages, 'emptyPages': 0, 'ocrLineCount': 0,
             'averageConfidence': None, 'lowConfidenceLines': 0, 'removedPageNumbers': 0,
-            'warnings': ['结构解析模式：表格已还原为 Markdown 表格，图片保真存至 images/ 目录']})
+            'tableRegions': table_regions, 'figureRegions': image_regions,
+            'discardedRegions': discarded_regions, 'removedNoiseLines': removed_noise,
+            'warnings': ['结构解析模式：表格已还原为 Markdown 表格，图片保真存至 images/ 目录'
+                         + (f'，已剥离页眉/水印噪声 {removed_noise} 处' if removed_noise else '')]})
     return 0
 
 def main() -> int:

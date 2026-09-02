@@ -5,6 +5,8 @@ export type Difficulty = 1 | 2 | 3 | 4 | 5
 export interface QuestionOption {
   key: string
   text: string
+  /** 图形题选项图片（images/ 相对路径）；图片选项允许 text 为空 */
+  image?: string
 }
 
 export interface QuestionPaperRef {
@@ -155,12 +157,21 @@ export interface OcrQualityReport {
   ocrPages: number
   emptyPages: number
   ocrLineCount: number
+  /** 文字识别置信度（逐页 OCR 平均字符置信度；结构解析无字符级置信度时缺省） */
   averageConfidence?: number
   lowConfidenceLines: number
   removedPageNumbers: number
   warnings: string[]
   /** 结构解析模式产出（表格还原 + 图片保真）；逐页 OCR 无此标记 */
   structured?: boolean
+  /** 结构解析识别的表格区域数 */
+  tableRegions?: number
+  /** 结构解析保存的图片区域数 */
+  figureRegions?: number
+  /** 版面模型弃置的水印/页眉页脚区域数 */
+  discardedRegions?: number
+  /** 已剥离的页眉/水印文本出现次数 */
+  removedNoiseLines?: number
 }
 
 export interface KnowledgeBuildFile {

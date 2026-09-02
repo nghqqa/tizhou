@@ -178,3 +178,57 @@ describe('VaultService', () => {
     expect(database.listQuestions({ onlyFavorite: true })[0]?.id).toBe(firstQuestion.id)
   })
 })
+
+describe('图形题选项（图片选项）', () => {
+  let directory: string
+  let vaultDirectory: string
+  let database: DatabaseService
+  let vaults: VaultService
+
+  beforeEach(() => {
+    directory = mkdtempSync(join(tmpdir(), 'tizhou-vault-graphic-'))
+    vaultDirectory = join(directory, 'vault')
+    mkdirSync(vaultDirectory)
+    database = new DatabaseService(
+      join(directory, 'workbench.sqlite'),
+      directory,
+      join(directory, 'backups')
+    )
+    vaults = new VaultService(database)
+  })
+
+  afterEach(() => {
+    database.close()
+    rmSync(directory, { recursive: true, force: true })
+  })
+
+  it('text 为空但 image 存在的选项入库时不丢失', () => {
+    const md = directQuestionMarkdown({
+      id: 'kb-gtest0000000000001',
+      set: 1,
+      num: 1,
+      subject: 'xingce',
+      category: '图形推理',
+      tags: ['图形推理'],
+      sourceFile: '图推.pdf',
+      questionType: 'single',
+      difficulty: 3,
+      stem: '从所给的四个选项中，选择最合适的一个填入问号处：\n![](images/stem.png)',
+      options: [
+        { key: 'A', text: '', image: 'images/a.png' },
+        { key: 'B', text: '见图', image: 'images/b.png' },
+        { key: 'C', text: '普通文本选项' }
+      ],
+      answer: ['A'],
+      explanation: '图形规律解析。'
+    })
+    writeFileSync(join(vaultDirectory, 'graphic.md'), md, 'utf8')
+    const result = vaults.connect(vaultDirectory)
+    expect(result.vault.questionCount).toBe(1)
+    const question = database.listQuestions()[0]!
+    expect(question.options[0]).toEqual({ key: 'A', text: '', image: 'images/a.png' })
+    expect(question.options[1]).toEqual({ key: 'B', text: '见图', image: 'images/b.png' })
+    expect(question.options[2]).toEqual({ key: 'C', text: '普通文本选项' })
+    expect(question.stem).toContain('images/stem.png')
+  })
+})

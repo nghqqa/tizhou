@@ -67,6 +67,9 @@ function OcrQualitySummary({ report }: { report: OcrQualityReport }): React.JSX.
   const parts: string[] = []
   if (report.structured) {
     parts.push(`结构解析 ${report.ocrPages} 页`)
+    if (report.tableRegions) parts.push(`表格 ${report.tableRegions}`)
+    if (report.figureRegions) parts.push(`图形 ${report.figureRegions}`)
+    if (report.removedNoiseLines) parts.push(`剥离噪声 ${report.removedNoiseLines}`)
     parts.push('表格还原 · 图片保真')
   } else {
     if (report.textLayerPages > 0) parts.push(`文字层 ${report.textLayerPages} 页`)
@@ -1008,7 +1011,9 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
                           : `置信度 ${Math.round(item.confidence * 100)}%`}
                       </small>
                       {item.warnings.length > 0 && (
-                        <small className="warning">⚠ {item.warnings.length}</small>
+                        <small className="warning" title={item.warnings.join('\n')}>
+                          ⚠ {item.warnings[0]}
+                        </small>
                       )}
                     </span>
                     <strong>{item.title}</strong>

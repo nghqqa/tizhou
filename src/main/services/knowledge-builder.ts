@@ -42,6 +42,12 @@ import {
   setRapidocrDmlEnabled
 } from './ocr-accelerator'
 import { mergeByDocumentOrder } from './direct-sequential-merge'
+import { loadStructuredRegions, scanNumericAnomalies, scanTableQuality } from './import-quality'
+import {
+  extractGraphicQuestions,
+  isGraphicCandidate,
+  mergeGraphicQuestions
+} from './graphic-import'
 import {
   envPipIndexUrl,
   mirrorById,
@@ -1145,6 +1151,15 @@ export class KnowledgeBuilderService {
         relativePath: string
         questions: ReturnType<typeof parseQuestionBook>
         groups: Map<string, string>
+        /** 图形推理图片优先通道产出（题本为图推时走专用合并） */
+        graphic?: {
+          items: ReturnType<typeof mergeGraphicQuestions>['items']
+          itemWarnings: string[][]
+          notes: string[]
+          summary: string
+        }
+        /** 书级质量警告（数字异常/表格残缺/噪声剥离），随产物落审核页 */
+        qualityWarnings?: string[]
       }> = []
       const directEssays: Array<{
         sourceId: string
@@ -1154,6 +1169,9 @@ export class KnowledgeBuilderService {
       // 无客观题书的面板提示线索：全文含训练式标题的行数（用于收尾时给出模式建议）
       let trainingMarkers = 0
       const directSolutions = new Map<string, ParsedSolution>()
+      const subject = job.options.subject === 'auto' ? 'xingce' : job.options.subject
+      const subjectLabel =
+        subject === 'xingce' ? '行测' : subject === 'shenlun' ? '申论' : '公共知识'
       for (const entry of job.files) {
         job = this.loadJob(id)
         if (job.cancelRequested) break
@@ -1311,6 +1329,21 @@ export class KnowledgeBuilderService {
           if (job.options.mode === 'direct') {
             const directLines = toLines(raw)
             const solutionMarks = (raw.match(/【参考答案(及正确率)?】/g) ?? []).length
+            // 质量模型：数字异常/表格结构/噪声剥离按书统计——只告警不静默修正
+            const numeric = scanNumericAnomalies(directLines)
+            const tables = scanTableQuality(raw)
+            const qualityWarnings = [
+              ...(numeric.count ? [`数字异常 ${numeric.count} 处，请人工核对`] : []),
+              ...(tables.tables && tables.ragged
+                ? [`表格列数不一致 ${tables.ragged}/${tables.tables}，请对照原图`]
+                : []),
+              ...(ocrQuality?.removedNoiseLines
+                ? [`已剥离页眉/水印文本 ${ocrQuality.removedNoiseLines} 处`]
+                : [])
+            ]
+            if (ocrQuality)
+              for (const warning of qualityWarnings)
+                if (!ocrQuality.warnings.includes(warning)) ocrQuality.warnings.push(warning)
             if (solutionMarks >= 3) {
               const solutions = parseSolutionBook(directLines)
               for (const [key, value] of solutions) directSolutions.set(key, value)
@@ -1323,7 +1356,48 @@ export class KnowledgeBuilderService {
               // 通道按产出规模择优：申论书的 OCR 残渣常让客观题解析器切出个位数伪题，
               // 按"客观题>0 就走客观题"会把整本申论错送管线（实测夸夸刷 58 单元 vs 3 伪题）。
               // 反向同理，行测题本的偶发训练字样不会盖过数百道客观题。
-              if (essays.units.length >= questions.length && essays.units.length > 0) {
+              // 图形推理图片优先通道：题号+图片页充足而文字选项通道失灵时走图推绑定，
+              // 图片选项不再因没有文字标签而整批丢弃（低置信度带警告进人工审核）
+              const regions = useStructured
+                ? loadStructuredRegions(join(dirname(rawPath), 'images'))
+                : undefined
+              const graphic =
+                regions && isGraphicCandidate(regions)
+                  ? extractGraphicQuestions(regions)
+                  : undefined
+              const textUsable = questions.filter((question) => question.options.length >= 2).length
+              if (
+                graphic &&
+                graphic.questions.length >= 3 &&
+                textUsable < graphic.questions.length
+              ) {
+                const merged = mergeGraphicQuestions(
+                  graphic.questions,
+                  directSolutions,
+                  {
+                    subject,
+                    category: `${subjectLabel}-直导题库`,
+                    sourceFile: file.relativePath,
+                    tags: job.options.tags
+                  },
+                  graphic.notes
+                )
+                directBooks.push({
+                  sourceId: file.sourceId,
+                  relativePath: file.relativePath,
+                  questions: graphic.questions,
+                  groups: parseAnswerGroups(directLines),
+                  graphic: {
+                    items: merged.items,
+                    itemWarnings: merged.itemWarnings,
+                    notes: graphic.notes,
+                    summary: `图推：切出 ${graphic.questions.length} 题（整图版式 ${graphic.singleFigureGroups}、四图绑定 ${graphic.boundOptionGroups}、待人工核对 ${graphic.incompleteOptionQuestions}、未绑定图片 ${graphic.unboundImages}）`
+                  },
+                  qualityWarnings
+                })
+                file.state = 'ready'
+                file.message = `题本：${graphic.questions.length} 题走图形通道，批次结束后生成待审核产物`
+              } else if (essays.units.length >= questions.length && essays.units.length > 0) {
                 directEssays.push({
                   sourceId: file.sourceId,
                   relativePath: file.relativePath,
@@ -1336,7 +1410,8 @@ export class KnowledgeBuilderService {
                   sourceId: file.sourceId,
                   relativePath: file.relativePath,
                   questions,
-                  groups: parseAnswerGroups(directLines)
+                  groups: parseAnswerGroups(directLines),
+                  qualityWarnings
                 })
                 file.state = 'ready'
                 file.message = `题本：切出 ${questions.length} 题，批次结束后自动合并发布`
@@ -1383,22 +1458,63 @@ export class KnowledgeBuilderService {
         let skippedMisaligned = 0
         let skippedDuplicate = 0
         let abortedBooks = 0
-        const subject = job.options.subject === 'auto' ? 'xingce' : job.options.subject
-        const subjectLabel =
-          subject === 'xingce' ? '行测' : subject === 'shenlun' ? '申论' : '公共知识'
         // 去重基准：当前活动题库（发布目标与之一致）
         const activeVault = this.vaults.ensureBuiltinVault()
         const targetRoot = activeVault.isBuiltin ? this.managedVaultDirectory : activeVault.path
         const existingSignatures = this.vaults.questionSignatures(targetRoot)
         const batchSeen = new Set<string>()
         for (const book of directBooks) {
+          const bookFile = job.files.find((file) => file.sourceId === book.sourceId)
+          if (book.graphic) {
+            // 图形通道：不套用客观题「无答案即丢」的门槛——未配到答案的题目
+            // 带警告进入待审核，由人工决定是否发布（不静默删除）
+            let graphicStaged = 0
+            for (const [index, item] of book.graphic.items.entries()) {
+              const signature = directSignature(item.stem, '', item.options[0]?.text ?? '')
+              if (existingSignatures.has(signature) || batchSeen.has(signature)) {
+                skippedDuplicate += 1
+                continue
+              }
+              batchSeen.add(signature)
+              const artifact: StoredArtifact = {
+                id: item.id,
+                jobId: job.id,
+                sourceId: book.sourceId,
+                sourcePath: book.relativePath,
+                relativeSourcePath: book.relativePath,
+                kind: 'question',
+                subject,
+                title: safeTitle(item.stem.slice(0, 60), '未命名题目'),
+                category: item.category,
+                confidence: 1,
+                generatedBy: 'direct-import',
+                status: 'pending',
+                warnings: [
+                  ...(book.qualityWarnings ?? []),
+                  ...(book.graphic.itemWarnings[index] ?? [])
+                ],
+                preview: item.stem.slice(0, 180),
+                markdown: directQuestionMarkdown(item),
+                evidenceExcerpt: item.stem.slice(0, 80)
+              }
+              this.saveArtifact(job, artifact)
+              if (!job.artifactIds.includes(artifact.id)) job.artifactIds.push(artifact.id)
+              staged += 1
+              graphicStaged += 1
+            }
+            if (bookFile) {
+              bookFile.state = 'ready'
+              bookFile.artifactCount = graphicStaged
+              bookFile.message = `${book.graphic.summary} · 入库待审核 ${graphicStaged} 题`
+            }
+            continue
+          }
           let merged = mergeDirectQuestions(book.questions, directSolutions, book.groups, {
             subject,
             category: `${subjectLabel}-直导题库`,
             sourceFile: book.relativePath,
             tags: job.options.tags
           })
-          const bookFile = job.files.find((file) => file.sourceId === book.sourceId)
           // 顺序配对兜底：套号钥匙配对失败（中止或近零产出）而解析册有答案时，
           // 按文档顺序位置配对，并用题干相似度逐对验证——两本书的题目顺序天然一致
           if ((merged.aborted || merged.items.length === 0) && directSolutions.size > 0) {
@@ -1456,7 +1572,7 @@ export class KnowledgeBuilderService {
               confidence: 1,
               generatedBy: 'direct-import',
               status: 'pending',
-              warnings: [],
+              warnings: [...(book.qualityWarnings ?? [])],
               preview: item.stem.slice(0, 180),
               markdown,
               evidenceExcerpt: item.stem.slice(0, 80)

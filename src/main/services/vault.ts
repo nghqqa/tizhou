@@ -74,7 +74,9 @@ function parseOptions(value: unknown, body: string): QuestionOption[] {
         const record = item as Record<string, unknown>
         const key = normalizeText(record.key || record.label) || String.fromCharCode(65 + index)
         const text = normalizeText(record.text || record.value || record.content)
-        return text ? [{ key: key.toUpperCase(), text }] : []
+        // 图形题选项：text 为空但 image 存在时保留（不因无文字丢选项）
+        const image = normalizeText(record.image)
+        return text || image ? [{ key: key.toUpperCase(), text, ...(image ? { image } : {}) }] : []
       }
       return []
     })

@@ -25,6 +25,14 @@ export interface OcrQualityPayload {
   characters: number
   /** 结构解析模式产出（表格还原 + 图片保真），用于缓存条目正名 */
   structured?: boolean
+  /** 结构解析识别的表格区域数 */
+  tableRegions?: number
+  /** 结构解析保存的图片区域数 */
+  figureRegions?: number
+  /** 版面模型弃置的水印/页眉页脚区域数 */
+  discardedRegions?: number
+  /** 已剥离的页眉/水印文本出现次数 */
+  removedNoiseLines?: number
 }
 
 export type OcrWorkerPayload = OcrProgressEvent | OcrQualityPayload
@@ -83,7 +91,17 @@ export function parseOcrWorkerPayload(payload: unknown): OcrWorkerPayload | unde
       removedPageNumbers: nonNegInt(record.removedPageNumbers),
       warnings: sanitizeWarnings(record.warnings),
       characters: nonNegInt(record.characters),
-      ...(record.structured === true ? { structured: true } : {})
+      ...(record.structured === true ? { structured: true } : {}),
+      ...(nonNegInt(record.tableRegions) ? { tableRegions: nonNegInt(record.tableRegions) } : {}),
+      ...(nonNegInt(record.figureRegions)
+        ? { figureRegions: nonNegInt(record.figureRegions) }
+        : {}),
+      ...(nonNegInt(record.discardedRegions)
+        ? { discardedRegions: nonNegInt(record.discardedRegions) }
+        : {}),
+      ...(nonNegInt(record.removedNoiseLines)
+        ? { removedNoiseLines: nonNegInt(record.removedNoiseLines) }
+        : {})
     }
   }
 
