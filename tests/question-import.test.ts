@@ -1013,8 +1013,8 @@ describe('OCR 波浪线噪声收敛', () => {
         '2022年第四季度=6292-4566~~1700~~亿元、2023年第三季度~~2915-1443~~=1500亿元'
       ].join('\n')
     )
-    expect(lines[0]).not.toContain('~~')
-    expect(lines[1]).not.toContain('~~')
-    expect(lines[1]).toContain('~1700~亿元')
+    expect(lines[0]).not.toContain('~')
+    expect(lines[1]).not.toContain('~')
+    expect(lines[1]).toContain('～1700～亿元')
   })
 })

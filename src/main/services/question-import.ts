@@ -82,13 +82,16 @@ const ESSAY_LEADER_LINE = /^[.。…·•]{2,}\s*\d{0,4}$/
 const ESSAY_PAGE_NUMBER = /^\d{1,4}$/
 
 export function toLines(raw: string): string[] {
-  return raw
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    // OCR 常把 ≈/波浪符号识别成 ~~，而 ~~ 在 GFM 里是删除线语法——
-    // 收敛为单字符，避免解析文本中两个约等号之间的内容被整段划掉
-    .map((line) => line.replace(/~{2,}/g, '~'))
-    .filter(Boolean)
+  return (
+    raw
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      // OCR 把 ≈ 与数值区间都识别成半角 ~，而 GFM 单双波浪线（~/~~）都是删除线语法，
+      // 任意两个波浪线之间的解析会被整段划掉——统一替换为全角～（中文区间标准写法），
+      // 读感不变且彻底脱离 Markdown 触发条件
+      .map((line) => line.replace(/~+/g, '～'))
+      .filter(Boolean)
+  )
 }
 // 书首目录过滤（双通道规则）：
 // 题本/解析册常在开头整页印「练习题01套…练习题30套」目录，使按序递增的套号状态机在
