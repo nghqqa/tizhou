@@ -1,42 +1,42 @@
 {
- "generatedAt": "2026-09-02T10:51:42.419Z",
- "ziliao": {
-  "totalPages": 36,
-  "ocrPages": 36,
-  "characters": 46688,
-  "questions": 111,
-  "questionGroups": 6,
-  "tableRegions": 13,
-  "raggedTables": 4,
-  "numericAnomalyCount": 28,
-  "numberStreamLines": 4,
-  "removedNoiseLines": 0,
-  "structuralNoiseRemoved": 0,
-  "quanPianAnswerResidual": 0,
-  "stemOptionComplete": 110,
-  "solutionAnswers": 397,
-  "pairedWithAnswer": 71,
-  "pairingRate": 0.64
- },
- "tuitui": {
-  "totalPages": 73,
-  "figureImages": 208,
-  "textChannel": {
-   "questions": 20,
-   "withOptions": 1,
-   "dropped": 19
+  "generatedAt": "2026-09-02T11:29:22.361Z",
+  "ziliao": {
+    "totalPages": 36,
+    "ocrPages": 36,
+    "characters": 46688,
+    "questions": 111,
+    "questionGroups": 6,
+    "tableRegions": 13,
+    "raggedTables": 4,
+    "numericAnomalyCount": 28,
+    "numberStreamLines": 4,
+    "removedNoiseLines": 0,
+    "structuralNoiseRemoved": 0,
+    "quanPianAnswerResidual": 0,
+    "stemOptionComplete": 110,
+    "solutionAnswers": 160,
+    "pairedWithAnswer": 18,
+    "pairingRate": 0.16
   },
-  "graphicChannel": {
-   "detected": true,
-   "questions": 55,
-   "boundOptionGroups": 5,
-   "singleFigureGroups": 16,
-   "incompleteOptionQuestions": 33,
-   "unboundImages": 33,
-   "missingLabelOptions": 20,
-   "lowConfidence": 49,
-   "mdQuestionLines": 20
-  },
-  "workerNoiseStripped": 58
- }
+  "tuitui": {
+    "totalPages": 73,
+    "figureImages": 208,
+    "textChannel": {
+      "questions": 20,
+      "withOptions": 1,
+      "dropped": 19
+    },
+    "graphicChannel": {
+      "detected": true,
+      "questions": 55,
+      "boundOptionGroups": 5,
+      "singleFigureGroups": 16,
+      "incompleteOptionQuestions": 33,
+      "unboundImages": 33,
+      "missingLabelOptions": 20,
+      "lowConfidence": 49,
+      "mdQuestionLines": 20
+    },
+    "workerNoiseStripped": 58
+  }
 }

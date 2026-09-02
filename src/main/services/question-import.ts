@@ -2,7 +2,11 @@
 // 版式假设来自实测的花生/四海/超格系题本：套标题 + 「N. 题干 + A-D 选项」+ 解析册【参考答案】标记块，
 // 或书尾「第N篇 + 1-5:BBDBC」分组答案页。
 import { createHash } from 'node:crypto'
-import { quarantineNumberStreamLine, stripStructuralNoise } from './import-quality'
+import {
+  quarantineNumberStreamLine,
+  stripStructuralNoise,
+  stripWatermarkFragments
+} from './import-quality'
 
 export interface DirectOption {
   key: string
@@ -65,7 +69,7 @@ const OPTION_NO = /^([A-D])\s*[.、．]?\s*(.+)$/
 const ANSWER_MARK = /【参考答案】\s*([A-D]+)/
 const ANSWER_RATE_MARK = /【参考答案及正确率】\s*([A-D]+)(?:[，,]\s*(\d{1,3})\s*%)?/
 // 花生十三系解析册的加长变体：【参考答案及正确率】C，89%（正确率喂难度映射）
-const META_MARK = /【题型与文段类型】\s*(.+)/
+const META_MARK = /【题型(?:与文段类型|分类)】\s*(.+)/
 const EXPLAIN_MARK = /【实战解析】/
 const ORIGIN_MARK = /^[（(]\s*(\d{4})\s*年?\s*([^)）]*?)\s+(\d{1,3})\s*%\s*[)）]/
 const ANSWER_SECTION = /^参考答案$|^答案速查$/
@@ -96,8 +100,10 @@ export function toLines(raw: string): string[] {
     // 剥掉标记与答案字母（行内其他内容保留，独立成行则整行过滤）
     .map((line) => line.replace(/【全篇答案】[A-D]{2,}/g, '').trim())
     .filter(Boolean)
+  // 行内水印（公考最新资料/微信号/机构宣传片段）只剥离命中片段，出处与年份不动
+  const watermarkStripped = stripWatermarkFragments(lines)
   // 「请回答1～5题」等组题指引行不是题干也不是材料——过滤（不允许当普通题干）
-  return stripStructuralNoise(lines).lines
+  return stripStructuralNoise(watermarkStripped.lines).lines
 }
 // 书首目录过滤（双通道规则）：
 // 题本/解析册常在开头整页印「练习题01套…练习题30套」目录，使按序递增的套号状态机在
@@ -372,11 +378,27 @@ export function parseSolutionBook(
         expected = 2
         continue
       }
+      if (current && inExplanation) {
+        // 解析途中出现无序题号行：下一题块的重印题干（题号被 OCR 重排或跳号超限）——
+        // 终止当前块，重印内容不并入上一题的解析
+        current = null
+        inExplanation = false
+        excerptLines = []
+        continue
+      }
     }
     if (!current) continue
     const answer = line.match(ANSWER_MARK)
     const rateAnswer = line.match(ANSWER_RATE_MARK)
-    if (answer || (rateAnswer && !current.answer)) {
+    if (answer || rateAnswer) {
+      if (current && current.answer) {
+        // 当前块已有答案却又出现答案标记：下一题块的重印区已开始而题号行被 OCR
+        // 吞掉——终止当前块，下一题的题干/答案/解析不串入上一题
+        current = null
+        inExplanation = false
+        excerptLines = []
+        continue
+      }
       // 【参考答案】前的重印文本冻结为配对校验依据
       current.stemExcerpt = excerptLines.join('').slice(0, 160)
       excerptLines = []
@@ -708,6 +730,8 @@ export function mergeDirectQuestions(
   skippedIncomplete: number
   skippedMisaligned: number
   verifiable: number
+  verifiedPassed: number
+  offsetAdjustedSets: number
   aborted: boolean
 } {
   const items: DirectQuestion[] = []
@@ -773,7 +797,16 @@ export function mergeDirectQuestions(
   // 整书对齐率过低 → 题本与解析册疑似套号错位，中止该书导入（防止题目配错答案整批入库）
   const aborted =
     verifiable >= ALIGNMENT_MIN_VERIFIABLE && skippedMisaligned / verifiable > ALIGNMENT_ABORT_RATE
-  return { items, skippedNoAnswer, skippedIncomplete, skippedMisaligned, verifiable, aborted }
+  return {
+    items,
+    skippedNoAnswer,
+    skippedIncomplete,
+    skippedMisaligned,
+    verifiable,
+    verifiedPassed: verifiable - skippedMisaligned,
+    offsetAdjustedSets: 0,
+    aborted
+  }
 }
 
 function yamlQuote(value: string): string {
@@ -850,11 +883,12 @@ export function directQuestionMarkdown(question: DirectQuestion): string {
   ]
   const body = [
     '',
+    // 共享材料（含图表/表格）置顶：资料分析先看材料再看题，图表缺失一眼可见
+    ...(question.material ? ['## 共享材料', '', question.material, ''] : []),
     '# 题目',
     '',
     question.stem,
     '',
-    ...(question.material ? ['## 材料', '', question.material, ''] : []),
     ...(question.options.length
       ? [
           '## 选项',

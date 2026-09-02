@@ -1053,3 +1053,54 @@ describe('解析数字流隔离', () => {
     expect(explanation).not.toContain('3488')
   })
 })
+
+describe('解析块边界与内容分层', () => {
+  it('当前块已有答案时再出现答案标记 → 终止块，下一题内容不串入', () => {
+    const lines = toLines(
+      [
+        '1. 甲题干内容足够长了吧：',
+        '【参考答案】A',
+        '【实战解析】',
+        '甲的正确解析内容。',
+        '2. 乙题干内容也足够长了：',
+        'A. 选项一',
+        'B. 选项二',
+        '【参考答案及正确率】B，81%',
+        '【实战解析】',
+        '乙的解析。'
+      ].join('\n')
+    )
+    const solutions = parseSolutionBook(lines)
+    expect(solutions.get('1-1')?.explanation).not.toContain('乙')
+    expect(solutions.get('1-1')?.explanation).toContain('甲的正确解析')
+    expect(solutions.get('1-1')?.answer).toBe('A')
+    expect(solutions.get('1-2')?.answer).toBe('B')
+  })
+
+  it('行内 ≥3 个连续裸数字串被隔离成审计块，公式与带单位数字保留', () => {
+    const lines = toLines(
+      [
+        '1. 甲比乙多多少：',
+        '【参考答案】A',
+        '【实战解析】',
+        '2019 73.1% 7310 7310 则甲比乙多 10%。',
+        '年均增量 ≈ 6390- 5980 410 ≈100亿元，已知1.24 = 2.07。'
+      ].join('\n')
+    )
+    const solutions = parseSolutionBook(lines)
+    const explanation = solutions.get('1-1')?.explanation ?? ''
+    expect(explanation).toContain('图表数字串')
+    expect(explanation).toContain('2019 73.1% 7310 7310')
+    expect(explanation).toContain('则甲比乙多 10%')
+    expect(explanation).toContain('6390- 5980 410 ≈100亿元')
+    expect(explanation).toContain('已知1.24 = 2.07')
+  })
+
+  it('行内水印只剥离宣传片段，保留「答案为A。」', () => {
+    const lines = toLines(['答案为A。公考最新资料、更新进度微信SKA674 则甲为正确选项。'].join('\n'))
+    expect(lines[0]).not.toContain('公考最新资料')
+    expect(lines[0]).not.toContain('微信SKA674')
+    expect(lines[0]).toContain('答案为A。')
+    expect(lines[0]).toContain('则甲为正确选项。')
+  })
+})

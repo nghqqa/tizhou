@@ -46,17 +46,52 @@ export interface NumericAnomalies {
 
 const NUMERIC_TOKEN = /^[-+]?[\d,，]+(?:\.\d+)?[%％]?$/
 
-/** 数字流行判定：≥6 个纯数字词且占比 ≥60%（统计图坐标标签/表格残渣的典型形态） */
+/** 数字流行判定：≥6 个纯数字 token 且占比 ≥60%，且不含中文散文——
+ *  含中文的混排行走行内数字串隔离（保留散文、隔离数字串） */
 export function isNumberStreamLine(line: string): boolean {
+  if (/[\u4e00-\u9fff]/.test(line)) return false
   const tokens = line.split(/\s+/).filter(Boolean)
   if (tokens.length < 6) return false
   const numeric = tokens.filter((token) => NUMERIC_TOKEN.test(token)).length
   return numeric / tokens.length >= 0.6
 }
 
-/** 解析文本行隔离：数字流不静默删除，替换为占位标记提示对照原图 */
+/** 解析文本行隔离：整行数字流替换为占位标记；行内 ≥3 个连续裸数字 token 的
+ * 串以审计块保留原数字（不静默删除、不猜测语义）。公式与带单位数字不受影响
+ * （「6390- 5980 410 ≈100亿元」「已知1.24 = 2.07」等含运算符/单位的不命中）。 */
 export function quarantineNumberStreamLine(line: string): string {
-  return isNumberStreamLine(line) ? '> [图表数据区已隔离，建议对照原图核对数字]' : line
+  if (isNumberStreamLine(line)) return '> [图表数据区已隔离，建议对照原图核对数字]'
+  return line.replace(
+    /(?:[-+]?\d[\d,.]*%?[（(]?\s+){2,}[-+]?\d[\d,.]*%?[）)]?/g,
+    (match) => `\n> [图表数字串，OCR 无法确认语义，请对照原图]\n> ${match.trim()}\n`
+  )
+}
+
+const WATERMARK_PATTERNS = [
+  /公考最新资料[、，]?\s*更新进度微信\S*/g,
+  /微信SKA\d+/g,
+  /公众号[：:]\S+/g,
+  /超格学员专用/g,
+  /资料分析600[贴折]/g
+] as const
+
+/** 行内水印剥离：只删命中的机构宣传片段，题目出处/年份/地区/资料来源不动 */
+export function stripWatermarkFragments(lines: string[]): {
+  lines: string[]
+  removedFragments: number
+} {
+  let removedFragments = 0
+  const cleaned = lines.map((line) => {
+    let result = line
+    for (const pattern of WATERMARK_PATTERNS) {
+      result = result.replace(pattern, () => {
+        removedFragments += 1
+        return ''
+      })
+    }
+    return result.replace(/\s{2,}/g, ' ').trim()
+  })
+  return { lines: cleaned.filter(Boolean), removedFragments }
 }
 
 // 资料分析专用数字异常扫描：

@@ -22,6 +22,12 @@ export interface SequentialMergeResult {
   skippedNoAnswer: number
   skippedIncomplete: number
   skippedMisaligned: number
+  /** 重印片段相似度可验证的配对数 */
+  verified: number
+  /** 其中通过相似度校验的数量（0 时配对待确认） */
+  verifiedPassed: number
+  /** 套内错位被内容相似度校正的套数 */
+  offsetAdjustedSets: number
 }
 
 export function mergeByDocumentOrder(
@@ -50,14 +56,55 @@ export function mergeByDocumentOrder(
     else questionsBySet.set(question.set, [question])
   }
 
-  // 每套内按文档顺序位置配对（套内题号两边都从 1 递增）
+  // 每套内按文档顺序位置配对，但先做确定性错位校正：
+  // 两册套内题号可能整体漂移（题本从 1、解析册从 0 或吞号偏移），实测会整批配错。
+  // 对 -2..+2 的偏移分别计算「重印片段相似度通过数」，取最高者（并列取偏移 0）。
+  // 这是确定性的内容校正——不猜答案，只让相似度证据决定对位。
+  let verifiedTotal = 0
+  let verifiedPassedTotal = 0
+  let offsetAdjustedSets = 0
   for (const [set, questionList] of questionsBySet) {
     const solutionList = solutionsBySet.get(set) ?? []
-    const count = Math.min(questionList.length, solutionList.length)
+    const scorePair = (question: ParsedQuestion, solution: ParsedSolution): number | undefined => {
+      if (!solution.stemExcerpt) return undefined
+      const optionsText = question.options.map((option) => option.text).join(' ')
+      return Math.max(
+        alignmentScore(question.stem, solution.stemExcerpt),
+        alignmentScore(optionsText, solution.stemExcerpt)
+      )
+    }
+    let bestOffset = 0
+    let bestPassed = -1
+    for (const offset of [-2, -1, 0, 1, 2]) {
+      let passed = 0
+      let verified = 0
+      const count = Math.min(questionList.length, solutionList.length - Math.max(0, offset))
+      for (let index = 0; index < count; index += 1) {
+        const solution = solutionList[index + offset]
+        if (!solution) continue
+        const score = scorePair(questionList[index]!, solution)
+        if (score === undefined) continue
+        verified += 1
+        if (score >= 0.55) passed += 1
+      }
+      if (passed > bestPassed || (passed === bestPassed && offset === 0)) {
+        bestPassed = passed
+        bestOffset = offset
+      }
+    }
+    if (bestOffset !== 0 && bestPassed > 0) offsetAdjustedSets += 1
+    const count = Math.min(
+      questionList.length,
+      bestOffset >= 0 ? solutionList.length - bestOffset : solutionList.length
+    )
     for (let index = 0; index < count; index += 1) {
       const question = questionList[index]!
-      const solution = solutionList[index]!
+      const solution = solutionList[index + bestOffset]
       if (!question.stem || question.stem.length < 8 || question.options.length < 2) {
+        skippedIncomplete += 1
+        continue
+      }
+      if (!solution) {
         skippedIncomplete += 1
         continue
       }
@@ -66,15 +113,11 @@ export function mergeByDocumentOrder(
         skippedNoAnswer += 1
         continue
       }
-      if (solution.stemExcerpt) {
-        // 解析册的重印片段可能是题干，也可能是选项区/图表噪声——
-        // 题干或选项任一与重印片段相似即认定同题
-        const optionsText = question.options.map((option) => option.text).join(' ')
-        const score = Math.max(
-          alignmentScore(question.stem, solution.stemExcerpt),
-          alignmentScore(optionsText, solution.stemExcerpt)
-        )
-        if (score < 0.55) {
+      const score = scorePair(question, solution)
+      if (score !== undefined) {
+        verifiedTotal += 1
+        if (score >= 0.55) verifiedPassedTotal += 1
+        else {
           skippedMisaligned += 1
           continue
         }
@@ -121,5 +164,14 @@ export function mergeByDocumentOrder(
       paired += 1
     }
   }
-  return { items, paired, skippedNoAnswer, skippedIncomplete, skippedMisaligned }
+  return {
+    items,
+    paired,
+    skippedNoAnswer,
+    skippedIncomplete,
+    skippedMisaligned,
+    verified: verifiedTotal,
+    verifiedPassed: verifiedPassedTotal,
+    offsetAdjustedSets
+  }
 }

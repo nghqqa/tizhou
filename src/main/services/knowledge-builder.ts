@@ -1530,11 +1530,17 @@ export class KnowledgeBuilderService {
                 skippedNoAnswer: sequential.skippedNoAnswer,
                 skippedIncomplete: sequential.skippedIncomplete,
                 skippedMisaligned: sequential.skippedMisaligned,
-                verifiable: sequential.items.length,
+                verifiable: sequential.verified,
+                verifiedPassed: sequential.verifiedPassed,
+                offsetAdjustedSets: sequential.offsetAdjustedSets,
                 aborted: false
               }
               if (bookFile) {
-                bookFile.message = `套号配对失败，已按文档顺序配对 ${sequential.items.length} 题`
+                bookFile.message = `套号配对失败，已按文档顺序配对 ${sequential.items.length} 题${
+                  sequential.offsetAdjustedSets
+                    ? `（${sequential.offsetAdjustedSets} 套内错位已按相似度校正）`
+                    : ''
+                }`
               }
             }
           }
@@ -1550,6 +1556,14 @@ export class KnowledgeBuilderService {
           skippedNoAnswer += merged.skippedNoAnswer
           skippedIncomplete += merged.skippedIncomplete
           skippedMisaligned += merged.skippedMisaligned
+          // 配对待确认：可验证配对全部未通过相似度校验——答案可能整体错位，
+          // 状态上明确标注，不允许当成普通可发布题目
+          const pairingUnconfirmed =
+            merged.verifiable > 0 &&
+            (merged.verifiedPassed ?? merged.verifiable - merged.skippedMisaligned) === 0
+          const offsetAdjusted = merged.offsetAdjustedSets ?? 0
+          // 共享材料级警告只在每组第一题显示一次（不重复到组内每道题）
+          const materialWarnedGroups = new Set<string>()
           let bookStaged = 0
           for (const item of merged.items) {
             const signature = directSignature(item.stem, '', item.options[0]?.text ?? '')
@@ -1559,6 +1573,8 @@ export class KnowledgeBuilderService {
             }
             batchSeen.add(signature)
             const markdown = directQuestionMarkdown(item)
+            const groupFirst = !item.groupId || !materialWarnedGroups.has(item.groupId)
+            if (item.groupId) materialWarnedGroups.add(item.groupId)
             const artifact: StoredArtifact = {
               id: item.id,
               jobId: job.id,
@@ -1572,7 +1588,13 @@ export class KnowledgeBuilderService {
               confidence: 1,
               generatedBy: 'direct-import',
               status: 'pending',
-              warnings: [...(book.qualityWarnings ?? [])],
+              warnings: [
+                ...(groupFirst ? (book.qualityWarnings ?? []) : []),
+                ...(pairingUnconfirmed
+                  ? ['配对待确认：题本与解析未通过相似度校验，答案需人工核对']
+                  : []),
+                ...(offsetAdjusted ? [`套内配对错位已按内容相似度校正 ${offsetAdjusted} 套`] : [])
+              ],
               preview: item.stem.slice(0, 180),
               markdown,
               evidenceExcerpt: item.stem.slice(0, 80)
@@ -1583,11 +1605,15 @@ export class KnowledgeBuilderService {
             bookStaged += 1
           }
           if (bookFile) {
+            const verifiedPassed =
+              merged.verifiedPassed ?? merged.verifiable - merged.skippedMisaligned
             bookFile.state = 'ready'
             bookFile.artifactCount = bookStaged
             bookFile.message = `切出 ${bookStaged} 题${
               merged.verifiable
-                ? `，配对校验 ${Math.max(0, merged.verifiable - merged.skippedMisaligned)}/${merged.verifiable} 通过`
+                ? `，配对校验 ${verifiedPassed}/${merged.verifiable} 通过${
+                    pairingUnconfirmed ? '（配对待确认）' : ''
+                  }`
                 : ''
             }`
           }
