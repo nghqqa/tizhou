@@ -292,7 +292,9 @@ export class DatabaseService {
       ['paper', 'TEXT'],
       ['material', 'TEXT'],
       ['content_version', 'TEXT'],
-      ['papers_json', 'TEXT']
+      ['papers_json', 'TEXT'],
+      ['group_id', 'TEXT'],
+      ['group_order', 'INTEGER']
     ]) {
       if (!questionColumns.some((column) => String(column.name) === name))
         this.db.exec(`ALTER TABLE questions ADD COLUMN ${name} ${type}`)
@@ -476,8 +478,8 @@ export class DatabaseService {
       const upsertQuestion = this.db.prepare(`INSERT INTO questions(
         id, vault_id, subject, category, type, stem, options_json, answer_json, explanation,
         difficulty, source, year, region, paper, material, content_version, tags_json, file_path,
-        content_hash, papers_json, indexed_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        content_hash, papers_json, group_id, group_order, indexed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         vault_id=excluded.vault_id, subject=excluded.subject, category=excluded.category,
         type=excluded.type, stem=excluded.stem, options_json=excluded.options_json,
@@ -487,6 +489,7 @@ export class DatabaseService {
         content_version=excluded.content_version,
         tags_json=excluded.tags_json, file_path=excluded.file_path,
         content_hash=excluded.content_hash, papers_json=excluded.papers_json,
+        group_id=excluded.group_id, group_order=excluded.group_order,
         indexed_at=excluded.indexed_at`)
       for (const question of questions) {
         upsertQuestion.run(
@@ -510,6 +513,8 @@ export class DatabaseService {
           question.filePath ?? null,
           question.contentHash,
           question.papers?.length ? JSON.stringify(question.papers) : null,
+          question.groupId ?? null,
+          question.groupOrder ?? null,
           now()
         )
       }
@@ -627,6 +632,8 @@ export class DatabaseService {
       paper: row.paper == null ? undefined : String(row.paper),
       material: row.material == null ? undefined : String(row.material),
       contentVersion: row.content_version == null ? undefined : String(row.content_version),
+      groupId: row.group_id == null ? undefined : String(row.group_id),
+      groupOrder: row.group_order == null ? undefined : Number(row.group_order),
       tags: parseJson(row.tags_json, []),
       filePath: row.file_path === null ? undefined : String(row.file_path),
       contentHash: String(row.content_hash),

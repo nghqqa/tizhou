@@ -580,6 +580,8 @@ export class VaultService {
         normalizeText(data.material || data.passage) ||
         section(parsed.content, ['材料', '给定资料']) ||
         undefined,
+      groupId: normalizeText(data.groupId) || undefined,
+      groupOrder: Number.isFinite(Number(data.groupOrder)) ? Number(data.groupOrder) : undefined,
       contentVersion: normalizeText(data.contentVersion || data.version) || hash(raw).slice(0, 16),
       tags: [
         ...new Set([...asStringArray(data.tags), ...aliases.map((alias) => `alias:${alias}`)])

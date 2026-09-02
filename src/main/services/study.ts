@@ -37,6 +37,47 @@ function clamp(value: number, minimum: number, maximum: number): number {
   return Math.max(minimum, Math.min(maximum, value))
 }
 
+// ---- 组题抽题：资料分析等题型是一组材料带 N 道连续小题，抽题以组为原子单位 ----
+// 组内按小题序（groupOrder）连续排列，不被随机打散；无组题目视为单题组。
+
+export function buildQuestionUnits(pool: Question[]): Question[][] {
+  const groups = new Map<string, Question[]>()
+  const singles: Question[][] = []
+  for (const question of pool) {
+    if (question.groupId) {
+      const list = groups.get(question.groupId)
+      if (list) list.push(question)
+      else groups.set(question.groupId, [question])
+    } else {
+      singles.push([question])
+    }
+  }
+  const units = [...singles, ...groups.values()]
+  for (const unit of units) {
+    if (unit.length > 1) unit.sort((a, b) => (a.groupOrder ?? 0) - (b.groupOrder ?? 0))
+  }
+  return units
+}
+
+// 依次整组收取；放不下的大组先跳过避免顶掉空位，最后用能放下的小组回填
+export function takeUnits(units: Question[][], count: number): Question[] {
+  const picked: Question[] = []
+  const skipped: Question[][] = []
+  for (const unit of units) {
+    if (picked.length >= count) break
+    if (picked.length === 0 || picked.length + unit.length <= count) {
+      picked.push(...unit)
+    } else {
+      skipped.push(unit)
+    }
+  }
+  for (const unit of skipped) {
+    if (picked.length >= count) break
+    if (picked.length + unit.length <= count) picked.push(...unit)
+  }
+  return picked.slice(0, count)
+}
+
 function parseJsonObject(value: string): Record<string, unknown> | undefined {
   const codeBlock = value.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1] ?? value
   try {
@@ -72,21 +113,23 @@ export class StudyService {
       const wrong = this.database.listQuestions({ onlyWrong: true, limit: 500 })
       const wrongTags = new Set(wrong.flatMap((question) => question.tags))
       const wrongCategories = new Set(wrong.map((question) => question.category))
-      return shuffled(pool)
-        .map((question) => ({
-          question,
-          score:
-            (priority.get(question.category) ?? 0) * 20 +
-            (wrongCategories.has(question.category) ? 12 : 0) +
-            question.tags.filter((tag) => wrongTags.has(tag)).length * 3 +
-            (attempted.has(question.id) ? 0 : 8) -
-            (recent.has(question.id) ? 40 : 0)
-        }))
-        .sort((a, b) => b.score - a.score)
-        .slice(0, count)
-        .map((item) => item.question)
+      const scoreOf = (question: Question): number =>
+        (priority.get(question.category) ?? 0) * 20 +
+        (wrongCategories.has(question.category) ? 12 : 0) +
+        question.tags.filter((tag) => wrongTags.has(tag)).length * 3 +
+        (attempted.has(question.id) ? 0 : 8) -
+        (recent.has(question.id) ? 40 : 0)
+      // 以组为原子计分排序（组分取组内最高），整组抽取保持材料小题连续
+      const units = buildQuestionUnits(shuffled(pool))
+      return takeUnits(
+        units
+          .map((unit) => ({ unit, score: Math.max(...unit.map(scoreOf)) }))
+          .sort((a, b) => b.score - a.score)
+          .map((item) => item.unit),
+        count
+      )
     }
-    return shuffled(pool).slice(0, count)
+    return takeUnits(shuffled(buildQuestionUnits(pool)), count)
   }
 
   getDiagnosis(): DiagnosisResult {

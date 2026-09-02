@@ -54,6 +54,10 @@ describe('mergeByDocumentOrder（顺序配对兜底）', () => {
     expect(result.items[0]?.answer).toEqual(['D'])
     expect(result.items[1]?.answer).toEqual(['B'])
     expect(result.items[0]?.tags).toContain('第16套')
+    // 组题字段：同套小题共享 groupId，组内序号跟随题号
+    expect(result.items[0]?.groupId).toBe(result.items[1]?.groupId)
+    expect(result.items[0]?.groupOrder).toBe(1)
+    expect(result.items[1]?.groupOrder).toBe(2)
   })
 
   it('重印片段与题干/选项均不相似时保守剔除该题', () => {

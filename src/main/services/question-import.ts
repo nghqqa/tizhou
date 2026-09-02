@@ -49,6 +49,10 @@ export interface DirectQuestion {
   explanation: string
   /** 主观题材料原文（申论直导）；客观题不产出该字段 */
   material?: string
+  /** 组题标识：同源同套的小题共享，练习抽题时整组连续（资料分析一组材料带 N 题） */
+  groupId?: string
+  /** 组内小题序号 */
+  groupOrder?: number
 }
 
 const SET_TITLE = /^#{0,4}\s*练习题\s*0*(\d{1,3})\s*套?\s*#*\s*$/
@@ -736,6 +740,8 @@ export function mergeDirectQuestions(
         .slice(0, 19)}`,
       set: question.set,
       num: question.num,
+      groupId: groupKey(options.sourceFile, question.set),
+      groupOrder: question.num,
       subject: options.subject,
       category: options.category,
       tags: [...new Set([...options.tags, `第${question.set}套`])],
@@ -759,6 +765,11 @@ export function mergeDirectQuestions(
 
 function yamlQuote(value: string): string {
   return JSON.stringify(String(value ?? ''))
+}
+
+// 组题标识：同一来源同一套的小题共享 groupId（资料分析一组材料带 N 道连续小题）
+function groupKey(sourceFile: string, set: number): string {
+  return `kbg-${createHash('sha256').update(`${sourceFile}\n${set}`).digest('hex').slice(0, 16)}`
 }
 
 // 去重签名：题干+材料全量归一化 + 首选项前缀，跨来源按精确匹配（OCR 与网络文本的标点差异不保证命中）
@@ -817,6 +828,8 @@ export function directQuestionMarkdown(question: DirectQuestion): string {
     `difficulty: ${question.difficulty}`,
     `stem: ${yamlQuote(question.stem)}`,
     ...(question.material ? [`material: ${yamlQuote(question.material)}`] : []),
+    ...(question.groupId ? [`groupId: ${yamlQuote(question.groupId)}`] : []),
+    ...(question.groupOrder !== undefined ? [`groupOrder: ${question.groupOrder}`] : []),
     `options: ${JSON.stringify(question.options)}`,
     `answer: ${JSON.stringify(question.answer)}`,
     `explanation: ${yamlQuote(question.explanation)}`,

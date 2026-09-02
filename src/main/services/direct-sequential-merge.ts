@@ -88,6 +88,11 @@ export function mergeByDocumentOrder(
           .slice(0, 19)}`,
         set: question.set,
         num: question.num,
+        groupId: `kbg-${createHash('sha256')
+          .update(`${options.sourceFile}\n${set}`)
+          .digest('hex')
+          .slice(0, 16)}`,
+        groupOrder: question.num,
         subject: options.subject,
         category: options.category,
         tags: [...new Set([...options.tags, `第${question.set}套`])],

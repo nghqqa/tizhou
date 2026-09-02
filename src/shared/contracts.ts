@@ -27,6 +27,10 @@ export interface Question {
   region?: string
   paper?: string
   material?: string
+  /** 组题标识：同一大题材料下的连续小题共享（如资料分析一组材料带 5 题） */
+  groupId?: string
+  /** 组内小题序号，从小到大连续排列 */
+  groupOrder?: number
   contentVersion?: string
   tags: string[]
   filePath?: string
