@@ -1,14 +1,11 @@
 // cnb.cool Release 附件上传：申请 upload_url → PUT 文件流 → verify_url 确认
+// 用法：node scripts/cnb-upload.mjs <token> <release_id> <file1> [file2...]
 import fs from 'node:fs'
 
 const TOKEN = process.argv[2]
+const RELEASE_ID = process.argv[3]
 const REPO = 'nghqqa/tizhou'
-const RELEASE_ID = '2095428049522950144'
-const FILES = [
-  'dist-v1027/tizhou-setup-1.0.9.exe',
-  'dist-v1027/latest.yml',
-  'dist-v1027/tizhou-setup-1.0.9.exe.blockmap'
-]
+const FILES = process.argv.slice(4)
 
 async function upload(name, filePath) {
   const size = fs.statSync(filePath).size
