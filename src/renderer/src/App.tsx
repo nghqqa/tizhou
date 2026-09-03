@@ -170,7 +170,10 @@ function AppShell(): React.JSX.Element {
         version?: string
         error?: string
         currentVersion: string
+        source?: 'cnb' | 'github'
       }>({ method: 'app.update.check' })
+      const sourceLabel =
+        result.source === 'cnb' ? '更新源：国内镜像（cnb.cool）' : '更新源：GitHub'
       if (result.error) {
         window.alert(`检查更新失败：${result.error}`)
       } else if (result.downloaded) {
@@ -181,7 +184,7 @@ function AppShell(): React.JSX.Element {
         }
       } else if (result.available && result.version) {
         const download = window.confirm(
-          `发现新版本 ${result.version}（当前 ${result.currentVersion}）。\n点击确定开始下载，下载完成后会提示安装。`
+          `发现新版本 ${result.version}（当前 ${result.currentVersion}）。\n${sourceLabel}\n点击确定开始下载，下载完成后会提示安装。`
         )
         if (download) {
           const dlResult = await invoke<{
@@ -199,7 +202,7 @@ function AppShell(): React.JSX.Element {
           }
         }
       } else if (!result.downloading) {
-        window.alert(`当前已是最新版本（${result.currentVersion}）。`)
+        window.alert(`当前已是最新版本（${result.currentVersion}）。\n${sourceLabel}`)
       }
     } catch (cause) {
       window.alert(`检查更新失败：${cause instanceof Error ? cause.message : '未知错误'}`)

@@ -13,6 +13,7 @@ import { MigrationService } from './services/migration'
 import { renderReportMarkdown, reportFileName } from './services/report-markdown'
 import { StudyService } from './services/study'
 import { VaultService } from './services/vault'
+import { resolveUpdateFeed } from './services/update-feed'
 
 // electron-updater 是 CommonJS 包，用 createRequire 兼容 ESM 主进程
 const nodeRequire = createRequire(import.meta.url)
@@ -398,6 +399,12 @@ async function initialize(): Promise<void> {
         return getUpdateStatus()
       case 'app.update.check':
         try {
+          // 网络自动探测：cnb 可达且版本不落后 → 从国内镜像检查；否则回退 GitHub
+          const feed = await resolveUpdateFeed()
+          if (feed.provider === 'generic' && feed.url) {
+            autoUpdater.setFeedURL({ provider: 'generic', url: feed.url })
+          }
+          updateStatus = { ...updateStatus, source: feed.source }
           await autoUpdater.checkForUpdates()
           return getUpdateStatus()
         } catch (error) {
@@ -559,7 +566,7 @@ async function initialize(): Promise<void> {
   })
 }
 
-// ── 自动更新（electron-updater + GitHub Releases）──
+// ── 自动更新（electron-updater：启动/检查时自动探测网络，优先国内 cnb，回退 GitHub）──
 let updateStatus: {
   checking: boolean
   available: boolean
@@ -568,6 +575,7 @@ let updateStatus: {
   progress?: number
   version?: string
   error?: string
+  source?: 'cnb' | 'github'
 } = { checking: false, available: false, downloading: false, downloaded: false }
 
 function setupAutoUpdater(): void {
