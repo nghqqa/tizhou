@@ -1,6 +1,7 @@
 node_modules/
 out/
 dist/
+dist-v*/
 dist-release/
 artifacts/
 .venv-markitdown/
