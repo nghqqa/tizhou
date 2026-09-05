@@ -139,6 +139,8 @@ export interface KnowledgeBuildOptions {
   tags: string[]
   instruction: string
   rightsConfirmed: boolean
+  /** 忽略转换缓存：本批次全部重新转换（结果照常写回缓存），排查识别问题时使用 */
+  ignoreConversionCache?: boolean
 }
 
 export type KnowledgeBuildFileState =
@@ -644,6 +646,11 @@ export type WorkbenchRequest =
   | { method: 'knowledgeBuilder.job.get'; params: { id: string } }
   | { method: 'knowledgeBuilder.job.cancel'; params: { id: string } }
   | { method: 'knowledgeBuilder.job.retry'; params: { id: string; sourceIds?: string[] } }
+  | { method: 'knowledgeBuilder.cache.stats' }
+  | {
+      method: 'knowledgeBuilder.cache.clear'
+      params: { sourceName?: string }
+    }
   | { method: 'knowledgeBuilder.job.revert'; params: { id: string } }
   | { method: 'knowledgeBuilder.artifact.get'; params: { jobId: string; artifactId: string } }
   | {

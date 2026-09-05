@@ -308,6 +308,10 @@ async function initialize(): Promise<void> {
           request.params.artifactIds,
           request.params.status
         )
+      case 'knowledgeBuilder.cache.stats':
+        return knowledgeBuilder.cacheStats()
+      case 'knowledgeBuilder.cache.clear':
+        return knowledgeBuilder.clearConversionCache(request.params.sourceName)
       case 'knowledgeBuilder.publish':
         return knowledgeBuilder.publish(request.params.jobId)
       case 'documents.list':

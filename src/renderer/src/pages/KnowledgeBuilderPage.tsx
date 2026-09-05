@@ -130,6 +130,12 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
   const [tags, setTags] = useState('')
   const [instruction, setInstruction] = useState('')
   const [rightsConfirmed, setRightsConfirmed] = useState(false)
+  // 缓存管理：忽略缓存重转的批次选项 + 缓存统计/清空
+  const [ignoreCache, setIgnoreCache] = useState(false)
+  const [cacheInfo, setCacheInfo] = useState<{
+    entries: Array<{ sourceName: string }>
+    totalBytes: number
+  }>()
   const [job, setJob] = useState<KnowledgeBuildJob>()
   const [artifact, setArtifact] = useState<KnowledgeArtifactDetail>()
   const [busy, setBusy] = useState('')
@@ -155,6 +161,10 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
   const selectedSize = scan?.files
     .filter((file) => selected.has(file.id))
     .reduce((total, file) => total + file.size, 0)
+
+  useEffect(() => {
+    void refreshCacheStats()
+  }, [])
 
   useEffect(() => {
     void Promise.all([
@@ -294,6 +304,54 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
     })
   }
 
+  async function refreshCacheStats(): Promise<void> {
+    try {
+      setCacheInfo(
+        await invoke<{ entries: Array<{ sourceName: string }>; totalBytes: number }>({
+          method: 'knowledgeBuilder.cache.stats'
+        })
+      )
+    } catch {
+      // 缓存统计失败不影响页面使用
+    }
+  }
+
+  async function clearCacheAll(): Promise<void> {
+    if (
+      !window.confirm(
+        '确定清空全部转换缓存？清空后下次导入会重新转换所有文件（OCR/结构解析耗时与首次相同）。'
+      )
+    )
+      return
+    try {
+      const removed = await invoke<{ removed: number }>({
+        method: 'knowledgeBuilder.cache.clear',
+        params: {}
+      })
+      window.alert(`已清空 ${removed.removed} 条转换缓存。`)
+      await refreshCacheStats()
+    } catch (cause) {
+      window.alert(cause instanceof Error ? cause.message : '清空缓存失败')
+    }
+  }
+
+  async function clearCacheFor(sourceName: string): Promise<void> {
+    try {
+      const removed = await invoke<{ removed: number }>({
+        method: 'knowledgeBuilder.cache.clear',
+        params: { sourceName }
+      })
+      window.alert(
+        removed.removed > 0
+          ? `已清除「${sourceName}」的 ${removed.removed} 条转换缓存，重新导入时将重新转换。`
+          : `「${sourceName}」没有可清除的转换缓存。`
+      )
+      await refreshCacheStats()
+    } catch (cause) {
+      window.alert(cause instanceof Error ? cause.message : '清除缓存失败')
+    }
+  }
+
   async function startJob(): Promise<void> {
     if (!scan) return
     setBusy('start')
@@ -314,7 +372,8 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
               .map((tag) => tag.trim())
               .filter(Boolean),
             instruction,
-            rightsConfirmed
+            rightsConfirmed,
+            ignoreConversionCache: ignoreCache
           }
         }
       })
@@ -688,6 +747,26 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
               </div>
             </div>
 
+            <div className="builder-scan-summary" aria-label="转换缓存状态">
+              <div>
+                <strong>{cacheInfo ? cacheInfo.entries.length : '…'}</strong>
+                <span>转换缓存条目</span>
+              </div>
+              <div>
+                <strong>{formatBytes(cacheInfo?.totalBytes ?? 0)}</strong>
+                <span>缓存体积</span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center' }}>
+                <Button
+                  appearance="subtle"
+                  disabled={!cacheInfo || cacheInfo.entries.length === 0}
+                  onClick={() => void clearCacheAll()}
+                >
+                  清空全部缓存
+                </Button>
+              </div>
+            </div>
+
             <div className="builder-file-toolbar">
               <Input
                 value={query}
@@ -722,6 +801,20 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
                   </span>
                   <span>{formatBytes(file.size)}</span>
                   <Badge appearance="outline">{file.extension}</Badge>
+                  <Button
+                    appearance="subtle"
+                    size="small"
+                    title="清除该文件的转换缓存（下次导入重新转换此文件）"
+                    onClick={(event) => {
+                      event.preventDefault()
+                      event.stopPropagation()
+                      void clearCacheFor(
+                        file.relativePath.split(/[\\/]/).pop() ?? file.relativePath
+                      )
+                    }}
+                  >
+                    清缓存
+                  </Button>
                   {!file.eligible && <small>{file.reason}</small>}
                 </label>
               ))}
@@ -807,6 +900,11 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
             checked={rightsConfirmed}
             onChange={(_, data) => setRightsConfirmed(data.checked === true)}
             label="我确认有权处理所选资料，并会在发布前逐项核对答案、事实与来源"
+          />
+          <Checkbox
+            checked={ignoreCache}
+            onChange={(_, data) => setIgnoreCache(data.checked === true)}
+            label="忽略转换缓存，本批次全部重新转换（排查识别问题时使用；结果会覆盖旧缓存）"
           />
           <div className="builder-start-row">
             <div className="builder-start-main">

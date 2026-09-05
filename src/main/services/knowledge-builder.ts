@@ -1064,6 +1064,16 @@ export class KnowledgeBuilderService {
     }
   }
 
+  /** 转换缓存清单（条目/来源/体积），供工坊展示 */
+  cacheStats() {
+    return this.conversionCache.stats()
+  }
+
+  /** 清空转换缓存；指定来源文件名时只清除该文件的条目 */
+  clearConversionCache(sourceName?: string): { removed: number } {
+    return this.conversionCache.clear(sourceName)
+  }
+
   publish(jobId: string): VaultIndexResult {
     const job = this.loadJob(jobId)
     if (['queued', 'running', 'cancelling'].includes(job.status))
@@ -1248,7 +1258,10 @@ export class KnowledgeBuilderService {
           // 兜底回退 OCR 时改用 ocr@ 键缓存，structured@ 键留待重试
           let effectiveConverter = converter
           let ocrQuality: OcrQualityReport | undefined
-          const cached = await this.conversionCache.fetch(source, converter)
+          // 「忽略缓存重新转换」：跳过缓存读取（结果照常写回），排查识别问题时使用
+          const cached = job.options.ignoreConversionCache
+            ? undefined
+            : await this.conversionCache.fetch(source, converter)
           if (cached) {
             copyFileSync(cached.markdownPath, rawPath)
             // 结构解析命中：把缓存的图片归档原样恢复到任务 raw/images，否则 markdown 引用悬空

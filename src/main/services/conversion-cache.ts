@@ -65,6 +65,20 @@ function directoryBytes(path: string): number {
   }
 }
 
+export interface CacheEntryStat {
+  key: string
+  sourceName: string
+  converter: string
+  bytes: number
+  createdAt: string
+  hasImages: boolean
+}
+
+export interface CacheStats {
+  entries: CacheEntryStat[]
+  totalBytes: number
+}
+
 export class ConversionCache {
   constructor(
     private readonly directory: string,
@@ -76,6 +90,71 @@ export class ConversionCache {
     } catch {
       // 缓存目录不可用时退化为无缓存模式，fetch/store 会继续静默失败
     }
+  }
+
+  /** 缓存清单：条目、来源、转换器、体积（供工坊展示与定向清理） */
+  stats(): CacheStats {
+    const entries: CacheEntryStat[] = []
+    let names: string[] = []
+    try {
+      names = readdirSync(this.directory)
+    } catch {
+      return { entries: [], totalBytes: 0 }
+    }
+    let totalBytes = 0
+    for (const name of names) {
+      if (!name.endsWith('.json') || name.endsWith('-images')) continue
+      const key = name.slice(0, -5)
+      try {
+        const meta = JSON.parse(readFileSync(join(this.directory, name), 'utf8')) as CacheMeta
+        const mdBytes = statSync(join(this.directory, `${key}.md`)).size
+        const imageBytes = directoryBytes(join(this.directory, `${key}-images`))
+        const bytes = mdBytes + imageBytes
+        totalBytes += bytes
+        entries.push({
+          key,
+          sourceName: meta.sourceName ?? '',
+          converter: meta.converter ?? '',
+          bytes,
+          createdAt: meta.createdAt ?? '',
+          hasImages: imageBytes > 0
+        })
+      } catch {
+        /* 元数据损坏的条目跳过不计 */
+      }
+    }
+    entries.sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    return { entries, totalBytes }
+  }
+
+  /** 清空缓存；指定 sourceName 时只清除该来源文件的条目（按缓存元数据的来源名精确匹配） */
+  clear(sourceName?: string): { removed: number } {
+    let names: string[] = []
+    try {
+      names = readdirSync(this.directory)
+    } catch {
+      return { removed: 0 }
+    }
+    let removed = 0
+    for (const name of names) {
+      if (!name.endsWith('.md')) continue
+      const key = name.slice(0, -3)
+      try {
+        if (sourceName !== undefined) {
+          const metaPath = join(this.directory, `${key}.json`)
+          if (!existsSync(metaPath)) continue
+          const meta = JSON.parse(readFileSync(metaPath, 'utf8')) as CacheMeta
+          if (meta.sourceName !== sourceName) continue
+        }
+        rmSync(join(this.directory, `${key}.md`), { force: true })
+        rmSync(join(this.directory, `${key}.json`), { force: true })
+        rmSync(join(this.directory, `${key}-images`), { recursive: true, force: true })
+        removed += 1
+      } catch {
+        /* 单条清理失败不影响其余条目 */
+      }
+    }
+    return { removed }
   }
 
   // converter 由调用方拼接版本信息（如 markitdown@0.1.6 / ocr@<模型包组合>），

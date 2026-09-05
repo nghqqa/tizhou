@@ -186,3 +186,56 @@ describe('conversion cache', () => {
     expect(kept).toBeDefined()
   })
 })
+
+describe('缓存统计与清空', () => {
+  it('stats 返回条目与体积；clear 支持按来源精确清除与全量清空', async () => {
+    const cacheDirectory = temporaryDirectory('tizhou-ccache-manage-')
+    const sourceDirectory = temporaryDirectory('tizhou-ccache-manage-src-')
+    const rawDirectory = temporaryDirectory('tizhou-ccache-manage-raw-')
+    const imagesDirectory = temporaryDirectory('tizhou-ccache-manage-img-')
+    const quality = {
+      totalPages: 2,
+      textLayerPages: 0,
+      ocrPages: 2,
+      emptyPages: 0,
+      ocrLineCount: 0,
+      lowConfidenceLines: 0,
+      removedPageNumbers: 0,
+      warnings: ['结构解析模式：表格已还原为 Markdown 表格，图片保真存至 images/ 目录'],
+      structured: true
+    }
+    writeFileSync(join(sourceDirectory, '甲书.pdf'), 'SOURCE-A')
+    writeFileSync(join(sourceDirectory, '乙书.pdf'), 'SOURCE-B')
+    writeFileSync(join(rawDirectory, 'a.md'), '# 甲书转换结果', 'utf8')
+    writeFileSync(join(rawDirectory, 'b.md'), '# 乙书转换结果', 'utf8')
+    writeFileSync(join(imagesDirectory, 'chart.png'), 'PNG')
+    const cache = new ConversionCache(cacheDirectory)
+
+    await cache.store(
+      join(sourceDirectory, '甲书.pdf'),
+      'structured@rapid-doc==0.9.10',
+      join(rawDirectory, 'a.md'),
+      quality,
+      imagesDirectory
+    )
+    await cache.store(
+      join(sourceDirectory, '乙书.pdf'),
+      'ocr@rapidocr==3.9.2',
+      join(rawDirectory, 'b.md')
+    )
+
+    const stats = cache.stats()
+    expect(stats.entries).toHaveLength(2)
+    expect(stats.totalBytes).toBeGreaterThan(0)
+    expect(stats.entries.find((entry) => entry.sourceName === '甲书.pdf')?.hasImages).toBe(true)
+
+    // 按来源清除：只删甲书（含图片归档），乙书不受影响
+    const removed = cache.clear('甲书.pdf')
+    expect(removed.removed).toBe(1)
+    expect(cache.stats().entries.map((entry) => entry.sourceName)).toEqual(['乙书.pdf'])
+
+    // 全量清空
+    expect(cache.clear().removed).toBe(1)
+    expect(cache.stats().entries).toHaveLength(0)
+  })
+})
