@@ -403,15 +403,18 @@ async function initialize(): Promise<void> {
         return getUpdateStatus()
       case 'app.update.check':
         try {
+          // 防重入：检查进行中直接返回当前状态（渲染层与主进程双保险）
+          if (updateStatus.checking) return getUpdateStatus()
           // 网络自动探测：cnb 可达且版本不落后 → 从国内镜像检查；否则回退 GitHub
           const feed = await resolveUpdateFeed()
           if (feed.provider === 'generic' && feed.url) {
             autoUpdater.setFeedURL({ provider: 'generic', url: feed.url })
           }
-          updateStatus = { ...updateStatus, source: feed.source }
+          updateStatus = { ...updateStatus, checking: true, source: feed.source }
           await autoUpdater.checkForUpdates()
           return getUpdateStatus()
         } catch (error) {
+          updateStatus = { ...updateStatus, checking: false }
           return {
             ...getUpdateStatus(),
             error: error instanceof Error ? error.message : '检查更新失败'
@@ -419,15 +422,22 @@ async function initialize(): Promise<void> {
         }
       case 'app.update.download':
         try {
+          // 防重入：仅在「发现更新且未在下载、未下载完成」时允许发起下载
+          if (!updateStatus.available || updateStatus.downloading || updateStatus.downloaded)
+            return getUpdateStatus()
+          updateStatus = { ...updateStatus, downloading: true }
           await autoUpdater.downloadUpdate()
           return getUpdateStatus()
         } catch (error) {
+          updateStatus = { ...updateStatus, downloading: false }
           return {
             ...getUpdateStatus(),
             error: error instanceof Error ? error.message : '下载更新失败'
           }
         }
       case 'app.update.install':
+        // 未下载完成不允许安装（安装失败不会卡状态：error 事件会把 downloaded 复位）
+        if (!updateStatus.downloaded) return getUpdateStatus()
         autoUpdater.quitAndInstall()
         return { ...getUpdateStatus() }
       case 'folder.pick': {

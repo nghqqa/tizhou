@@ -36,6 +36,7 @@ import { darkTheme, lightTheme } from './theme'
 import { useAppStore } from './store'
 import { invoke } from './api'
 import { LoadingState } from './components/ui'
+import { RouteErrorBoundary } from './components/RouteErrorBoundary'
 
 const DashboardPage = lazy(() =>
   import('./pages/DashboardPage').then((module) => ({ default: module.DashboardPage }))
@@ -326,41 +327,43 @@ function AppShell(): React.JSX.Element {
           </div>
         )}
         <Suspense fallback={<LoadingState label="正在打开页面" />}>
-          <Routes>
-            <Route path="/" element={<DashboardPage />} />
-            <Route path="/practice" element={<PracticePage />} />
-            <Route path="/review" element={<ReviewPage />} />
-            <Route path="/exam" element={<ExamHomePage />} />
-            <Route path="/exam/run" element={<ExamRunPage />} />
-            <Route path="/exam/result/:id" element={<ExamResultPage />} />
-            <Route path="/knowledge-builder" element={<KnowledgeBuilderPage />} />
-            <Route
-              path="/knowledge/xingce"
-              element={<KnowledgePage subject="xingce" kind="knowledge" />}
-            />
-            <Route
-              path="/thinking/xingce"
-              element={<KnowledgePage subject="xingce" kind="method" />}
-            />
-            <Route
-              path="/knowledge/shenlun"
-              element={<KnowledgePage subject="shenlun" kind="knowledge" />}
-            />
-            <Route
-              path="/thinking/shenlun"
-              element={<KnowledgePage subject="shenlun" kind="method" />}
-            />
-            <Route path="/patterns" element={<PatternsPage />} />
-            <Route path="/shenlun-solution" element={<ShenlunSolutionPage />} />
-            <Route path="/reports" element={<ReportsPage />} />
-            <Route path="/ai" element={<AiPage />} />
-            <Route path="/ai-training" element={<AiTrainingPage />} />
-            <Route path="/diagnosis" element={<DiagnosisPage />} />
-            <Route path="/environment" element={<EnvironmentPage />} />
-            <Route path="/model-settings" element={<ModelSettingsPage />} />
-            <Route path="/settings" element={<SettingsPage />} />
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
+          <RouteErrorBoundary key={location.pathname}>
+            <Routes>
+              <Route path="/" element={<DashboardPage />} />
+              <Route path="/practice" element={<PracticePage />} />
+              <Route path="/review" element={<ReviewPage />} />
+              <Route path="/exam" element={<ExamHomePage />} />
+              <Route path="/exam/run" element={<ExamRunPage />} />
+              <Route path="/exam/result/:id" element={<ExamResultPage />} />
+              <Route path="/knowledge-builder" element={<KnowledgeBuilderPage />} />
+              <Route
+                path="/knowledge/xingce"
+                element={<KnowledgePage subject="xingce" kind="knowledge" />}
+              />
+              <Route
+                path="/thinking/xingce"
+                element={<KnowledgePage subject="xingce" kind="method" />}
+              />
+              <Route
+                path="/knowledge/shenlun"
+                element={<KnowledgePage subject="shenlun" kind="knowledge" />}
+              />
+              <Route
+                path="/thinking/shenlun"
+                element={<KnowledgePage subject="shenlun" kind="method" />}
+              />
+              <Route path="/patterns" element={<PatternsPage />} />
+              <Route path="/shenlun-solution" element={<ShenlunSolutionPage />} />
+              <Route path="/reports" element={<ReportsPage />} />
+              <Route path="/ai" element={<AiPage />} />
+              <Route path="/ai-training" element={<AiTrainingPage />} />
+              <Route path="/diagnosis" element={<DiagnosisPage />} />
+              <Route path="/environment" element={<EnvironmentPage />} />
+              <Route path="/model-settings" element={<ModelSettingsPage />} />
+              <Route path="/settings" element={<SettingsPage />} />
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </RouteErrorBoundary>
         </Suspense>
       </main>
     </div>

@@ -18,7 +18,7 @@ import { useNavigate } from 'react-router-dom'
 import { formatDate, formatFullDate, invoke } from '../api'
 import { MarkdownContent } from '../components/MarkdownContent'
 import { EmptyState, ErrorState, LoadingState, PageHeader, Section } from '../components/ui'
-import { EssaySaveController } from '../services/exam-essay-save'
+import { EssaySaveController, ExamAnswerSaveController } from '../services/exam-essay-save'
 import { useAppStore } from '../store'
 
 export function ExamHomePage(): React.JSX.Element {
@@ -308,6 +308,23 @@ export function ExamRunPage(): React.JSX.Element {
   const [saveBlocked, setSaveBlocked] = useState(false)
   const essayTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const mountedRef = useRef(true)
+  // 客观题答案保存控制器：串行化 + 同题去重 + 失败保留 + 交卷前 drain
+  const answerSaveRef = useRef<ExamAnswerSaveController | null>(null)
+  if (!answerSaveRef.current) {
+    answerSaveRef.current = new ExamAnswerSaveController(async (request) => {
+      await invoke({
+        method: 'exam.save',
+        params: {
+          examId: request.examId,
+          answer: {
+            questionId: request.questionId,
+            answer: request.answer,
+            durationSeconds: 0
+          }
+        }
+      })
+    })
+  }
   // 生产保存控制器：串行化队列 + 失败保留 + 重试 + drain 检查
   const saveControllerRef = useRef<EssaySaveController | null>(null)
   if (!saveControllerRef.current && exam) {
@@ -337,6 +354,8 @@ export function ExamRunPage(): React.JSX.Element {
     return () => {
       mountedRef.current = false
       if (essayTimerRef.current) clearTimeout(essayTimerRef.current)
+      // 组件卸载时把挂起答案保存完成后再停止（异步，不阻塞卸载本身）
+      void answerSaveRef.current?.destroy()
       void saveControllerRef.current?.destroy()
     }
   }, [])
@@ -378,24 +397,20 @@ export function ExamRunPage(): React.JSX.Element {
           ? currentAnswer.filter((item) => item !== key)
           : [...currentAnswer, key]
         : [key]
-    const optimistic = {
+    // 乐观更新：用户意图立即生效（保存失败不再回滚——回滚会用旧快照覆盖更新的作答）
+    setExam({
       ...exam,
       answers: {
         ...exam.answers,
         [current.id]: { questionId: current.id, answer, durationSeconds: 0 }
       }
-    }
-    setExam(optimistic)
-    try {
-      const saved = await invoke<ExamSession>({
-        method: 'exam.save',
-        params: { examId: exam.id, answer: { questionId: current.id, answer, durationSeconds: 0 } }
-      })
-      setExam(saved)
-    } catch (cause) {
-      setExam(exam)
-      setError(cause instanceof Error ? cause.message : '答案保存失败')
-    }
+    })
+    // 串行化保存队列：同题连续选择自动去重为最新一次，旧响应不会覆盖新状态
+    answerSaveRef.current?.save({
+      examId: exam.id,
+      questionId: current.id,
+      answer
+    })
   }
   async function finish(): Promise<void> {
     if (!exam) return
@@ -403,6 +418,19 @@ export function ExamRunPage(): React.JSX.Element {
     if (essayTimerRef.current) {
       clearTimeout(essayTimerRef.current)
       essayTimerRef.current = undefined
+    }
+    // 客观题答案：等待全部挂起保存完成；存在失败则阻止交卷并自动重试
+    const answerController = answerSaveRef.current
+    if (answerController) {
+      const failedIds = await answerController.drain()
+      if (failedIds.length > 0) {
+        answerController.retryAll()
+        setSaveBlocked(true)
+        setError(`有 ${failedIds.length} 题答案尚未保存成功，已自动重试；请稍后再次交卷。`)
+        setFinishing(false)
+        setConfirmOpen(false)
+        return
+      }
     }
     const controller = saveControllerRef.current
     if (controller) {
