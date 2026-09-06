@@ -1,0 +1,764 @@
+{
+  "generatedBy": "tools/experimental/survey_pdfs.py",
+  "sampleDir": "E:/BaiduNetdiskDownload/考公刷题本答案",
+  "pdfCount": 42,
+  "totalPages": 5103,
+  "totalScanPages": 5015,
+  "scanPageRatioOverall": 0.983,
+  "byBooklet": {
+    "解析册": {
+      "files": 9,
+      "pages": 1659,
+      "scanPageRatio": 0.989
+    },
+    "题本": {
+      "files": 33,
+      "pages": 3444,
+      "scanPageRatio": 0.98
+    }
+  },
+  "bySubject": {
+    "判断推理": {
+      "files": 10,
+      "pages": 1325
+    },
+    "数量关系": {
+      "files": 7,
+      "pages": 361
+    },
+    "申论": {
+      "files": 2,
+      "pages": 360
+    },
+    "综合": {
+      "files": 2,
+      "pages": 488
+    },
+    "言语理解": {
+      "files": 11,
+      "pages": 1127
+    },
+    "资料分析": {
+      "files": 10,
+      "pages": 1442
+    }
+  },
+  "entries": [
+    {
+      "file": "【四海】26下-海海刷1期-判断推理题本（参考答案）.pdf",
+      "relPath": "E:/BaiduNetdiskDownload/考公刷题本答案/071.2027四海行测2000题海海刷1期/讲义/答案/【四海】26下-海海刷1期-判断推理题本（参考答案）.pdf",
+      "booklet": "解析册",
+      "subject": "判断推理",
+      "pages": 6,
+      "textLayerPages": 6,
+      "scanPages": 0,
+      "scanPageRatio": 0.0,
+      "totalTextChars": 2117,
+      "avgCharsPerPage": 352.8,
+      "pagesWithImages": 6,
+      "maxImagesPerPage": 4,
+      "pageSizes": [
+        "595x842"
+      ]
+    },
+    {
+      "file": "【四海】26下-海海刷1期-数量关系题本（参考答案）.pdf",
+      "relPath": "E:/BaiduNetdiskDownload/考公刷题本答案/071.2027四海行测2000题海海刷1期/讲义/答案/【四海】26下-海海刷1期-数量关系题本（参考答案）.pdf",
+      "booklet": "解析册",
+      "subject": "数量关系",
+      "pages": 3,
+      "textLayerPages": 3,
+      "scanPages": 0,
+      "scanPageRatio": 0.0,
+      "totalTextChars": 790,
+      "avgCharsPerPage": 263.3,
+      "pagesWithImages": 3,
+      "maxImagesPerPage": 4,
+      "pageSizes": [
+        "595x842"
+      ]
+    },
+    {
+      "file": "【四海】26下-海海刷1期-言语理解题本（参考答案）.pdf",
+      "relPath": "E:/BaiduNetdiskDownload/考公刷题本答案/071.2027四海行测2000题海海刷1期/讲义/答案/【四海】26下-海海刷1期-言语理解题本（参考答案）.pdf",
+      "booklet": "解析册",
+      "subject": "言语理解",
+      "pages": 4,
+      "textLayerPages": 4,
+      "scanPages": 0,
+      "scanPageRatio": 0.0,
+      "totalTextChars": 1349,
+      "avgCharsPerPage": 337.2,
+      "pagesWithImages": 4,
+      "maxImagesPerPage": 4,
+      "pageSizes": [
+        "595x842"
+      ]
+    },
+    {
+      "file": "【四海】26下-海海刷1期-资料分析题本（参考答案）.pdf",
+      "relPath": "E:/BaiduNetdiskDownload/考公刷题本答案/071.2027四海行测2000题海海刷1期/讲义/答案/【四海】26下-海海刷1期-资料分析题本（参考答案）.pdf",
+      "booklet": "解析册",
+      "subject": "资料分析",
+      "pages": 5,
+      "textLayerPages": 5,
+      "scanPages": 0,
+      "scanPageRatio": 0.0,
+      "totalTextChars": 1655,
+      "avgCharsPerPage": 331.0,
+      "pagesWithImages": 5,
+      "maxImagesPerPage": 4,
+      "pageSizes": [
+        "595x842"
+      ]
+    },
+    {
+      "file": "【四海】26下-海海刷1期-判断推理题本.pdf",
+      "relPath": "E:/BaiduNetdiskDownload/考公刷题本答案/071.2027四海行测2000题海海刷1期/讲义/题本/【四海】26下-海海刷1期-判断推理题本.pdf",
+      "booklet": "题本",
+      "subject": "判断推理",
+      "pages": 208,
+      "textLayerPages": 0,
+      "scanPages": 208,
+      "scanPageRatio": 1.0,
+      "totalTextChars": 0,
+      "avgCharsPerPage": 0.0,
+      "pagesWithImages": 208,
+      "maxImagesPerPage": 10,
+      "pageSizes": [
+        "595x808"
+      ]
+    },
+    {
+      "file": "【四海】26下-海海刷1期-数量关系题本.pdf",
+      "relPath": "E:/BaiduNetdiskDownload/考公刷题本答案/071.2027四海行测2000题海海刷1期/讲义/题本/【四海】26下-海海刷1期-数量关系题本.pdf",
+      "booklet": "题本",
+      "subject": "数量关系",
+      "pages": 54,
+      "textLayerPages": 54,
+      "scanPages": 0,
+      "scanPageRatio": 0.0,
+      "totalTextChars": 38488,
+      "avgCharsPerPage": 712.7,
+      "pagesWithImages": 54,
+      "maxImagesPerPage": 6,
+      "pageSizes": [
+        "595x808"
+      ]
+    },
+    {
+      "file": "【四海】26下-海海刷1期-言语理解题本.pdf",
+      "relPath": "E:/BaiduNetdiskDownload/考公刷题本答案/071.2027四海行测2000题海海刷1期/讲义/题本/【四海】26下-海海刷1期-言语理解题本.pdf",
+      "booklet": "题本",
+      "subject": "言语理解",
+      "pages": 136,
+      "textLayerPages": 0,
+      "scanPages": 136,
+      "scanPageRatio": 1.0,
+      "totalTextChars": 0,
+      "avgCharsPerPage": 0.0,
+      "pagesWithImages": 136,
+      "maxImagesPerPage": 4,
+      "pageSizes": [
+        "595x808"
+      ]
+    },
+    {
+      "file": "【四海】26下-海海刷1期-资料分析题本.pdf",
+      "relPath": "E:/BaiduNetdiskDownload/考公刷题本答案/071.2027四海行测2000题海海刷1期/讲义/题本/【四海】26下-海海刷1期-资料分析题本.pdf",
+      "booklet": "题本",
+      "subject": "资料分析",
+      "pages": 180,
+      "textLayerPages": 0,
+      "scanPages": 180,
+      "scanPageRatio": 1.0,
+      "totalTextChars": 0,
+      "avgCharsPerPage": 0.0,
+      "pagesWithImages": 180,
+      "maxImagesPerPage": 8,
+      "pageSizes": [
+        "595x808"
+      ]
+    },
+    {
+      "file": "2027判断推理-专项提升夸夸刷.pdf",
+      "relPath": "E:/BaiduNetdiskDownload/考公刷题本答案/2027判断推理-专项提升夸夸刷.pdf",
+      "booklet": "题本",
+      "subject": "判断推理",
+      "pages": 256,
+      "textLayerPages": 0,
+      "scanPages": 256,
+      "scanPageRatio": 1.0,
+      "totalTextChars": 125,
+      "avgCharsPerPage": 0.5,
+      "pagesWithImages": 125,
+      "maxImagesPerPage": 16,
+      "pageSizes": [
+        "541x754"
+      ]
+    },
+    {
+      "file": "2027数量关系-夸夸刷-必考题型专项拔高.pdf",
+      "relPath": "E:/BaiduNetdiskDownload/考公刷题本答案/2027数量关系-夸夸刷-必考题型专项拔高.pdf",
+      "booklet": "题本",
+      "subject": "数量关系",
+      "pages": 166,
+      "textLayerPages": 0,
+      "scanPages": 166,
+      "scanPageRatio": 1.0,
+      "totalTextChars": 23,
+      "avgCharsPerPage": 0.1,
+      "pagesWithImages": 23,
+      "maxImagesPerPage": 3,
+      "pageSizes": [
+        "541x754"
+      ]
+    },
+    {
+      "file": "2027申论-专项提升夸夸刷.pdf",
+      "relPath": "E:/BaiduNetdiskDownload/考公刷题本答案/2027申论-专项提升夸夸刷.pdf",
+      "booklet": "题本",
+      "subject": "申论",
+      "pages": 268,
+      "textLayerPages": 0,
+      "scanPages": 268,
+      "scanPageRatio": 1.0,
+      "totalTextChars": 123,
+      "avgCharsPerPage": 0.5,
+      "pagesWithImages": 62,
+      "maxImagesPerPage": 2,
+      "pageSizes": [
+        "541x754"
+      ]
+    },
+    {
+      "file": "2027言语理解与表达-专项提升夸夸刷.pdf",
+      "relPath": "E:/BaiduNetdiskDownload/考公刷题本答案/2027言语理解与表达-专项提升夸夸刷.pdf",
+      "booklet": "题本",
+      "subject": "言语理解",
+      "pages": 165,
+      "textLayerPages": 0,
+      "scanPages": 165,
+      "scanPageRatio": 1.0,
+      "totalTextChars": 128,
+      "avgCharsPerPage": 0.8,
+      "pagesWithImages": 4,
+      "maxImagesPerPage": 1,
+      "pageSizes": [
+        "541x754"
+      ]
+    },
+    {
+      "file": "2027资料分析-夸夸刷-必考题型专项拔高.pdf",
+      "relPath": "E:/BaiduNetdiskDownload/考公刷题本答案/2027资料分析-夸夸刷-必考题型专项拔高.pdf",
+      "booklet": "题本",
+      "subject": "资料分析",
+      "pages": 380,
+      "textLayerPages": 0,
+      "scanPages": 380,
+      "scanPageRatio": 1.0,
+      "totalTextChars": 2351,
+      "avgCharsPerPage": 6.2,
+      "pagesWithImages": 280,
+      "maxImagesPerPage": 6,
+      "pageSizes": [
+        "541x754"
+      ]
+    },
+    {
+      "file": "实战公考-酷酷刷-判断推理.pdf",
+      "relPath": "E:/BaiduNetdiskDownload/考公刷题本答案/实战公考-酷酷刷-判断推理.pdf",
+      "booklet": "题本",
+      "subject": "判断推理",
+      "pages": 100,
+      "textLayerPages": 2,
+      "scanPages": 98,
+      "scanPageRatio": 0.98,
+      "totalTextChars": 1830,
+      "avgCharsPerPage": 18.3,
+      "pagesWithImages": 31,
+      "maxImagesPerPage": 7,
+      "pageSizes": [
+        "541x754"
+      ]
+    },
+    {
+      "file": "实战公考-酷酷刷-数量关系.pdf",
+      "relPath": "E:/BaiduNetdiskDownload/考公刷题本答案/实战公考-酷酷刷-数量关系.pdf",
+      "booklet": "题本",
+      "subject": "数量关系",
+      "pages": 78,
+      "textLayerPages": 1,
+      "scanPages": 77,
+      "scanPageRatio": 0.987,
+      "totalTextChars": 533,
+      "avgCharsPerPage": 6.8,
+      "pagesWithImages": 12,
+      "maxImagesPerPage": 4,
+      "pageSizes": [
+        "541x754"
+      ]
+    },
+    {
+      "file": "实战公考-酷酷刷-申论.pdf",
+      "relPath": "E:/BaiduNetdiskDownload/考公刷题本答案/实战公考-酷酷刷-申论.pdf",
+      "booklet": "题本",
+      "subject": "申论",
+      "pages": 92,
+      "textLayerPages": 4,
+      "scanPages": 88,
+      "scanPageRatio": 0.957,
+      "totalTextChars": 4181,
+      "avgCharsPerPage": 45.4,
+      "pagesWithImages": 6,
+      "maxImagesPerPage": 3,
+      "pageSizes": [
+        "541x754"
+      ]
+    },
+    {
+      "file": "实战公考-酷酷刷-言语理解与表达.pdf",
+      "relPath": "E:/BaiduNetdiskDownload/考公刷题本答案/实战公考-酷酷刷-言语理解与表达.pdf",
+      "booklet": "题本",
+      "subject": "言语理解",
+      "pages": 120,
+      "textLayerPages": 3,
+      "scanPages": 117,
+      "scanPageRatio": 0.975,
+      "totalTextChars": 2577,
+      "avgCharsPerPage": 21.5,
+      "pagesWithImages": 6,
+      "maxImagesPerPage": 1,
+      "pageSizes": [
+        "541x754"
+      ]
+    },
+    {
+      "file": "实战公考-酷酷刷-资料分析.pdf",
+      "relPath": "E:/BaiduNetdiskDownload/考公刷题本答案/实战公考-酷酷刷-资料分析.pdf",
+      "booklet": "题本",
+      "subject": "资料分析",
+      "pages": 184,
+      "textLayerPages": 6,
+      "scanPages": 178,
+      "scanPageRatio": 0.967,
+      "totalTextChars": 5094,
+      "avgCharsPerPage": 27.7,
+      "pagesWithImages": 148,
+      "maxImagesPerPage": 6,
+      "pageSizes": [
+        "541x754"
+      ]
+    },
+    {
+      "file": "花生十三数量600题（无遮挡水印版）【解析】.pdf",
+      "relPath": "E:/BaiduNetdiskDownload/考公刷题本答案/数量关系600题/完整题本/花生十三数量600题（无遮挡水印版）【解析】.pdf",
+      "booklet": "解析册",
+      "subject": "综合",
+      "pages": 361,
+      "textLayerPages": 0,
+      "scanPages": 361,
+      "scanPageRatio": 1.0,
+      "totalTextChars": 0,
+      "avgCharsPerPage": 0.0,
+      "pagesWithImages": 361,
+      "maxImagesPerPage": 1,
+      "pageSizes": [
+        "564x791",
+        "567x794"
+      ]
+    },
+    {
+      "file": "花生十三数量600题（无遮挡水印版）【题本】.pdf",
+      "relPath": "E:/BaiduNetdiskDownload/考公刷题本答案/数量关系600题/完整题本/花生十三数量600题（无遮挡水印版）【题本】.pdf",
+      "booklet": "题本",
+      "subject": "综合",
+      "pages": 127,
+      "textLayerPages": 0,
+      "scanPages": 127,
+      "scanPageRatio": 1.0,
+      "totalTextChars": 0,
+      "avgCharsPerPage": 0.0,
+      "pagesWithImages": 127,
+      "maxImagesPerPage": 1,
+      "pageSizes": [
+        "564x791",
+        "567x794"
+      ]
+    },
+    {
+      "file": "数量关系600题-题本篇（1-8）.pdf",
+      "relPath": "E:/BaiduNetdiskDownload/考公刷题本答案/数量关系600题/数量关系600题-题本篇（1-8）.pdf",
+      "booklet": "题本",
+      "subject": "数量关系",
+      "pages": 16,
+      "textLayerPages": 0,
+      "scanPages": 16,
+      "scanPageRatio": 1.0,
+      "totalTextChars": 0,
+      "avgCharsPerPage": 0.0,
+      "pagesWithImages": 16,
+      "maxImagesPerPage": 16,
+      "pageSizes": [
+        "595x808"
+      ]
+    },
+    {
+      "file": "数量关系600题-题本篇（23-30）.pdf",
+      "relPath": "E:/BaiduNetdiskDownload/考公刷题本答案/数量关系600题/数量关系600题-题本篇（23-30）.pdf",
+      "booklet": "题本",
+      "subject": "数量关系",
+      "pages": 16,
+      "textLayerPages": 0,
+      "scanPages": 16,
+      "scanPageRatio": 1.0,
+      "totalTextChars": 0,
+      "avgCharsPerPage": 0.0,
+      "pagesWithImages": 16,
+      "maxImagesPerPage": 16,
+      "pageSizes": [
+        "595x808"
+      ]
+    },
+    {
+      "file": "数量关系600题-题本篇（9-22）.pdf",
+      "relPath": "E:/BaiduNetdiskDownload/考公刷题本答案/数量关系600题/数量关系600题-题本篇（9-22）.pdf",
+      "booklet": "题本",
+      "subject": "数量关系",
+      "pages": 28,
+      "textLayerPages": 0,
+      "scanPages": 28,
+      "scanPageRatio": 1.0,
+      "totalTextChars": 0,
+      "avgCharsPerPage": 0.0,
+      "pagesWithImages": 28,
+      "maxImagesPerPage": 16,
+      "pageSizes": [
+        "595x808"
+      ]
+    },
+    {
+      "file": "2025年花生片段阅读600题-解析【上】.pdf",
+      "relPath": "E:/BaiduNetdiskDownload/考公刷题本答案/片段阅读600题/完整题本/2025年花生片段阅读600题-解析【上】.pdf",
+      "booklet": "解析册",
+      "subject": "言语理解",
+      "pages": 212,
+      "textLayerPages": 0,
+      "scanPages": 212,
+      "scanPageRatio": 1.0,
+      "totalTextChars": 0,
+      "avgCharsPerPage": 0.0,
+      "pagesWithImages": 211,
+      "maxImagesPerPage": 2,
+      "pageSizes": [
+        "567x763"
+      ]
+    },
+    {
+      "file": "2025年花生片段阅读600题-解析【下】.pdf",
+      "relPath": "E:/BaiduNetdiskDownload/考公刷题本答案/片段阅读600题/完整题本/2025年花生片段阅读600题-解析【下】.pdf",
+      "booklet": "解析册",
+      "subject": "言语理解",
+      "pages": 212,
+      "textLayerPages": 0,
+      "scanPages": 212,
+      "scanPageRatio": 1.0,
+      "totalTextChars": 0,
+      "avgCharsPerPage": 0.0,
+      "pagesWithImages": 212,
+      "maxImagesPerPage": 2,
+      "pageSizes": [
+        "558x799"
+      ]
+    },
+    {
+      "file": "2025年花生片段阅读600题-题本【上】.pdf",
+      "relPath": "E:/BaiduNetdiskDownload/考公刷题本答案/片段阅读600题/完整题本/2025年花生片段阅读600题-题本【上】.pdf",
+      "booklet": "题本",
+      "subject": "言语理解",
+      "pages": 94,
+      "textLayerPages": 0,
+      "scanPages": 94,
+      "scanPageRatio": 1.0,
+      "totalTextChars": 0,
+      "avgCharsPerPage": 0.0,
+      "pagesWithImages": 94,
+      "maxImagesPerPage": 2,
+      "pageSizes": [
+        "567x763"
+      ]
+    },
+    {
+      "file": "2025年花生片段阅读600题-题本【下】.pdf",
+      "relPath": "E:/BaiduNetdiskDownload/考公刷题本答案/片段阅读600题/完整题本/2025年花生片段阅读600题-题本【下】.pdf",
+      "booklet": "题本",
+      "subject": "言语理解",
+      "pages": 92,
+      "textLayerPages": 0,
+      "scanPages": 92,
+      "scanPageRatio": 1.0,
+      "totalTextChars": 0,
+      "avgCharsPerPage": 0.0,
+      "pagesWithImages": 92,
+      "maxImagesPerPage": 2,
+      "pageSizes": [
+        "561x771"
+      ]
+    },
+    {
+      "file": "片段阅读600题-题本（1-4）.pdf",
+      "relPath": "E:/BaiduNetdiskDownload/考公刷题本答案/片段阅读600题/片段阅读600题-题本（1-4）.pdf",
+      "booklet": "题本",
+      "subject": "言语理解",
+      "pages": 25,
+      "textLayerPages": 0,
+      "scanPages": 25,
+      "scanPageRatio": 1.0,
+      "totalTextChars": 0,
+      "avgCharsPerPage": 0.0,
+      "pagesWithImages": 25,
+      "maxImagesPerPage": 6,
+      "pageSizes": [
+        "595x808"
+      ]
+    },
+    {
+      "file": "片段阅读600题-题本（12-15）.pdf",
+      "relPath": "E:/BaiduNetdiskDownload/考公刷题本答案/片段阅读600题/片段阅读600题-题本（12-15）.pdf",
+      "booklet": "题本",
+      "subject": "言语理解",
+      "pages": 24,
+      "textLayerPages": 0,
+      "scanPages": 24,
+      "scanPageRatio": 1.0,
+      "totalTextChars": 0,
+      "avgCharsPerPage": 0.0,
+      "pagesWithImages": 24,
+      "maxImagesPerPage": 6,
+      "pageSizes": [
+        "595x808"
+      ]
+    },
+    {
+      "file": "片段阅读600题-题本（5-11）.pdf",
+      "relPath": "E:/BaiduNetdiskDownload/考公刷题本答案/片段阅读600题/片段阅读600题-题本（5-11）.pdf",
+      "booklet": "题本",
+      "subject": "言语理解",
+      "pages": 43,
+      "textLayerPages": 0,
+      "scanPages": 43,
+      "scanPageRatio": 1.0,
+      "totalTextChars": 0,
+      "avgCharsPerPage": 0.0,
+      "pagesWithImages": 43,
+      "maxImagesPerPage": 6,
+      "pageSizes": [
+        "595x808"
+      ]
+    },
+    {
+      "file": "资料分析600题本篇.pdf",
+      "relPath": "E:/BaiduNetdiskDownload/考公刷题本答案/资料分析600题/完整题本/资料分析600题本篇.pdf",
+      "booklet": "题本",
+      "subject": "资料分析",
+      "pages": 188,
+      "textLayerPages": 0,
+      "scanPages": 188,
+      "scanPageRatio": 1.0,
+      "totalTextChars": 1572,
+      "avgCharsPerPage": 8.4,
+      "pagesWithImages": 188,
+      "maxImagesPerPage": 2,
+      "pageSizes": [
+        "595x842"
+      ]
+    },
+    {
+      "file": "资料分析600题解析篇.pdf",
+      "relPath": "E:/BaiduNetdiskDownload/考公刷题本答案/资料分析600题/完整题本/资料分析600题解析篇.pdf",
+      "booklet": "解析册",
+      "subject": "资料分析",
+      "pages": 392,
+      "textLayerPages": 0,
+      "scanPages": 392,
+      "scanPageRatio": 1.0,
+      "totalTextChars": 0,
+      "avgCharsPerPage": 0.0,
+      "pagesWithImages": 392,
+      "maxImagesPerPage": 3,
+      "pageSizes": [
+        "595x842"
+      ]
+    },
+    {
+      "file": "资料分析600题-题本（1-6）.pdf",
+      "relPath": "E:/BaiduNetdiskDownload/考公刷题本答案/资料分析600题/资料分析600题-题本（1-6）.pdf",
+      "booklet": "题本",
+      "subject": "资料分析",
+      "pages": 36,
+      "textLayerPages": 0,
+      "scanPages": 36,
+      "scanPageRatio": 1.0,
+      "totalTextChars": 0,
+      "avgCharsPerPage": 0.0,
+      "pagesWithImages": 36,
+      "maxImagesPerPage": 23,
+      "pageSizes": [
+        "595x808"
+      ]
+    },
+    {
+      "file": "资料分析600题-题本（13-15）.pdf",
+      "relPath": "E:/BaiduNetdiskDownload/考公刷题本答案/资料分析600题/资料分析600题-题本（13-15）.pdf",
+      "booklet": "题本",
+      "subject": "资料分析",
+      "pages": 20,
+      "textLayerPages": 0,
+      "scanPages": 20,
+      "scanPageRatio": 1.0,
+      "totalTextChars": 0,
+      "avgCharsPerPage": 0.0,
+      "pagesWithImages": 20,
+      "maxImagesPerPage": 23,
+      "pageSizes": [
+        "595x808"
+      ]
+    },
+    {
+      "file": "资料分析600题-题本（16-18）.pdf",
+      "relPath": "E:/BaiduNetdiskDownload/考公刷题本答案/资料分析600题/资料分析600题-题本（16-18）.pdf",
+      "booklet": "题本",
+      "subject": "资料分析",
+      "pages": 18,
+      "textLayerPages": 0,
+      "scanPages": 18,
+      "scanPageRatio": 1.0,
+      "totalTextChars": 0,
+      "avgCharsPerPage": 0.0,
+      "pagesWithImages": 18,
+      "maxImagesPerPage": 23,
+      "pageSizes": [
+        "595x808"
+      ]
+    },
+    {
+      "file": "资料分析600题-题本（7-12）.pdf",
+      "relPath": "E:/BaiduNetdiskDownload/考公刷题本答案/资料分析600题/资料分析600题-题本（7-12）.pdf",
+      "booklet": "题本",
+      "subject": "资料分析",
+      "pages": 39,
+      "textLayerPages": 0,
+      "scanPages": 39,
+      "scanPageRatio": 1.0,
+      "totalTextChars": 0,
+      "avgCharsPerPage": 0.0,
+      "pagesWithImages": 39,
+      "maxImagesPerPage": 22,
+      "pageSizes": [
+        "595x808"
+      ]
+    },
+    {
+      "file": "逻辑判断600题解析篇.pdf",
+      "relPath": "E:/BaiduNetdiskDownload/考公刷题本答案/逻辑判断600题/完整题本/逻辑判断600题解析篇.pdf",
+      "booklet": "解析册",
+      "subject": "判断推理",
+      "pages": 464,
+      "textLayerPages": 0,
+      "scanPages": 464,
+      "scanPageRatio": 1.0,
+      "totalTextChars": 0,
+      "avgCharsPerPage": 0.0,
+      "pagesWithImages": 464,
+      "maxImagesPerPage": 2,
+      "pageSizes": [
+        "516x728"
+      ]
+    },
+    {
+      "file": "逻辑判断600题题本篇.pdf",
+      "relPath": "E:/BaiduNetdiskDownload/考公刷题本答案/逻辑判断600题/完整题本/逻辑判断600题题本篇.pdf",
+      "booklet": "题本",
+      "subject": "判断推理",
+      "pages": 190,
+      "textLayerPages": 0,
+      "scanPages": 190,
+      "scanPageRatio": 1.0,
+      "totalTextChars": 0,
+      "avgCharsPerPage": 0.0,
+      "pagesWithImages": 190,
+      "maxImagesPerPage": 2,
+      "pageSizes": [
+        "516x728"
+      ]
+    },
+    {
+      "file": "逻辑判断600题-题本（1-6）.pdf",
+      "relPath": "E:/BaiduNetdiskDownload/考公刷题本答案/逻辑判断600题/逻辑判断600题-题本（1-6）.pdf",
+      "booklet": "题本",
+      "subject": "判断推理",
+      "pages": 33,
+      "textLayerPages": 0,
+      "scanPages": 33,
+      "scanPageRatio": 1.0,
+      "totalTextChars": 0,
+      "avgCharsPerPage": 0.0,
+      "pagesWithImages": 33,
+      "maxImagesPerPage": 16,
+      "pageSizes": [
+        "595x808"
+      ]
+    },
+    {
+      "file": "逻辑判断600题-题本（13-15）.pdf",
+      "relPath": "E:/BaiduNetdiskDownload/考公刷题本答案/逻辑判断600题/逻辑判断600题-题本（13-15）.pdf",
+      "booklet": "题本",
+      "subject": "判断推理",
+      "pages": 16,
+      "textLayerPages": 0,
+      "scanPages": 16,
+      "scanPageRatio": 1.0,
+      "totalTextChars": 0,
+      "avgCharsPerPage": 0.0,
+      "pagesWithImages": 16,
+      "maxImagesPerPage": 17,
+      "pageSizes": [
+        "595x808"
+      ]
+    },
+    {
+      "file": "逻辑判断600题-题本（16-18）.pdf",
+      "relPath": "E:/BaiduNetdiskDownload/考公刷题本答案/逻辑判断600题/逻辑判断600题-题本（16-18）.pdf",
+      "booklet": "题本",
+      "subject": "判断推理",
+      "pages": 18,
+      "textLayerPages": 0,
+      "scanPages": 18,
+      "scanPageRatio": 1.0,
+      "totalTextChars": 0,
+      "avgCharsPerPage": 0.0,
+      "pagesWithImages": 18,
+      "maxImagesPerPage": 16,
+      "pageSizes": [
+        "595x808"
+      ]
+    },
+    {
+      "file": "逻辑判断600题-题本（7-12）.pdf",
+      "relPath": "E:/BaiduNetdiskDownload/考公刷题本答案/逻辑判断600题/逻辑判断600题-题本（7-12）.pdf",
+      "booklet": "题本",
+      "subject": "判断推理",
+      "pages": 34,
+      "textLayerPages": 0,
+      "scanPages": 34,
+      "scanPageRatio": 1.0,
+      "totalTextChars": 0,
+      "avgCharsPerPage": 0.0,
+      "pagesWithImages": 34,
+      "maxImagesPerPage": 17,
+      "pageSizes": [
+        "595x808"
+      ]
+    }
+  ]
+}

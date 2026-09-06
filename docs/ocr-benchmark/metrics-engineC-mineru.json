@@ -1,0 +1,48 @@
+{
+ "engine": "C: mineru-3.4.5-pipeline-cpu(每类型前4页对照)",
+ "runName": "engineC-mineru",
+ "pages": 16,
+ "peakRssMb": null,
+ "medianMsPerPage": 45641,
+ "errors": 0,
+ "charsTotal": 15498,
+ "charsPerType": {
+  "图形推理候选": {
+   "pages": 4,
+   "avgChars": 1123
+  },
+  "普通文字": {
+   "pages": 4,
+   "avgChars": 654
+  },
+  "解析": {
+   "pages": 4,
+   "avgChars": 452
+  },
+  "资料分析": {
+   "pages": 4,
+   "avgChars": 1646
+  }
+ },
+ "silentDropSuspects": null,
+ "optionCompleteProxy": null,
+ "tableStructProxy": {
+  "tables": 3,
+  "imageRegions": 32
+ },
+ "graphicBindProxy": null,
+ "digitConsistencyVsA": {
+  "vs": "engineA-200dpi",
+  "meanJaccard": 0.61,
+  "pagesChecked": 16
+ },
+ "pendingHumanMetrics": [
+  "题干完整率",
+  "选项完整率(真实)",
+  "数字准确率",
+  "表格单元格准确率",
+  "图片选项绑定率(真实)",
+  "答案配对率(真实)",
+  "静默丢题数(真实)"
+ ]
+}

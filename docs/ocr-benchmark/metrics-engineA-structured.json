@@ -1,0 +1,36 @@
+{
+ "engine": "A-structured: rapid-doc-0.9.10",
+ "runName": "engineA-structured",
+ "pages": 39,
+ "peakRssMb": 1669.6,
+ "medianMsPerPage": 1920,
+ "errors": 0,
+ "charsTotal": 50584,
+ "charsPerType": {
+  "图形推理候选": {
+   "pages": 19,
+   "avgChars": 1033
+  },
+  "资料分析": {
+   "pages": 20,
+   "avgChars": 1548
+  }
+ },
+ "silentDropSuspects": null,
+ "optionCompleteProxy": null,
+ "tableStructProxy": {
+  "tables": 11,
+  "imageRegions": 232
+ },
+ "graphicBindProxy": null,
+ "digitConsistencyVsA": null,
+ "pendingHumanMetrics": [
+  "题干完整率",
+  "选项完整率(真实)",
+  "数字准确率",
+  "表格单元格准确率",
+  "图片选项绑定率(真实)",
+  "答案配对率(真实)",
+  "静默丢题数(真实)"
+ ]
+}
