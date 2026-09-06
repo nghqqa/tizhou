@@ -128,15 +128,14 @@ it.runIf(Boolean(ziliaoTiben && ziliaoJieda && tuituiAfter))(
       workerNoiseStripped: regions?.removedNoise ?? 0
     }
 
-    const report = { generatedAt: new Date().toISOString(), ziliao, tuitui }
+    // 不写入时间戳：生成文件内容必须确定，避免每次运行污染工作区
+    const report = { ziliao, tuitui }
     mkdirSync('docs', { recursive: true })
     writeFileSync('docs/quality-baseline.json', JSON.stringify(report, null, 1), 'utf8')
     writeFileSync(
       'docs/quality-baseline.md',
       [
         '# 导入质量基线（资料分析 + 图形推理）',
-        '',
-        `生成时间：${report.generatedAt}`,
         '',
         '## 资料分析600题（题本1-6 结构解析 + 解析篇 逐页 OCR）',
         `- 总页数：${ziliao.totalPages}（OCR ${ziliao.ocrPages} 页），识别字符 ${ziliao.characters}`,

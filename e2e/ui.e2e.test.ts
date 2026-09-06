@@ -10,9 +10,11 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   closeApp,
+  dumpE2EArtifacts,
   launchApp,
   launchSeededExamApp,
   removeTempDataDir,
+  waitForQuestionAndAnswer,
   type AppHandle
 } from './helpers'
 
@@ -28,6 +30,7 @@ async function useApp(handle: AppHandle): Promise<Page> {
 async function closeCurrent(): Promise<void> {
   if (!app) return
   await closeApp(app)
+  app = undefined
 }
 
 /** 套件收尾：关闭应用后清理 tizhou-e2e-* 临时数据目录（失败时保留并输出路径） */
@@ -44,32 +47,19 @@ async function closeCurrentAndClean(): Promise<void> {
   await removeTempDataDir(dataDir)
 }
 
-/** 统一用例包装：注册失败转储（截图 + 页面 HTML 到 e2e-artifacts/），不覆盖原始异常 */
+/** 统一用例包装：onTestFailed 异步等待失败转储（截图 + 页面 HTML），不覆盖原始异常 */
 function itE2E(name: string, fn: (page: Page) => Promise<void>): void {
   it(
     name,
     async () => {
       onTestFailed(async () => {
         failedInCurrentSuite = true
-        await dumpFailure(name, app?.page)
+        await dumpE2EArtifacts(app?.page, name)
       })
       await fn(app!.page)
     },
     180_000
   )
-}
-
-async function dumpFailure(name: string, page: Page | undefined): Promise<void> {
-  if (!page) return
-  try {
-    const safe = name.replace(/[\\/:*?"<>|]/g, '_')
-    const dir = 'e2e-artifacts'
-    mkdirSync(dir, { recursive: true })
-    await page.screenshot({ path: join(dir, `${safe}.png`), fullPage: true })
-    writeFileSync(join(dir, `${safe}.html`), await page.content(), 'utf8')
-  } catch {
-    /* 转储失败不影响原始异常 */
-  }
 }
 
 describe('启动、导航与全局功能', () => {
@@ -91,11 +81,11 @@ describe('启动、导航与全局功能', () => {
     expect(page.url()).not.toContain('/exam')
   })
 
-  itE2E('申论页面：草稿输入、保存，重启后持久化', async (page) => {
+  itE2E('申论页面：草稿输入、保存，重启后持久化', async () => {
+    // 注意：重启后必须从 app 取新页——旧 page 已随应用关闭
+    let page = app!.page
     await page.getByRole('link', { name: '申论作答' }).click()
-    const draft = page.getByPlaceholder(
-      '建议先列要点，再组织成完整答案。草稿会在停止输入后自动保存。'
-    )
+    let draft = page.getByTestId('shenlun-draft-input')
     await draft.waitFor({ timeout: 30_000 })
     await draft.fill('E2E 申论草稿：第一，明确观点；第二，给出论据；第三，总结提升。')
     await page.getByRole('button', { name: '保存草稿' }).click()
@@ -104,15 +94,14 @@ describe('启动、导航与全局功能', () => {
     // 关闭应用后用同一临时数据目录重启：草稿从数据库恢复（持久化证据）
     const dataDir = app.dataDir
     await closeCurrent()
-    const restarted = await launchApp({ dataDir })
-    await useApp(restarted)
-    const newPage = restarted.page
-    await newPage.getByRole('link', { name: '申论作答' }).click()
-    const restored = newPage.getByPlaceholder(
-      '建议先列要点，再组织成完整答案。草稿会在停止输入后自动保存。'
-    )
-    await restored.waitFor({ timeout: 30_000 })
-    const restoredValue = await restored.inputValue()
+    // Windows 下句柄释放有延迟：稍候再重启，避免 SQLite 锁冲突
+    await new Promise((resolve) => setTimeout(resolve, 1_500))
+    app = await launchApp({ dataDir })
+    page = app.page
+    await page.getByRole('link', { name: '申论作答' }).click()
+    draft = page.getByTestId('shenlun-draft-input')
+    await draft.waitFor({ timeout: 30_000 })
+    const restoredValue = await draft.inputValue()
     expect(restoredValue).toMatch(/E2E 申论草稿/)
   })
 
@@ -167,22 +156,21 @@ describe('模考全流程（独立种子题库，正常保存）', () => {
     await closeCurrentAndClean()
   })
 
-  itE2E('创建模考 → 逐题作答（含申论）→ 交卷 → 结果页', async (page) => {
+  itE2E('创建模考 → 逐题作答（客观/申论自动识别）→ 交卷 → 结果页', async (page) => {
     await page.getByRole('link', { name: '模拟考试' }).click()
     await page.getByRole('button', { name: '创建并开始' }).click()
     await page.getByTestId('exam-submit').waitFor({ timeout: 60_000 })
 
-    // 逐题作答：客观题点 A，申论题填草稿；「下一题」禁用即最后一题，转交卷
+    // 逐题作答：题目类型由 waitForQuestionAndAnswer 判定，不依赖出现顺序
     for (let question = 0; question < 30; question += 1) {
-      const optionA = page.getByTestId('exam-option-A')
-      if (await optionA.count()) {
-        await optionA.first().click()
+      const kind = await waitForQuestionAndAnswer(page)
+      if (kind === 'objective') {
+        await page.getByTestId('exam-option-A').click()
       } else {
-        const textarea = page.getByPlaceholder(
-          '建议先列要点，再组织成完整答案。草稿会在停止输入后自动保存。'
-        )
-        if (await textarea.count())
-          await textarea.first().fill(`E2E 申论作答（第 ${question + 1} 题）`)
+        const essay = page.getByTestId('exam-essay-input')
+        await essay.fill(`E2E 申论作答（第 ${question + 1} 题）`)
+        // 等待 600ms 防抖自动保存触发完成
+        await new Promise((resolve) => setTimeout(resolve, 1_000))
       }
       const next = page.getByRole('button', { name: '下一题' })
       if (await next.isDisabled()) break
@@ -208,18 +196,12 @@ describe('模考（保存失败阻止交卷，重试后放行）', () => {
   itE2E('首次交卷被阻止并自动重试，再次交卷成功', async (page) => {
     await page.getByRole('link', { name: '模拟考试' }).click()
     await page.getByRole('button', { name: '创建并开始' }).click()
-    await page.getByTestId('exam-submit').waitFor({ timeout: 60_000 })
-
-    // 答第一题：可能是客观题（点选项）或申论题（填草稿，600ms 防抖后自动保存）
-    const optionA = page.getByTestId('exam-option-A')
-    if (await optionA.count()) {
-      await optionA.first().click()
+    // 显式等待首题加载：客观/申论都可（保存失败注入与题型无关）
+    const kind = await waitForQuestionAndAnswer(page)
+    if (kind === 'objective') {
+      await page.getByTestId('exam-option-A').click()
     } else {
-      const textarea = page.getByPlaceholder(
-        '建议先列要点，再组织成完整答案。草稿会在停止输入后自动保存。'
-      )
-      await textarea.fill('E2E 申论作答内容（首题）')
-      // 等待 600ms 防抖自动保存触发完成
+      await page.getByTestId('exam-essay-input').fill('E2E 申论作答内容（首题）')
       await new Promise((resolve) => setTimeout(resolve, 1_000))
     }
     await page.getByTestId('exam-submit').click()

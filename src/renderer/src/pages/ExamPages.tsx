@@ -577,6 +577,8 @@ export function ExamRunPage(): React.JSX.Element {
             <div>
               <textarea
                 className="essay-editor"
+                data-testid="exam-essay-input"
+                aria-label="主观题作答输入"
                 value={essayText}
                 onChange={(event) => scheduleEssaySave(event.target.value)}
               />

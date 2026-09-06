@@ -173,6 +173,8 @@ export function ShenlunSolutionPage(): React.JSX.Element {
             {view === 'write' ? (
               <textarea
                 className="essay-editor"
+                data-testid="shenlun-draft-input"
+                aria-label="申论作答草稿"
                 value={content}
                 onChange={(event) => setContent(event.target.value)}
                 placeholder="建议先列要点，再组织成完整答案。草稿会在停止输入后自动保存。"

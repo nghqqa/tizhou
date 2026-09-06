@@ -26,7 +26,7 @@
     "smoke:packaged": "node tools/smoke-packaged.mjs",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "test:e2e": "vitest run --config e2e/vitest.config.ts"
+    "test:e2e": "npm run build && vitest run --config e2e/vitest.config.ts"
   },
   "dependencies": {
     "@fluentui/react-components": "9.74.6",

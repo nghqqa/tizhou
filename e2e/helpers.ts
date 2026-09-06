@@ -10,6 +10,7 @@ import {
   rmSync,
   existsSync,
   realpathSync,
+  writeFileSync,
   type Stats
 } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -46,6 +47,8 @@ export async function launchSeededExamApp(
   // 第一次启动：让应用完成数据库迁移与内建知识库初始化
   const bootstrap = await launchRaw(dataDir, {})
   await closeApp(bootstrap)
+  // Windows 下文件句柄释放有延迟：稍候再种入，避免 SQLite 锁冲突
+  await new Promise((resolve) => setTimeout(resolve, 1_500))
   const seeded = seedQuestions(dataDir)
   if (seeded === 0) throw new Error('E2E 种子失败：内建知识库未初始化')
   // 第二次启动：正式实例（题目集合确定，随机抽取也是全集）
@@ -178,4 +181,41 @@ export function seedQuestions(dataDir: string): number {
   }
   db.close()
   return seeded
+}
+
+// ---- 题目作答等待：客观选项 / 申论输入 / 明确错误状态三者必居其一 ----
+export type QuestionKind = 'objective' | 'essay'
+
+/** 等待当前题目加载完成（客观选项或申论输入框之一可见），返回题型。
+ *  三者都未出现（超时）时转储现场信息后抛错，不吞掉真实错误。 */
+export async function waitForQuestionAndAnswer(page: Page): Promise<QuestionKind> {
+  const option = page.getByTestId('exam-option-A')
+  const essayInput = page.getByTestId('exam-essay-input')
+  try {
+    await option.or(essayInput).first().waitFor({ state: 'visible', timeout: 30_000 })
+  } catch {
+    const url = page.url()
+    const bodyText = await page
+      .locator('body')
+      .innerText()
+      .catch(() => '')
+    console.error(`[e2e] 题目未加载：url=${url}\n页面文本（前 400 字）：${bodyText.slice(0, 400)}`)
+    await dumpE2EArtifacts(page, '题目未加载')
+    throw new Error(`30 秒内未出现客观选项或申论输入框：url=${url}`)
+  }
+  if (await essayInput.count()) return 'essay'
+  return 'objective'
+}
+
+/** 失败现场转储：截图 + 页面 HTML 写入 e2e-artifacts/；内部捕获异常不影响调用方 */
+export async function dumpE2EArtifacts(page: Page, name: string): Promise<void> {
+  try {
+    const safe = name.replace(/[\/:*?"<>|]/g, '_')
+    const dir = 'e2e-artifacts'
+    mkdirSync(dir, { recursive: true })
+    await page.screenshot({ path: join(dir, `${safe}.png`), fullPage: true })
+    writeFileSync(join(dir, `${safe}.html`), await page.content(), 'utf8')
+  } catch {
+    /* 转储失败不影响原流程 */
+  }
 }
