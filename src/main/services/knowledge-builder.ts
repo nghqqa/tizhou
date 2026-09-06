@@ -45,8 +45,9 @@ import {
 import { mergeByDocumentOrder } from './direct-sequential-merge'
 import {
   CAPABILITY_LABELS,
-  classifyFileCapability,
   batchFactsMessage,
+  classifyFileCapability,
+  isValidPageCount,
   tierForArtifact,
   loadStructuredRegions,
   scanNumericAnomalies,
@@ -1502,7 +1503,7 @@ export class KnowledgeBuilderService {
                   summary: CAPABILITY_LABELS[capability],
                   docs: [
                     {
-                      id: `kb-u${hash(file.relativePath).slice(0, 19)}`,
+                      id: `kb-${hash(`preserve${file.relativePath}`).slice(0, 19)}`,
                       title: '保留原始资料 · 未能自动结构化',
                       markdown: [
                         '---',
@@ -1877,13 +1878,19 @@ export class KnowledgeBuilderService {
         const facts: ImportBatchFacts = {
           fileCount: job.files.length,
           failedFileCount: job.files.filter((file) => file.state === 'failed').length,
-          filesWithKnownPages: job.files.filter((file) => file.ocrQuality?.totalPages).length,
+          filesWithKnownPages: job.files.filter((file) =>
+            isValidPageCount(file.ocrQuality?.totalPages)
+          ).length,
           knownInputPages: job.files.reduce(
-            (sum, file) => sum + (file.ocrQuality?.totalPages ?? 0),
+            (sum, file) =>
+              sum +
+              (isValidPageCount(file.ocrQuality?.totalPages) ? file.ocrQuality!.totalPages! : 0),
             0
           ),
           knownEmptyPages: job.files.reduce(
-            (sum, file) => sum + (file.ocrQuality?.emptyPages ?? 0),
+            (sum, file) =>
+              sum +
+              (isValidPageCount(file.ocrQuality?.emptyPages) ? file.ocrQuality!.emptyPages! : 0),
             0
           ),
           structuredArtifacts: allArtifacts.filter((a) => a.importQualityTier === 'structured')

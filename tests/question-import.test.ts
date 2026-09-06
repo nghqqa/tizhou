@@ -1180,7 +1180,7 @@ describe('直导批次质量分层与汇总（管线级）', () => {
     return { job, service }
   }
 
-  it('质量分层随产物持久化：保存后重新加载仍存在；申论/客观题均为 structured', async () => {
+  it('客观题质量分层落盘往返：structured 保存后重新加载仍存在', async () => {
     const { job, service } = await runDirectImport({
       '题本.md':
         [
@@ -1306,5 +1306,193 @@ describe('直导批次质量分层与汇总（管线级）', () => {
         ].join('\n') + '\n'
     })
     expect(job.message).toMatch(/无答案\s*1/)
+  }, 35_000)
+
+  it('申论题（无选项）→ structured：申论不以选项数判层，落盘往返保留', async () => {
+    const { job, service } = await runDirectImport({
+      '申论题本.md':
+        [
+          '2027申论',
+          '第一章 归纳概括',
+          '【训练一】提升基层社会治理水平经验做法',
+          '资料2',
+          'W市经济技术开发区在实践中探索设立社区基金，吸纳驻区单位、企业园区、社会组织、居民群众中的红色力量参与社区基金的筹建，搭建社区需求与资源对接的公益平台，形成精准化对接、项目化运作、品牌化带动新格局。目前我们已成立街道级社区基金2支、社区级基金32支，累计募捐资金达到130余万元。',
+          '根据"给定资料2"，归纳W市经开区依托社区基金提升基层社会治理水平的经验做法。',
+          '(2023年山东B卷）',
+          '要求：全面，准确，有条理，不超过300字。'
+        ].join('\n') + '\n'
+    })
+    expect(job.status).toBe('review')
+    expect(job.message).toMatch(/申论主观题 1 道/)
+    const essayArtifact = job.artifacts.find((a) => a.kind === 'question')
+    expect(essayArtifact).toBeDefined()
+    // 落盘往返：重新加载 detail
+    const detail = service.getArtifact(job.id, essayArtifact!.id)
+    expect(detail?.importQualityTier).toBe('structured')
+  }, 35_000)
+
+  it('含 markdown 表格的资料分析题本 → capability=table-review → review-required 落盘往返', async () => {
+    const { job, service } = await runDirectImport({
+      '题本.md':
+        [
+          '练习题01套',
+          '| 项目 | 2021年 | 2022年 |',
+          '| --- | --- | --- |',
+          '| 财产性收入 | 2090 | 3016 |',
+          '| 转移性收入 | 8217 | 10106 |',
+          '1. 甲题干内容足够长了吧：',
+          'A. 选项一',
+          'B. 选项二',
+          'C. 选项三',
+          'D. 选项四',
+          '2. 乙题干内容也足够长了：',
+          'A. 选项一',
+          'B. 选项二',
+          'C. 选项三',
+          'D. 选项四',
+          '3. 丙题干内容同样足够长：',
+          'A. 选项一',
+          'B. 选项二',
+          'C. 选项三',
+          'D. 选项四'
+        ].join('\n') + '\n',
+      '解析.md':
+        [
+          '1. 甲题干内容足够长了吧：',
+          '【参考答案】A',
+          '【实战解析】甲的解析。',
+          '2. 乙题干内容也足够长了：',
+          '【参考答案】B',
+          '【实战解析】乙的解析。',
+          '3. 丙题干内容同样足够长：',
+          '【参考答案】C',
+          '【实战解析】丙的解析。'
+        ].join('\n') + '\n'
+    })
+    expect(job.message).toContain('待人工审核')
+    const question = job.artifacts.find((a) => a.kind === 'question')
+    const detail = service.getArtifact(job.id, question!.id)
+    expect(detail?.capability).toBe('table-review')
+    expect(detail?.importQualityTier).toBe('review-required')
+  }, 35_000)
+
+  it('无法切出题的无结构文件 → 原始资料保留（preserved-source）落盘往返', async () => {
+    const { job, service } = await runDirectImport({
+      '纯文字资料.md': '这是一段没有任何题目的普通文字资料。'.repeat(10) + '\n'
+    })
+    // 无题可切且无训练标记 → 能力边界保留通道
+    const document = job.artifacts.find((a) => a.kind === 'document')
+    expect(document).toBeDefined()
+    const detail = service.getArtifact(job.id, document!.id)
+    expect(detail?.importQualityTier).toBe('preserved-source')
+  }, 35_000)
+
+  it('jobView 的 artifactSummary 透传 importQualityTier 到渲染层', async () => {
+    const { job } = await runDirectImport({
+      '题本.md':
+        [
+          '练习题01套',
+          '1. 甲题干内容足够长了吧：',
+          'A. 选项一',
+          'B. 选项二',
+          'C. 选项三',
+          'D. 选项四',
+          '2. 乙题干内容也足够长了：',
+          'A. 选项一',
+          'B. 选项二',
+          'C. 选项三',
+          'D. 选项四',
+          '3. 丙题干内容同样足够长：',
+          'A. 选项一',
+          'B. 选项二',
+          'C. 选项三',
+          'D. 选项四'
+        ].join('\n') + '\n',
+      '解析.md':
+        [
+          '1. 甲题干内容足够长了吧：',
+          '【参考答案】A',
+          '【实战解析】甲的解析。',
+          '2. 乙题干内容也足够长了：',
+          '【参考答案】B',
+          '【实战解析】乙的解析。',
+          '3. 丙题干内容同样足够长：',
+          '【参考答案】C',
+          '【实战解析】丙的解析。'
+        ].join('\n') + '\n'
+    })
+    // job.artifacts 是 jobView→artifactSummary 的输出（渲染层契约）
+    const questionSummary = job.artifacts.find((a) => a.kind === 'question')
+    expect(questionSummary?.importQualityTier).toBe('structured')
+  }, 35_000)
+
+  it('转换异常文件 → failed 状态计数进汇总，文案不统一声称「转换失败」', async () => {
+    // 单独构造：mock convert 抛错使文件 failed
+    const data = temporaryDirectory('tizhou-kb-fail-data-')
+    const source = temporaryDirectory('tizhou-kb-fail-src-')
+    writeFileSync(join(source, '坏文件.md'), '内容足够长但转换会失败。'.repeat(5), 'utf8')
+    const service = new KnowledgeBuilderService(
+      data,
+      process.cwd(),
+      {} as AiService,
+      {
+        connect: vi.fn(() => ({
+          vault: { id: 'm', name: 'v', path: 'C:/v', warnings: [], isBuiltin: false },
+          added: 0,
+          updated: 0,
+          removed: 0,
+          skipped: 0,
+          warnings: []
+        })),
+        ensureBuiltinVault: () => ({
+          id: 'builtin',
+          name: '内置示例库',
+          path: 'C:/builtin',
+          connectedAt: '',
+          lastIndexedAt: '',
+          questionCount: 0,
+          documentCount: 0,
+          warnings: [],
+          isBuiltin: true
+        }),
+        questionSignatures: () => new Set<string>()
+      } as unknown as VaultService
+    )
+    vi.spyOn(service, 'engineStatus').mockResolvedValue({
+      available: true,
+      installing: false,
+      version: 'test',
+      pythonPath: 'test-python',
+      ocrAvailable: false,
+      message: 'ready',
+      supportedExtensions: ['.md']
+    })
+    const conversionTarget = service as unknown as {
+      convert: (python: string, worker: string, source: string, output: string) => Promise<void>
+    }
+    vi.spyOn(conversionTarget, 'convert').mockRejectedValue(new Error('模拟转换异常'))
+    const scan = service.scan(source)
+    const started = await service.startJob({
+      sourcePath: source,
+      fileIds: scan.files.filter((file) => file.eligible).map((file) => file.id),
+      options: {
+        mode: 'direct',
+        quality: 'standard',
+        subject: 'auto',
+        tags: [],
+        instruction: '',
+        rightsConfirmed: true
+      }
+    })
+    let job = started
+    const deadline = Date.now() + 30_000
+    while (['queued', 'running', 'cancelling'].includes(job.status) && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      job = service.getJob(started.id)
+    }
+    expect(job.files[0]?.state).toBe('failed')
+    // 汇总文案：failed 状态涵盖转换异常/中断/拦截，不统一说「转换失败」
+    expect(job.message).toContain('处理失败或被拦截文件 1 个')
+    expect(job.message).not.toContain('转换失败文件')
   }, 35_000)
 })

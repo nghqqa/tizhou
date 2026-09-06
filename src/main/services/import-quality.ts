@@ -401,13 +401,13 @@ export function tierForArtifact(artifact: {
 export interface ImportBatchFacts {
   /** 文件总数 */
   fileCount: number
-  /** 文件转换失败数（file.state=failed） */
+  /** 处理失败或被拦截的文件数（file.state=failed：含转换异常/中断/配对拦截等，不区分原因） */
   failedFileCount: number
-  /** 提供了 ocrQuality.totalPages 的文件数 */
+  /** 提供了有效 ocrQuality.totalPages 的文件数 */
   filesWithKnownPages: number
-  /** 已知输入页数之和（仅来自转换质量报告） */
+  /** 已知输入页数之和（仅来自转换质量报告的有效页数） */
   knownInputPages: number
-  /** 已知空白页数之和 */
+  /** 已知空白页数之和（仅来自转换器报告，不代表确认丢题） */
   knownEmptyPages: number
   /** structured 产物数 */
   structuredArtifacts: number
@@ -424,6 +424,11 @@ export interface ImportBatchFacts {
   abortedBooks: number
 }
 
+/** 页数有效性：只有非负整数才是可用的转换器报告页数（拒绝 undefined/NaN/小数/负数） */
+export function isValidPageCount(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0
+}
+
 /** 汇总文案：页数缺失与无法计算项必须如实显示，不用题目数反推页数 */
 export function batchFactsMessage(facts: ImportBatchFacts): string {
   const parts: string[] = []
@@ -436,6 +441,8 @@ export function batchFactsMessage(facts: ImportBatchFacts): string {
   } else {
     parts.push('输入页数未知，转换器未提供页数')
   }
+  // 空白页仅来自转换器报告，不是确认丢题
+  if (facts.knownEmptyPages > 0) parts.push(`报告空白页 ${facts.knownEmptyPages} 页`)
   parts.push(`结构化题目 ${facts.structuredArtifacts}`)
   parts.push(`待人工审核 ${facts.reviewRequiredArtifacts}`)
   parts.push(`原始资料保留 ${facts.preservedSourceArtifacts}`)
@@ -446,7 +453,8 @@ export function batchFactsMessage(facts: ImportBatchFacts): string {
     `重复 ${facts.skippedDuplicate}`
   ]
   parts.push(`跳过（${skips.join('·')}）`)
-  if (facts.failedFileCount > 0) parts.push(`转换失败文件 ${facts.failedFileCount} 个`)
+  // failed 状态可能来自转换异常/中断/配对拦截——统一为「处理失败或被拦截」，不猜原因
+  if (facts.failedFileCount > 0) parts.push(`处理失败或被拦截文件 ${facts.failedFileCount} 个`)
   if (facts.abortedBooks > 0) parts.push(`${facts.abortedBooks} 本书因疑似套号错位被拦截`)
   parts.push('缺题数和原图页覆盖率无法计算：当前未建立来源页到题目/图片的完整映射')
   return parts.join(' · ')

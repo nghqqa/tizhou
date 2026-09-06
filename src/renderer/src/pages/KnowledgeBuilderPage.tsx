@@ -1120,9 +1120,9 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
                         <small
                           title={
                             item.importQualityTier === 'structured'
-                              ? '结构化题目：已生成可作答结构（不代表 OCR 内容正确）'
+                              ? '结构化题目：已生成可作答结构，不代表 OCR 内容正确'
                               : item.importQualityTier === 'review-required'
-                                ? '待人工审核：含图片/表格/图推等能力边界内容'
+                                ? '待人工审核：导入结果抽查——含图片/表格/图推等能力边界内容（不是要求标注 OCR 数据集）'
                                 : '原始资料保留：仅保留原始资料，未生成可作答题目'
                           }
                         >

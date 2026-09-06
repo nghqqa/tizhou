@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   batchFactsMessage,
   cleanExplanation,
+  isValidPageCount,
   isNumberStreamLine,
   quarantineNumberStreamLine,
   questionCompleteness,
@@ -269,9 +270,25 @@ describe('批次质量汇总 batchFactsMessage', () => {
     )
   })
 
-  it('failed 文件数与 abortedBooks 拦截提示如实展示', () => {
+  it('failed 文件数与 abortedBooks 拦截提示如实展示，不统一声称「转换失败」', () => {
     const message = batchFactsMessage({ ...baseFacts, failedFileCount: 1, abortedBooks: 2 })
-    expect(message).toContain('转换失败文件 1 个')
+    // failed 状态可能是转换异常/中断/配对拦截——文案必须涵盖「或被拦截」，不猜原因
+    expect(message).toContain('处理失败或被拦截文件 1 个')
+    expect(message).not.toContain('转换失败')
     expect(message).toContain('2 本书因疑似套号错位被拦截')
+  })
+
+  it('knownEmptyPages > 0 时显示报告空白页，为 0 时不显示', () => {
+    expect(batchFactsMessage({ ...baseFacts, knownEmptyPages: 2 })).toContain('报告空白页 2 页')
+    expect(batchFactsMessage({ ...baseFacts, knownEmptyPages: 0 })).not.toContain('空白页')
+  })
+
+  it('isValidPageCount 拒绝 undefined/NaN/小数/负数，只接受非负整数', () => {
+    expect(isValidPageCount(undefined)).toBe(false)
+    expect(isValidPageCount(NaN)).toBe(false)
+    expect(isValidPageCount(3.5)).toBe(false)
+    expect(isValidPageCount(-1)).toBe(false)
+    expect(isValidPageCount(0)).toBe(true)
+    expect(isValidPageCount(36)).toBe(true)
   })
 })
