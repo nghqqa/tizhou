@@ -63,12 +63,14 @@ function createE2EMockUpdater(scenario: string) {
 }
 
 const electronUpdater = nodeRequire('electron-updater') as typeof import('electron-updater')
-const autoUpdater =
-  process.env.WORKBENCH_E2E === '1'
-    ? (createE2EMockUpdater(
-        process.env.WORKBENCH_E2E_UPDATE_SCENARIO ?? 'none'
-      ) as unknown as typeof electronUpdater.autoUpdater)
-    : electronUpdater.autoUpdater
+// E2E 注入总开关：仅「非打包实例 + 显式环境变量」同时满足才生效——
+// 正式包（app.isPackaged）无论环境变量如何都不会启用 mock 更新器/保存失败注入/测试窗口标记
+const isE2EMode = !app.isPackaged && process.env.WORKBENCH_E2E === '1'
+const autoUpdater = isE2EMode
+  ? (createE2EMockUpdater(
+      process.env.WORKBENCH_E2E_UPDATE_SCENARIO ?? 'none'
+    ) as unknown as typeof electronUpdater.autoUpdater)
+  : electronUpdater.autoUpdater
 // E2E 注入点：WORKBENCH_E2E_FAIL_SAVE=once 时第一次 exam.save 抛错（验证交卷阻止与重试）
 let e2eExamSaveFailedOnce = false
 
@@ -220,7 +222,7 @@ function createWindow(): void {
     event.preventDefault()
   })
   if (process.env.ELECTRON_RENDERER_URL) void mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL)
-  else if (process.env.WORKBENCH_E2E === '1')
+  else if (isE2EMode)
     void mainWindow.loadFile(join(currentDirectory, '../renderer/index.html'), {
       query: { e2e: '1' }
     })
@@ -410,8 +412,9 @@ async function initialize(): Promise<void> {
       case 'exam.active':
         return database!.getActiveExam()
       case 'exam.save':
-        // E2E 注入点：首次保存失败，验证「保存失败阻止交卷 → 重试后放行」
-        if (process.env.WORKBENCH_E2E_FAIL_SAVE === 'once' && !e2eExamSaveFailedOnce) {
+        // E2E 注入点：首次保存失败，验证「保存失败阻止交卷 → 重试后放行」。
+        // 由 isE2EMode（非打包 + 显式环境变量）双重门控，正式包永不触发
+        if (isE2EMode && process.env.WORKBENCH_E2E_FAIL_SAVE === 'once' && !e2eExamSaveFailedOnce) {
           e2eExamSaveFailedOnce = true
           throw new Error('E2E：模拟答案保存失败')
         }
@@ -468,7 +471,8 @@ async function initialize(): Promise<void> {
           // 防重入：检查进行中直接返回当前状态（渲染层与主进程双保险）
           if (updateStatus.checking) return getUpdateStatus()
           // 网络自动探测：cnb 可达且版本不落后 → 从国内镜像检查；否则回退 GitHub
-          const feed = await resolveUpdateFeed()
+          // （E2E 模式下跳过真实探测：检查结果由 mock updater 决定）
+          const feed = await resolveUpdateFeed(fetch, { probeDisabled: isE2EMode })
           if (feed.provider === 'generic' && feed.url) {
             autoUpdater.setFeedURL({ provider: 'generic', url: feed.url })
           }

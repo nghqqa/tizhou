@@ -24,6 +24,29 @@ export interface LaunchOptions {
 /** 启动完整应用：临时数据目录 + WORKBENCH_E2E 挂钩（mock updater / 保存失败注入 / e2e=1 窗口标记） */
 export async function launchApp(options: LaunchOptions = {}): Promise<AppHandle> {
   const dataDir = options.dataDir ?? mkdtempSync(join(tmpdir(), 'tizhou-e2e-'))
+  return launchRaw(dataDir, options)
+}
+
+/** 模考套件专用：自举建库建表 → 种入题库 → 启动正式实例。
+ *  每个套件独立调用即可获得隔离的临时数据目录与确定的题目集合，
+ *  不依赖任何其他测试的执行顺序。 */
+export async function launchSeededExamApp(
+  options: { failSaveOnce?: boolean } = {}
+): Promise<AppHandle> {
+  const dataDir = mkdtempSync(join(tmpdir(), 'tizhou-e2e-exam-'))
+  // 第一次启动：让应用完成数据库迁移与内建知识库初始化
+  const bootstrap = await launchRaw(dataDir, {})
+  await closeApp(bootstrap)
+  const seeded = seedQuestions(dataDir)
+  if (seeded === 0) throw new Error('E2E 种子失败：内建知识库未初始化')
+  // 第二次启动：正式实例（题目集合确定，随机抽取也是全集）
+  return launchRaw(dataDir, { failSaveOnce: options.failSaveOnce })
+}
+
+async function launchRaw(
+  dataDir: string,
+  options: { failSaveOnce?: boolean; updateScenario?: 'none' | 'available' | 'error' }
+): Promise<AppHandle> {
   const electronApp = await electron.launch({
     args: ['.'],
     env: {
