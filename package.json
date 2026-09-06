@@ -25,7 +25,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "smoke:packaged": "node tools/smoke-packaged.mjs",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "test:e2e": "vitest run --config e2e/vitest.config.ts"
   },
   "dependencies": {
     "@fluentui/react-components": "9.74.6",
@@ -52,6 +53,7 @@
     "electron": "43.4.0",
     "electron-builder": "26.15.3",
     "electron-vite": "5.0.0",
+    "playwright": "^1.63.0",
     "prettier": "3.9.6",
     "typescript": "7.0.2",
     "vite": "7.3.6",

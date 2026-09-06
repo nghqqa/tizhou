@@ -17,7 +17,60 @@ import { resolveUpdateFeed } from './services/update-feed'
 
 // electron-updater 是 CommonJS 包，用 createRequire 兼容 ESM 主进程
 const nodeRequire = createRequire(import.meta.url)
-const { autoUpdater } = nodeRequire('electron-updater') as typeof import('electron-updater')
+
+// E2E 场景驱动的 mock 更新器：WORKBENCH_E2E=1 时替换真实 autoUpdater，
+// IPC 行为保持一致（check/download/install 事件流），由场景变量驱动结果。
+function createE2EMockUpdater(scenario: string) {
+  const listeners = new Map<string, Array<(payload?: unknown) => void>>()
+  const on = (event: string, cb: (payload?: unknown) => void): void => {
+    const list = listeners.get(event) ?? []
+    list.push(cb)
+    listeners.set(event, list)
+  }
+  const emit = (event: string, payload?: unknown): void => {
+    for (const cb of listeners.get(event) ?? []) cb(payload)
+  }
+  return {
+    autoDownload: false,
+    autoInstallOnAppQuit: false,
+    logger: null,
+    on,
+    async checkForUpdates() {
+      emit('checking-for-update')
+      if (scenario === 'error') {
+        const error = new Error('模拟更新服务不可用')
+        emit('error', error)
+        throw error
+      }
+      if (scenario === 'available') emit('update-available', { version: '9.9.9' })
+      else emit('update-not-available')
+      return null
+    },
+    async downloadUpdate() {
+      if (scenario !== 'available') {
+        emit('update-not-available')
+        return null
+      }
+      emit('download-progress', { percent: 42 })
+      emit('download-progress', { percent: 100 })
+      emit('update-downloaded')
+      return null
+    },
+    quitAndInstall() {
+      // E2E 不做真实安装；downloaded 状态保留供断言
+    }
+  }
+}
+
+const electronUpdater = nodeRequire('electron-updater') as typeof import('electron-updater')
+const autoUpdater =
+  process.env.WORKBENCH_E2E === '1'
+    ? (createE2EMockUpdater(
+        process.env.WORKBENCH_E2E_UPDATE_SCENARIO ?? 'none'
+      ) as unknown as typeof electronUpdater.autoUpdater)
+    : electronUpdater.autoUpdater
+// E2E 注入点：WORKBENCH_E2E_FAIL_SAVE=once 时第一次 exam.save 抛错（验证交卷阻止与重试）
+let e2eExamSaveFailedOnce = false
 
 const currentDirectory = dirname(fileURLToPath(import.meta.url))
 let mainWindow: BrowserWindow | null = null
@@ -167,6 +220,10 @@ function createWindow(): void {
     event.preventDefault()
   })
   if (process.env.ELECTRON_RENDERER_URL) void mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL)
+  else if (process.env.WORKBENCH_E2E === '1')
+    void mainWindow.loadFile(join(currentDirectory, '../renderer/index.html'), {
+      query: { e2e: '1' }
+    })
   else void mainWindow.loadFile(join(currentDirectory, '../renderer/index.html'))
 }
 
@@ -353,6 +410,11 @@ async function initialize(): Promise<void> {
       case 'exam.active':
         return database!.getActiveExam()
       case 'exam.save':
+        // E2E 注入点：首次保存失败，验证「保存失败阻止交卷 → 重试后放行」
+        if (process.env.WORKBENCH_E2E_FAIL_SAVE === 'once' && !e2eExamSaveFailedOnce) {
+          e2eExamSaveFailedOnce = true
+          throw new Error('E2E：模拟答案保存失败')
+        }
         return database!.saveExamAnswer(request.params.examId, request.params.answer)
       case 'exam.finish':
         return database!.finishExam(request.params.examId)

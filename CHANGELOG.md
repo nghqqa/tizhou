@@ -2,6 +2,13 @@
 
 ## 1.0.11 - 未发布
 
+### UI E2E 验收（新增）
+
+- 新增 `e2e/` Electron UI E2E 套件（Playwright 驱动本机 Electron，独立配置与脚本 `npm run test:e2e`，不进入 `npm test`）：10 项用例覆盖应用启动/侧栏路由、模考创建-作答-交卷-结果页、保存失败阻止交卷与重试放行、申论草稿输入保存、报告页、备份/迁移入口、更新检查无更新/有更新/失败三态、页面崩溃错误边界
+- 确定性保障：临时数据目录（WORKBENCH_SMOKE_DATA_DIR）、mock updater（WORKBENCH_E2E 场景驱动）、保存失败注入（WORKBENCH_E2E_FAIL_SAVE=once）、题库种子脚本；不调用真实 AI、不访问真实更新服务
+- 失败现场自动转储截图与页面 HTML（e2e-artifacts/，已 gitignore）
+- 测试分层说明：tests/ = 单元/集成；smoke:packaged = 打包启动冒烟；e2e/ = Electron UI E2E；**真实自动更新安装与跨机迁移重启仍未自动化验证**（需人工执行）
+
 ### 跨机迁移安全加固
 
 - 迁移清单按不可信输入处理：知识库名称必须是单一目录名（拒绝路径分隔符、绝对路径、`..`、空名、重复名、Windows 保留设备名），数量上限 64

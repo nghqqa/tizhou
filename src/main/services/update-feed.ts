@@ -58,6 +58,8 @@ async function fetchTag(
 
 /** 解析本次检查使用的更新源：cnb 可达且不落后于 GitHub 时优先国内，否则回退 GitHub */
 export async function resolveUpdateFeed(fetchImpl: typeof fetch = fetch): Promise<UpdateFeed> {
+  // E2E：不访问真实网络，固定回退 GitHub（检查结果由 mock updater 决定）
+  if (process.env.WORKBENCH_E2E === '1') return { provider: 'github', source: 'github' }
   const [cnbTag, githubTag] = await Promise.all([
     fetchTag(CNB_LATEST_API, CNB_PROBE_TIMEOUT_MS, fetchImpl),
     // GitHub 探测只是版本对照，慢或被墙都不阻塞主流程（Promise.all 内各自超时）

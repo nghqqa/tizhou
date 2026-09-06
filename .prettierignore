@@ -4,3 +4,5 @@ dist/
 node_modules/
 out/
 *.tsbuildinfo
+docs/quality-baseline.json
+docs/quality-baseline.md

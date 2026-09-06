@@ -536,7 +536,11 @@ export function ExamRunPage(): React.JSX.Element {
             <span className={`pill ${seconds < 300 ? 'negative' : ''}`}>
               <ClockIcon /> {timeText}
             </span>
-            <Button appearance="primary" onClick={() => setConfirmOpen(true)}>
+            <Button
+              appearance="primary"
+              data-testid="exam-submit"
+              onClick={() => setConfirmOpen(true)}
+            >
               交卷
             </Button>
           </>
@@ -609,6 +613,7 @@ export function ExamRunPage(): React.JSX.Element {
                   type="button"
                   key={option.key}
                   className={`option-button ${currentAnswer.includes(option.key) ? 'selected' : ''}`}
+                  data-testid={`exam-option-${option.key}`}
                   onClick={() => void choose(option.key)}
                 >
                   <span className="option-key">{option.key}</span>

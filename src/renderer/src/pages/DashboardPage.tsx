@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { Button, ProgressBar } from '@fluentui/react-components'
 import {
   ArrowRightIcon,
@@ -266,6 +267,10 @@ export function DashboardPage(): React.JSX.Element {
   const data = useAppStore((state) => state.data)!
   const refresh = useAppStore((state) => state.refreshDashboard)
   const dashboard = data.dashboard
+  // E2E 专用（窗口 query 携带 e2e=1 时出现）：触发一次渲染期异常，验证错误边界
+  const e2eMode = new URLSearchParams(window.location.search).get('e2e') === '1'
+  const [e2eCrash, setE2eCrash] = useState(false)
+  if (e2eMode && e2eCrash) throw new Error('E2E：模拟页面渲染崩溃')
   const weakest = findWeakest(dashboard)
   const hasTraining =
     dashboard.todayAttempts > 0 || dashboard.subjectMastery.some((s) => s.attempts > 0)
@@ -275,6 +280,12 @@ export function DashboardPage(): React.JSX.Element {
 
   return (
     <div className="page">
+      {/* E2E 专用：模拟页面渲染崩溃，验证错误边界（仅 e2e=1 窗口出现） */}
+      {e2eMode && (
+        <button type="button" data-testid="e2e-crash" onClick={() => setE2eCrash(true)}>
+          e2e-crash
+        </button>
+      )}
       {/* 页头 */}
       <div className="dash-header">
         <div className="dash-header-info">
