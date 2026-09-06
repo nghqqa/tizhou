@@ -46,10 +46,12 @@ import { mergeByDocumentOrder } from './direct-sequential-merge'
 import {
   CAPABILITY_LABELS,
   classifyFileCapability,
-  computeImportSummary,
+  batchFactsMessage,
+  tierForArtifact,
   loadStructuredRegions,
   scanNumericAnomalies,
-  scanTableQuality
+  scanTableQuality,
+  type ImportBatchFacts
 } from './import-quality'
 import {
   buildGraphicPreservation,
@@ -1863,23 +1865,41 @@ export class KnowledgeBuilderService {
           }
         }
         job.status = staged > 0 ? 'review' : 'completed'
-        // 导入质量分级汇总：结构完整 / 原图保留 / 不可靠
-        const allStaged = job.artifactIds
+        // 批次质量汇总：只用可观测事实（真实计数与转换报告页数），不推算不猜
+        const allArtifacts = job.artifactIds
           .map((id) => this.loadArtifact(job, id))
-          .filter((a) => a && a.kind === 'question')
-        const qualitySummary = computeImportSummary({
-          totalPages: Math.max(1, allStaged.length),
-          items: allStaged.map((a) => ({
-            stem: a.preview ?? '',
-            optionCount: (a.markdown.match(/data-testid="exam-option-|^\s*[A-D][.、．]/gm) ?? [])
-              .length,
-            hasImage: a.markdown.includes('images/')
-          })),
+          .filter((a): a is StoredArtifact => Boolean(a))
+        // 产物级质量分层持久化（kind + capability 派生，与审核页展示一致）
+        for (const artifact of allArtifacts) {
+          artifact.importQualityTier = tierForArtifact(artifact)
+          this.saveArtifact(job, artifact)
+        }
+        const facts: ImportBatchFacts = {
+          fileCount: job.files.length,
+          failedFileCount: job.files.filter((file) => file.state === 'failed').length,
+          filesWithKnownPages: job.files.filter((file) => file.ocrQuality?.totalPages).length,
+          knownInputPages: job.files.reduce(
+            (sum, file) => sum + (file.ocrQuality?.totalPages ?? 0),
+            0
+          ),
+          knownEmptyPages: job.files.reduce(
+            (sum, file) => sum + (file.ocrQuality?.emptyPages ?? 0),
+            0
+          ),
+          structuredArtifacts: allArtifacts.filter((a) => a.importQualityTier === 'structured')
+            .length,
+          reviewRequiredArtifacts: allArtifacts.filter(
+            (a) => a.importQualityTier === 'review-required'
+          ).length,
+          preservedSourceArtifacts: allArtifacts.filter(
+            (a) => a.importQualityTier === 'preserved-source'
+          ).length,
           skippedNoAnswer,
           skippedIncomplete,
-          skippedMisaligned
-        })
-        const qualityTag = `结构完整 ${qualitySummary.structured} · 原图保留 ${qualitySummary.imageBacked} · 不可靠 ${qualitySummary.unsupported} · 嫌疑缺题 ${qualitySummary.suspectedLossCount}`
+          skippedMisaligned,
+          skippedDuplicate,
+          abortedBooks
+        }
         job.message =
           `[批次 9/1 00:0x 构建] ` +
           (staged
@@ -1887,7 +1907,9 @@ export class KnowledgeBuilderService {
                 stagedEssays
                   ? `，其中申论主观题 ${stagedEssays} 道（无参考答案，发布后经「申论作答」页 AI 批改练习）`
                   : ''
-              }（配对验证错位剔除 ${skippedMisaligned}、无答案跳过 ${skippedNoAnswer}、不完整 ${skippedIncomplete}、与现有题库重复 ${skippedDuplicate}）`
+              }（配对验证错位剔除 ${skippedMisaligned}、无答案跳过 ${skippedNoAnswer}、不完整 ${skippedIncomplete}、与现有题库重复 ${skippedDuplicate}）——请抽查后「全部批准」并「发布」入库${
+                abortedBooks ? `；${abortedBooks} 本书因疑似套号错位被拦截` : ''
+              }`
             : skippedDuplicate
               ? `直导完成：${skippedDuplicate} 题与现有题库重复，未生成新题${abortedBooks ? `；${abortedBooks} 本书因疑似套号错位被拦截` : ''}`
               : abortedBooks
@@ -1895,7 +1917,7 @@ export class KnowledgeBuilderService {
                 : trainingMarkers >= 3
                   ? `直导完成：检测到 ${trainingMarkers} 处训练式标题但未能稳定切分出题目——这本书大概率是主观题教材，请改用「模型提炼」模式导入`
                   : '直导完成：未切出题目（未识别出题目或全部缺少答案）') +
-          ` [质量] ${qualityTag}`
+          ` [质量] ${batchFactsMessage(facts)}`
       } else {
         const artifacts = job.artifactIds.map((artifactId) => this.loadArtifact(job, artifactId))
         job.status = artifacts.some((artifact) => artifact.status === 'pending')

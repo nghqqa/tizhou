@@ -1104,3 +1104,207 @@ describe('解析块边界与内容分层', () => {
     expect(lines[0]).toContain('则甲为正确选项。')
   })
 })
+
+describe('直导批次质量分层与汇总（管线级）', () => {
+  async function runDirectImport(files: Record<string, string>): Promise<{
+    job: ReturnType<KnowledgeBuilderService['getJob']>
+    service: KnowledgeBuilderService
+  }> {
+    const data = temporaryDirectory('tizhou-kb-tier-data-')
+    const source = temporaryDirectory('tizhou-kb-tier-src-')
+    for (const [name, content] of Object.entries(files))
+      writeFileSync(join(source, name), content, 'utf8')
+    const service = new KnowledgeBuilderService(
+      data,
+      process.cwd(),
+      {} as AiService,
+      {
+        connect: vi.fn(() => ({
+          vault: { id: 'managed', name: 'v', path: 'C:/v', warnings: [], isBuiltin: false },
+          added: 0,
+          updated: 0,
+          removed: 0,
+          skipped: 0,
+          warnings: []
+        })),
+        ensureBuiltinVault: () => ({
+          id: 'builtin',
+          name: '内置示例库',
+          path: 'C:/builtin',
+          connectedAt: '',
+          lastIndexedAt: '',
+          questionCount: 0,
+          documentCount: 0,
+          warnings: [],
+          isBuiltin: true
+        }),
+        questionSignatures: () => new Set<string>()
+      } as unknown as VaultService
+    )
+    vi.spyOn(service, 'engineStatus').mockResolvedValue({
+      available: true,
+      installing: false,
+      version: 'test',
+      pythonPath: 'test-python',
+      ocrAvailable: false,
+      message: 'ready',
+      supportedExtensions: ['.md']
+    })
+    const conversionTarget = service as unknown as {
+      convert: (python: string, worker: string, source: string, output: string) => Promise<void>
+    }
+    vi.spyOn(conversionTarget, 'convert').mockImplementation(
+      async (_python, _worker, sourcePath, outputPath) => {
+        writeFileSync(outputPath, readFileSync(sourcePath, 'utf8'), 'utf8')
+      }
+    )
+    const scan = service.scan(source)
+    const started = await service.startJob({
+      sourcePath: source,
+      fileIds: scan.files.filter((file) => file.eligible).map((file) => file.id),
+      options: {
+        mode: 'direct',
+        quality: 'standard',
+        subject: 'auto',
+        tags: [],
+        instruction: '',
+        rightsConfirmed: true
+      }
+    })
+    let job = started
+    const deadline = Date.now() + 30_000
+    while (['queued', 'running', 'cancelling'].includes(job.status) && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      job = service.getJob(started.id)
+    }
+    return { job, service }
+  }
+
+  it('质量分层随产物持久化：保存后重新加载仍存在；申论/客观题均为 structured', async () => {
+    const { job, service } = await runDirectImport({
+      '题本.md':
+        [
+          '练习题01套',
+          '1. 甲题干内容足够长了吧：',
+          'A. 选项一',
+          'B. 选项二',
+          'C. 选项三',
+          'D. 选项四',
+          '2. 乙题干内容也足够长了：',
+          'A. 选项一',
+          'B. 选项二',
+          'C. 选项三',
+          'D. 选项四',
+          '3. 丙题干内容同样足够长：',
+          'A. 选项一',
+          'B. 选项二',
+          'C. 选项三',
+          'D. 选项四'
+        ].join('\n') + '\n',
+      '解析.md':
+        [
+          '1. 甲题干内容足够长了吧：',
+          '【参考答案】A',
+          '【实战解析】甲的解析。',
+          '2. 乙题干内容也足够长了：',
+          '【参考答案】B',
+          '【实战解析】乙的解析。',
+          '3. 丙题干内容同样足够长：',
+          '【参考答案】C',
+          '【实战解析】丙的解析。'
+        ].join('\n') + '\n'
+    })
+    expect(job.status).toBe('review')
+    expect(job.message).toContain('结构化题目')
+    // 重新加载产物（磁盘往返）：分层仍在
+    const artifactId = job.artifacts[0]!.id
+    const detail = service.getArtifact(job.id, artifactId)
+    expect(detail?.importQualityTier).toBe('structured')
+  }, 35_000)
+
+  it('批次消息保留审核引导并如实给出跳过计数与无法计算声明', async () => {
+    const { job } = await runDirectImport({
+      '题本.md':
+        [
+          '练习题01套',
+          '1. 甲题干内容足够长了吧：',
+          'A. 选项一',
+          'B. 选项二',
+          'C. 选项三',
+          'D. 选项四',
+          '2. 乙题干内容也足够长了：',
+          'A. 选项一',
+          'B. 选项二',
+          'C. 选项三',
+          'D. 选项四',
+          '3. 丙题干内容同样足够长：',
+          'A. 选项一',
+          'B. 选项二',
+          'C. 选项三',
+          'D. 选项四'
+        ].join('\n') + '\n',
+      '解析.md':
+        [
+          '1. 甲题干内容足够长了吧：',
+          '【参考答案】A',
+          '【实战解析】甲的解析。',
+          '2. 乙题干内容也足够长了：',
+          '【参考答案】B',
+          '【实战解析】乙的解析。',
+          '3. 丙题干内容同样足够长：',
+          '【参考答案】C',
+          '【实战解析】丙的解析。'
+        ].join('\n') + '\n'
+    })
+    expect(job.message).toContain('请抽查后「全部批准」并「发布」入库')
+    expect(job.message).toContain('缺题数和原图页覆盖率无法计算')
+    // 无 OCR 质量报告（.md 直转）：页数未知必须如实显示
+    expect(job.message).toContain('输入页数未知，转换器未提供页数')
+    // 不再出现失真指标
+    expect(job.message).not.toMatch(/嫌疑缺题/)
+  }, 35_000)
+
+  it('无答案题目按真实计数进入汇总（不推算）', async () => {
+    // 题本 4 题，解析册只覆盖前 3 题（含 3 个答案标记满足解析册识别阈值）
+    // → 第 4 题 skippedNoAnswer = 1（真实计数，非推算）
+    const { job } = await runDirectImport({
+      '题本.md':
+        [
+          '练习题01套',
+          '1. 甲题干内容足够长了吧：',
+          'A. 选项一',
+          'B. 选项二',
+          'C. 选项三',
+          'D. 选项四',
+          '2. 乙题干内容也足够长了：',
+          'A. 选项一',
+          'B. 选项二',
+          'C. 选项三',
+          'D. 选项四',
+          '3. 丙题干内容同样足够长：',
+          'A. 选项一',
+          'B. 选项二',
+          'C. 选项三',
+          'D. 选项四',
+          '4. 丁题干内容依旧足够长：',
+          'A. 选项一',
+          'B. 选项二',
+          'C. 选项三',
+          'D. 选项四'
+        ].join('\n') + '\n',
+      '解析.md':
+        [
+          '1. 甲题干内容足够长了吧：',
+          '【参考答案】A',
+          '【实战解析】甲的解析。',
+          '2. 乙题干内容也足够长了：',
+          '【参考答案】B',
+          '【实战解析】乙的解析。',
+          '3. 丙题干内容同样足够长：',
+          '【参考答案】C',
+          '【实战解析】丙的解析。'
+        ].join('\n') + '\n'
+    })
+    expect(job.message).toMatch(/无答案\s*1/)
+  }, 35_000)
+})

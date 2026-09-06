@@ -1,13 +1,17 @@
-// 导入质量模型：数字异常/表格一致性/切分完整度/结构噪声/解析清洗
+// 导入质量模型：数字异常/表格一致性/切分完整度/结构噪声/解析清洗/质量分层
 import { describe, expect, it } from 'vitest'
 import {
+  batchFactsMessage,
   cleanExplanation,
   isNumberStreamLine,
   quarantineNumberStreamLine,
   questionCompleteness,
   scanNumericAnomalies,
   scanTableQuality,
-  stripStructuralNoise
+  stripStructuralNoise,
+  tierForArtifact,
+  type ImportBatchFacts,
+  type ImportQualityTier
 } from '../src/main/services/import-quality'
 
 describe('数字异常扫描', () => {
@@ -163,5 +167,111 @@ describe('cleanExplanation（解析清洗阶段）', () => {
   it('解析只剩数字或符号时告警', () => {
     const result = cleanExplanation('3488 3793 4000')
     expect(result.readabilityWarnings.some((w) => w.includes('只剩数字或符号'))).toBe(true)
+  })
+})
+
+describe('导入质量分层 tierForArtifact', () => {
+  it('普通客观题（capability 缺省）→ structured', () => {
+    expect(tierForArtifact({ kind: 'question' })).toBe<ImportQualityTier>('structured')
+  })
+
+  it('申论无选项题（capability 缺省）→ structured（不以选项数判层）', () => {
+    expect(tierForArtifact({ kind: 'question', capability: undefined })).toBe<ImportQualityTier>(
+      'structured'
+    )
+  })
+
+  it('text-supported → structured', () => {
+    expect(
+      tierForArtifact({ kind: 'question', capability: 'text-supported' })
+    ).toBe<ImportQualityTier>('structured')
+  })
+
+  it('table-review → review-required', () => {
+    expect(
+      tierForArtifact({ kind: 'question', capability: 'table-review' })
+    ).toBe<ImportQualityTier>('review-required')
+  })
+
+  it('graphic-review → review-required', () => {
+    expect(
+      tierForArtifact({ kind: 'question', capability: 'graphic-review' })
+    ).toBe<ImportQualityTier>('review-required')
+  })
+
+  it('image-only-review / unsupported-auto-structure → review-required', () => {
+    expect(
+      tierForArtifact({ kind: 'question', capability: 'image-only-review' })
+    ).toBe<ImportQualityTier>('review-required')
+    expect(
+      tierForArtifact({ kind: 'question', capability: 'unsupported-auto-structure' })
+    ).toBe<ImportQualityTier>('review-required')
+  })
+
+  it('document → preserved-source', () => {
+    expect(
+      tierForArtifact({ kind: 'document', capability: 'graphic-review' })
+    ).toBe<ImportQualityTier>('preserved-source')
+  })
+})
+
+describe('批次质量汇总 batchFactsMessage', () => {
+  const baseFacts: ImportBatchFacts = {
+    fileCount: 3,
+    failedFileCount: 0,
+    filesWithKnownPages: 3,
+    knownInputPages: 60,
+    knownEmptyPages: 2,
+    structuredArtifacts: 40,
+    reviewRequiredArtifacts: 5,
+    preservedSourceArtifacts: 2,
+    skippedNoAnswer: 3,
+    skippedIncomplete: 1,
+    skippedMisaligned: 2,
+    skippedDuplicate: 4,
+    abortedBooks: 0
+  }
+
+  it('页数只来自 ocrQuality.totalPages：全部已知时显示总页数', () => {
+    const message = batchFactsMessage(baseFacts)
+    expect(message).toContain('输入 60 页')
+    expect(message).not.toContain('已知 3/3')
+  })
+
+  it('部分文件缺页数时如实显示 X/Y 与已知总和', () => {
+    const message = batchFactsMessage({ ...baseFacts, filesWithKnownPages: 2, knownInputPages: 40 })
+    expect(message).toContain('已知 2/3 个文件的页数，共 40 页')
+  })
+
+  it('完全没有页数报告时显示未知', () => {
+    const message = batchFactsMessage({ ...baseFacts, filesWithKnownPages: 0, knownInputPages: 0 })
+    expect(message).toContain('输入页数未知，转换器未提供页数')
+  })
+
+  it('三类 skipped 计数与重复进入汇总', () => {
+    const message = batchFactsMessage(baseFacts)
+    expect(message).toContain('无答案 3')
+    expect(message).toContain('不完整 1')
+    expect(message).toContain('错位剔除 2')
+    expect(message).toContain('重复 4')
+  })
+
+  it('不再出现「每页 5 题」推算与覆盖率', () => {
+    const message = batchFactsMessage(baseFacts)
+    expect(message).not.toMatch(/嫌疑缺题/)
+    expect(message).not.toMatch(/每页/)
+    expect(message).not.toMatch(/覆盖率 \d/)
+  })
+
+  it('必须声明缺题数和原图页覆盖率无法计算', () => {
+    expect(batchFactsMessage(baseFacts)).toContain(
+      '缺题数和原图页覆盖率无法计算：当前未建立来源页到题目/图片的完整映射'
+    )
+  })
+
+  it('failed 文件数与 abortedBooks 拦截提示如实展示', () => {
+    const message = batchFactsMessage({ ...baseFacts, failedFileCount: 1, abortedBooks: 2 })
+    expect(message).toContain('转换失败文件 1 个')
+    expect(message).toContain('2 本书因疑似套号错位被拦截')
   })
 })

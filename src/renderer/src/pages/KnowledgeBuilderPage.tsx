@@ -1116,6 +1116,23 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
                           ? '规则切题'
                           : `置信度 ${Math.round(item.confidence * 100)}%`}
                       </small>
+                      {item.importQualityTier && (
+                        <small
+                          title={
+                            item.importQualityTier === 'structured'
+                              ? '结构化题目：已生成可作答结构（不代表 OCR 内容正确）'
+                              : item.importQualityTier === 'review-required'
+                                ? '待人工审核：含图片/表格/图推等能力边界内容'
+                                : '原始资料保留：仅保留原始资料，未生成可作答题目'
+                          }
+                        >
+                          {item.importQualityTier === 'structured'
+                            ? '结构化题目'
+                            : item.importQualityTier === 'review-required'
+                              ? '待人工审核'
+                              : '原始资料保留'}
+                        </small>
+                      )}
                       {item.warnings.length > 0 && (
                         <small className="warning" title={item.warnings.join('\n')}>
                           ⚠ {item.warnings[0]}

@@ -209,7 +209,13 @@ export interface KnowledgeArtifactSummary {
   capability?: ImportCapability
   /** 人工已在原始页面上确认内容正确（解除发布限制） */
   humanConfirmed?: boolean
+  /** 导入质量分层（产物形态，不代表 OCR 内容正确）：
+   *  structured=可作答结构 · review-required=能力边界需人工核对 · preserved-source=仅保留原始资料 */
+  importQualityTier?: ImportQualityTier
 }
+
+/** 导入质量分层：只反映产物形态，不表示 OCR 识别准确率 */
+export type ImportQualityTier = 'structured' | 'review-required' | 'preserved-source'
 
 /** 导入能力边界：诚实标注每份资料能被自动结构化到什么程度 */
 export type ImportCapability =
