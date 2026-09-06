@@ -1,0 +1,173 @@
+{
+ "annotator": "ocr-prefill-v1",
+ "charts": [],
+ "footer": null,
+ "header": null,
+ "notes": "OCR 预填，未经人工确认，不得计入 Ground Truth",
+ "numbers": [
+  "6",
+  "7",
+  "8",
+  "9",
+  "10",
+  "11",
+  "0",
+  "110"
+ ],
+ "pageId": "ce3bea8c-p0112",
+ "pageNumber": 112,
+ "pageType": "普通文字",
+ "questions": [
+  {
+   "answer": "",
+   "explanation": "",
+   "number": 6,
+   "optionImages": [],
+   "options": [
+    {
+     "key": "A",
+     "text": "人心所向 式微 消失"
+    },
+    {
+     "key": "B",
+     "text": "大势所趋 式微 消亡"
+    },
+    {
+     "key": "C",
+     "text": "大势所趋 减少 消失"
+    },
+    {
+     "key": "D",
+     "text": "人心所向 减少 消亡"
+    }
+   ],
+   "setNumber": 1,
+   "stem": "融合发展是，传统的平台、介质或许会，但是新闻没有，媒体还有责任，理想还有价值，职业还有担当。我们相信不管媒体形态怎么变、舆论格局怎么变，原创依然是这个社会最宝贵的资源，思想依然是媒体最重要的品质，理性仍然是时代最需要的力量。依次填入画横线部分最恰当的一项是：",
+   "stemImages": []
+  },
+  {
+   "answer": "",
+   "explanation": "",
+   "number": 7,
+   "optionImages": [],
+   "options": [
+    {
+     "key": "A",
+     "text": "不苟言笑"
+    },
+    {
+     "key": "B",
+     "text": "如履薄冰"
+    },
+    {
+     "key": "C",
+     "text": "精益求精"
+    },
+    {
+     "key": "D",
+     "text": "视若珍宝"
+    }
+   ],
+   "setNumber": 1,
+   "stem": "一把剪刀、一个镊子、一支毛笔、一碗糨糊、一盏台灯……在图书馆的古籍中心，古籍修复师们年复一年重复着手中的工作。在需要修复的珍贵古籍面前，他们始终填入画横线部分最恰当的一项是：",
+   "stemImages": []
+  },
+  {
+   "answer": "",
+   "explanation": "",
+   "number": 8,
+   "optionImages": [],
+   "options": [
+    {
+     "key": "A",
+     "text": "喜闻乐见 进退两难"
+    },
+    {
+     "key": "B",
+     "text": "耳熟能详 有心无力"
+    },
+    {
+     "key": "C",
+     "text": "驾轻就熟 骑虎难下"
+    },
+    {
+     "key": "D",
+     "text": "司空见惯 束手无策"
+    }
+   ],
+   "setNumber": 1,
+   "stem": "作为广大基层社区治理的基础单元一一你我的居委会，在面对新问题新挑战时，却常常：有时候门都敲不开，谈何治理？依次填入画横线部分最恰当的一项是：",
+   "stemImages": []
+  },
+  {
+   "answer": "",
+   "explanation": "",
+   "number": 9,
+   "optionImages": [],
+   "options": [
+    {
+     "key": "A",
+     "text": "连续 平分秋色"
+    },
+    {
+     "key": "B",
+     "text": "自然 相映成趣"
+    },
+    {
+     "key": "C",
+     "text": "渐变 此消彼长"
+    },
+    {
+     "key": "D",
+     "text": "缓慢 并行不悖"
+    }
+   ],
+   "setNumber": 1,
+   "stem": "文字的发展是的，所以在由前一个时期演变为后一个时期的时候，要有或长或短的新旧形式并用期。新旧形式，最后完成交替。依次填入画横线部分最恰当的一项是：",
+   "stemImages": []
+  },
+  {
+   "answer": "",
+   "explanation": "",
+   "number": 10,
+   "optionImages": [],
+   "options": [
+    {
+     "key": "A",
+     "text": "能言善辩 讷口少言 实现"
+    },
+    {
+     "key": "B",
+     "text": "绘声绘色 不露声色 完成"
+    },
+    {
+     "key": "C",
+     "text": "口若悬河 片言只语 创造"
+    },
+    {
+     "key": "D",
+     "text": "侃侃而谈 缄口不言 获取"
+    }
+   ],
+   "setNumber": 1,
+   "stem": "说话不仅是一种生理功能，更是一种能力。会说话的人，纵然，滔滔不绝，听者也不以为苦；纵然，一字千金，也能绕梁三日。成功人士大多是成功的说话者，毫不夸张地说，其成功至少有一半是靠舌头的。依次填入画横线部分最恰当的一项是：",
+   "stemImages": []
+  },
+  {
+   "answer": "",
+   "explanation": "",
+   "number": 11,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 1,
+   "stem": "尽管“互联网+医疗健康”是大势所趋，但现阶段全面推广“共享护士”也有问题。就算是正规护士，其专业素养和擅长领域也，况且上门护理不比在医院病房，万一出现紧急情况也不好及时、有效地处置，容易引发医疗事故和相关纠纷，风险隐患0第 110 页",
+   "stemImages": []
+  }
+ ],
+ "schemaVersion": 1,
+ "set": "tuning",
+ "setStatus": "pending",
+ "sourcePdf": "E:/BaiduNetdiskDownload/考公刷题本答案/071.2027四海行测2000题海海刷1期/讲义/题本/【四海】26下-海海刷1期-言语理解题本.pdf",
+ "tables": [],
+ "watermarks": []
+}

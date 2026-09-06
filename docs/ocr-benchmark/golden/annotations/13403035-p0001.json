@@ -1,0 +1,20 @@
+{
+ "annotator": "ocr-prefill-v1",
+ "charts": [],
+ "footer": null,
+ "header": null,
+ "notes": "OCR 预填，未经人工确认，不得计入 Ground Truth",
+ "numbers": [
+  "2027"
+ ],
+ "pageId": "13403035-p0001",
+ "pageNumber": 1,
+ "pageType": "普通文字",
+ "questions": [],
+ "schemaVersion": 1,
+ "set": "validation",
+ "setStatus": "pending",
+ "sourcePdf": "E:/BaiduNetdiskDownload/考公刷题本答案/2027判断推理-专项提升夸夸刷.pdf",
+ "tables": [],
+ "watermarks": []
+}

@@ -1,0 +1,486 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>题舟 Golden Set 标注工具（离线）</title>
+    <style>
+      body {
+        font:
+          13px/1.5 system-ui,
+          'Microsoft YaHei',
+          sans-serif;
+        margin: 0;
+        display: flex;
+        height: 100vh;
+      }
+      #nav {
+        width: 250px;
+        border-right: 1px solid #ccc;
+        overflow-y: auto;
+        padding: 8px;
+        box-sizing: border-box;
+      }
+      #nav .pg {
+        padding: 4px 6px;
+        cursor: pointer;
+        border-radius: 4px;
+      }
+      #nav .pg:hover {
+        background: #eee;
+      }
+      #nav .pg.active {
+        background: #d6e4ff;
+      }
+      #nav .st {
+        float: right;
+        font-size: 11px;
+      }
+      .st.confirmed {
+        color: #1a7f37;
+      }
+      .st.pending {
+        color: #9a6700;
+      }
+      .st.未标注 {
+        color: #6e7781;
+      }
+      #main {
+        flex: 1;
+        display: flex;
+        overflow: hidden;
+      }
+      #left {
+        flex: 1;
+        overflow: auto;
+        background: #555;
+        position: relative;
+      }
+      #wrap {
+        position: relative;
+        margin: 10px;
+      }
+      #img,
+      #cv {
+        display: block;
+        position: absolute;
+        left: 0;
+        top: 0;
+      }
+      #img {
+        position: relative;
+      }
+      #right {
+        width: 520px;
+        border-left: 1px solid #ccc;
+        overflow-y: auto;
+        padding: 10px;
+        box-sizing: border-box;
+      }
+      label {
+        display: inline-block;
+        margin: 4px 6px 2px 0;
+      }
+      textarea {
+        width: 100%;
+        box-sizing: border-box;
+      }
+      input[type='text'] {
+        width: 100%;
+        box-sizing: border-box;
+      }
+      .q {
+        border: 1px solid #ddd;
+        padding: 6px;
+        margin: 6px 0;
+        border-radius: 4px;
+      }
+      .box-row {
+        font-size: 12px;
+        margin: 2px 0;
+      }
+      button {
+        cursor: pointer;
+      }
+      h3 {
+        margin: 10px 0 4px;
+      }
+      .hint {
+        color: #595959;
+        font-size: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="nav">
+      <h3>Golden Set 页面</h3>
+      <div id="pagelist"></div>
+    </div>
+    <div id="main">
+      <div id="left">
+        <div id="wrap">
+          <img
+            id="img"
+            alt="待标注页面"
+            src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='900' height='1273'%3E%3Crect width='900' height='1273' fill='%23e8e8e8'/%3E%3C/svg%3E"
+          /><canvas id="cv"></canvas>
+        </div>
+      </div>
+      <div id="right">
+        <div>
+          <b>页面：</b><span id="pid"></span>
+          <label
+            >类型
+            <select id="pageType">
+              <option>普通文字</option>
+              <option>资料分析表格</option>
+              <option>资料分析统计图</option>
+              <option>解析册</option>
+              <option>图形推理</option>
+            </select></label
+          >
+          <label
+            >状态
+            <select id="setStatus">
+              <option value="pending">待确认</option>
+              <option value="confirmed">已确认（人工）</option>
+            </select></label
+          >
+          <label
+            >标注人 <input id="annotator" type="text" style="width: 120px" placeholder="姓名缩写"
+          /></label>
+        </div>
+        <div class="hint">
+          左侧拖拽画框；框类型先在下面选。bbox 也可手动填写（300DPI 像素坐标 x0,y0,x1,y1）。
+        </div>
+        <label
+          >新框类型
+          <select id="boxType">
+            <option value="table">表格</option>
+            <option value="chart">图表</option>
+            <option value="stemImage">题干图</option>
+            <option value="optionImage">图片选项</option>
+            <option value="watermark">水印</option>
+            <option value="header">页眉</option>
+            <option value="footer">页脚</option>
+          </select></label
+        >
+        <label
+          >选项键
+          <select id="boxKey">
+            <option value=""></option>
+            <option>A</option>
+            <option>B</option>
+            <option>C</option>
+            <option>D</option>
+          </select></label
+        >
+        <div id="boxes"></div>
+        <h3>题目</h3>
+        <div id="questions"></div>
+        <button onclick="addQuestion()">+ 加题目</button>
+        <h3>数字 token（每行一个）</h3>
+        <textarea id="numbers" rows="5"></textarea>
+        <h3>备注</h3>
+        <textarea id="notes" rows="2"></textarea>
+        <p>
+          <button id="save" style="padding: 6px 18px">保存（UTF-8 JSON）</button>
+          <span id="msg"></span>
+        </p>
+      </div>
+    </div>
+    <script>
+      let pages = [],
+        cur = null,
+        boxes = [],
+        questions = [],
+        dragStart = null,
+        drawing = false
+      const img = document.getElementById('img'),
+        cv = document.getElementById('cv'),
+        ctx = cv.getContext('2d')
+
+      async function loadPages() {
+        const r = await fetch('/api/pages')
+        pages = (await r.json()).pages
+        const el = document.getElementById('pagelist')
+        el.innerHTML = ''
+        for (const p of pages) {
+          const d = document.createElement('div')
+          d.className = 'pg'
+          d.dataset.id = p.pageId
+          d.innerHTML = `${p.set}: ${p.pageType} <span class="st ${p.status}">${p.status}</span><br><small>${p.file.slice(0, 26)} p${p.page}</small>`
+          d.onclick = () => openPage(p.pageId)
+          el.appendChild(d)
+        }
+      }
+
+      async function openPage(id) {
+        cur = pages.find((p) => p.pageId === id)
+        document
+          .querySelectorAll('#nav .pg')
+          .forEach((x) => x.classList.toggle('active', x.dataset.id === id))
+        img.src = '/render/' + id + '.png'
+        img.onload = () => {
+          cv.width = img.naturalWidth
+          cv.height = img.naturalHeight
+          draw()
+        }
+        boxes = []
+        questions = []
+        const r = await fetch('/api/annotation/' + id)
+        const j = await r.json()
+        if (j.exists) {
+          document.getElementById('pageType').value = j.pageType || cur.pageType
+          document.getElementById('setStatus').value = j.setStatus || 'pending'
+          document.getElementById('annotator').value = j.annotator || ''
+          document.getElementById('numbers').value = (j.numbers || []).join('\n')
+          document.getElementById('notes').value = j.notes || ''
+          questions = j.questions || []
+          boxes = collectBoxes(j)
+        } else {
+          document.getElementById('pageType').value = cur.pageType
+          document.getElementById('setStatus').value = 'pending'
+          document.getElementById('annotator').value = ''
+          document.getElementById('numbers').value = ''
+          document.getElementById('notes').value = ''
+        }
+        document.getElementById('pid').textContent = id
+        renderQuestions()
+        renderBoxes()
+      }
+
+      function collectBoxes(j) {
+        const out = []
+        for (const t of j.tables || []) out.push({ type: 'table', bbox: t.bbox })
+        for (const c of j.charts || []) out.push({ type: 'chart', bbox: c.bbox })
+        for (const q of j.questions || []) {
+          for (const s of q.stemImages || []) out.push({ type: 'stemImage', bbox: s.bbox })
+          for (const o of q.optionImages || [])
+            out.push({ type: 'optionImage', bbox: o.bbox, key: o.key })
+        }
+        for (const w of j.watermarks || []) out.push({ type: 'watermark', bbox: w.bbox })
+        if (j.header && j.header.bbox) out.push({ type: 'header', bbox: j.header.bbox })
+        if (j.footer && j.footer.bbox) out.push({ type: 'footer', bbox: j.footer.bbox })
+        return out
+      }
+
+      function renderBoxes() {
+        const el = document.getElementById('boxes')
+        el.innerHTML = ''
+        boxes.forEach((b, i) => {
+          const d = document.createElement('div')
+          d.className = 'box-row'
+          d.innerHTML = `[${b.type}${b.key ? ' ' + b.key : ''}] <input data-i="${i}" class="bb" value="${b.bbox.join(',')}"> <button data-del="${i}">删</button>`
+          el.appendChild(d)
+        })
+        el.querySelectorAll('.bb').forEach(
+          (inp) =>
+            (inp.onchange = () => {
+              boxes[+inp.dataset.i].bbox = inp.value.split(',').map(Number)
+              draw()
+            })
+        )
+        el.querySelectorAll('[data-del]').forEach(
+          (btn) =>
+            (btn.onclick = () => {
+              boxes.splice(+btn.dataset.del, 1)
+              renderBoxes()
+              draw()
+            })
+        )
+        draw()
+      }
+
+      function renderQuestions() {
+        const el = document.getElementById('questions')
+        el.innerHTML = ''
+        questions.forEach((q, i) => {
+          const d = document.createElement('div')
+          d.className = 'q'
+          const opt = (k) => (q.options || []).find((o) => o.key === k)
+          d.innerHTML = `
+      套<input data-f="setNumber" data-i="${i}" value="${q.setNumber ?? 1}" size="2">
+      题号<input data-f="number" data-i="${i}" value="${q.number ?? ''}" size="3">
+      答案<input data-f="answer" data-i="${i}" value="${q.answer || ''}" size="4">
+      <button data-qdel="${i}">删</button><br>
+      题干<textarea data-f="stem" data-i="${i}" rows="3">${q.stem || ''}</textarea>
+      ${'ABCD'
+        .split('')
+        .map(
+          (k) =>
+            `${k}<textarea data-f="opt${k}" data-i="${i}" rows="1">${opt(k)?.text || ''}</textarea>`
+        )
+        .join('')}
+      解析<textarea data-f="explanation" data-i="${i}" rows="2">${q.explanation || ''}</textarea>`
+          el.appendChild(d)
+        })
+        el.querySelectorAll('[data-f]').forEach(
+          (inp) =>
+            (inp.onchange = () => {
+              const q = questions[+inp.dataset.i],
+                f = inp.dataset.f
+              if (f.startsWith('opt')) {
+                const k = f[3]
+                q.options = q.options || []
+                const o = q.options.find((o) => o.key === k)
+                if (o) o.text = inp.value
+                else q.options.push({ key: k, text: inp.value })
+              } else if (f === 'number' || f === 'setNumber') {
+                q[f] = parseInt(inp.value) || 0
+              } else {
+                q[f] = inp.value
+              }
+            })
+        )
+        el.querySelectorAll('[data-qdel]').forEach(
+          (btn) =>
+            (btn.onclick = () => {
+              questions.splice(+btn.dataset.qdel, 1)
+              renderQuestions()
+            })
+        )
+      }
+
+      function addQuestion() {
+        questions.push({
+          setNumber: 1,
+          number: '',
+          stem: '',
+          options: [],
+          answer: '',
+          explanation: ''
+        })
+        renderQuestions()
+      }
+
+      function draw() {
+        ctx.clearRect(0, 0, cv.width, cv.height)
+        const colors = {
+          table: 'blue',
+          chart: 'orange',
+          stemImage: 'purple',
+          optionImage: 'magenta',
+          watermark: 'red',
+          header: 'teal',
+          footer: 'teal'
+        }
+        boxes.forEach((b, i) => {
+          const [x0, y0, x1, y1] = b.bbox
+          ctx.strokeStyle = colors[b.type] || 'black'
+          ctx.lineWidth = 2
+          ctx.strokeRect(x0, y0, x1 - x0, y1 - y0)
+          ctx.fillStyle = ctx.strokeStyle
+          ctx.font = '20px sans-serif'
+          ctx.fillText(
+            String.fromCharCode(65121 + (i % 2)) + b.type + (b.key || ''),
+            x0 + 2,
+            y0 + 22
+          )
+        })
+        if (dragStart && dragCur) {
+          ctx.strokeStyle = 'lime'
+          ctx.setLineDash([6, 4])
+          ctx.strokeRect(
+            dragStart[0],
+            dragStart[1],
+            dragCur[0] - dragStart[0],
+            dragCur[1] - dragStart[1]
+          )
+          ctx.setLineDash([])
+        }
+      }
+
+      let dragCur = null
+      cv.onmousedown = (e) => {
+        const r = cv.getBoundingClientRect()
+        dragStart = [e.clientX - r.left, e.clientY - r.top]
+        drawing = true
+      }
+      cv.onmousemove = (e) => {
+        if (!drawing) return
+        const r = cv.getBoundingClientRect()
+        dragCur = [e.clientX - r.left, e.clientY - r.top]
+        draw()
+      }
+      cv.onmouseup = (e) => {
+        if (!drawing) return
+        drawing = false
+        const r = cv.getBoundingClientRect()
+        dragCur = [e.clientX - r.left, e.clientY - r.top]
+        const x0 = Math.min(dragStart[0], dragCur[0]),
+          y0 = Math.min(dragStart[1], dragCur[1])
+        const x1 = Math.max(dragStart[0], dragCur[0]),
+          y1 = Math.max(dragStart[1], dragCur[1])
+        if (x1 - x0 > 8 && y1 - y0 > 8) {
+          const t = document.getElementById('boxType').value
+          const key = document.getElementById('boxKey').value
+          const b = {
+            type: t,
+            bbox: [Math.round(x0), Math.round(y0), Math.round(x1), Math.round(y1)]
+          }
+          if (t === 'optionImage') b.key = key
+          if (t === 'chart') b.kind = ''
+          boxes.push(b)
+          renderBoxes()
+        }
+        dragStart = dragCur = null
+        draw()
+      }
+
+      document.getElementById('save').onclick = async () => {
+        const data = {
+          schemaVersion: 1,
+          pageId: cur.pageId,
+          pageNumber: cur.page,
+          sourcePdf: cur.relPath,
+          pageType: document.getElementById('pageType').value,
+          setStatus: document.getElementById('setStatus').value,
+          annotator: document.getElementById('annotator').value,
+          set: cur.set,
+          questions: questions.map((q) => ({
+            setNumber: q.setNumber || 1,
+            number: q.number || 0,
+            stem: q.stem || '',
+            options: (q.options || []).filter((o) => o.text !== ''),
+            optionImages: boxes
+              .filter((b) => b.type === 'optionImage' && b.q === q.number)
+              .map((b) => ({ key: b.key, bbox: b.bbox })),
+            stemImages: boxes.filter((b) => b.type === 'stemImage').map((b) => ({ bbox: b.bbox })),
+            answer: q.answer || '',
+            explanation: q.explanation || ''
+          })),
+          numbers: document
+            .getElementById('numbers')
+            .value.split('\n')
+            .map((s) => s.trim())
+            .filter(Boolean),
+          tables: boxes.filter((b) => b.type === 'table').map((b) => ({ bbox: b.bbox, rows: [] })),
+          charts: boxes
+            .filter((b) => b.type === 'chart')
+            .map((b) => ({ bbox: b.bbox, kind: b.kind || '' })),
+          watermarks: boxes
+            .filter((b) => b.type === 'watermark')
+            .map((b) => ({ bbox: b.bbox, text: '' })),
+          header: boxes.find((b) => b.type === 'header')?.bbox
+            ? { bbox: boxes.find((b) => b.type === 'header').bbox }
+            : null,
+          footer: boxes.find((b) => b.type === 'footer')?.bbox
+            ? { bbox: boxes.find((b) => b.type === 'footer').bbox }
+            : null,
+          notes: document.getElementById('notes').value
+        }
+        const r = await fetch('/api/annotation/' + cur.pageId, {
+          method: 'POST',
+          body: JSON.stringify(data)
+        })
+        const j = await r.json()
+        document.getElementById('msg').textContent = j.saved
+          ? '已保存 ' + new Date().toLocaleTimeString()
+          : '失败: ' + j.error
+        loadPages()
+      }
+
+      loadPages()
+    </script>
+  </body>
+</html>

@@ -1,0 +1,542 @@
+{
+ "annotator": "ocr-prefill-v1",
+ "charts": [
+  {
+   "bbox": [
+    1122.0,
+    1814.0,
+    1463.0,
+    2155.0
+   ],
+   "kind": ""
+  }
+ ],
+ "footer": null,
+ "header": null,
+ "notes": "OCR 预填，未经人工确认，不得计入 Ground Truth",
+ "numbers": [
+  "1",
+  "5",
+  "6",
+  "10",
+  "11",
+  "15",
+  "16",
+  "20",
+  "21",
+  "25",
+  "2",
+  "3"
+ ],
+ "pageId": "e6a33d9d-p0003",
+ "pageNumber": 3,
+ "pageType": "解析册",
+ "questions": [
+  {
+   "answer": "D",
+   "explanation": "",
+   "number": 1,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 1,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "C",
+   "explanation": "",
+   "number": 2,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 1,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "D",
+   "explanation": "",
+   "number": 3,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 1,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "B",
+   "explanation": "",
+   "number": 4,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 1,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "B",
+   "explanation": "",
+   "number": 5,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 1,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "C",
+   "explanation": "",
+   "number": 6,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 1,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "B",
+   "explanation": "",
+   "number": 7,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 1,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "A",
+   "explanation": "",
+   "number": 8,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 1,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "C",
+   "explanation": "",
+   "number": 9,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 1,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "C",
+   "explanation": "",
+   "number": 10,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 1,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "B",
+   "explanation": "",
+   "number": 11,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 1,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "A",
+   "explanation": "",
+   "number": 12,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 1,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "D",
+   "explanation": "",
+   "number": 13,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 1,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "A",
+   "explanation": "",
+   "number": 14,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 1,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "B",
+   "explanation": "",
+   "number": 15,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 1,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "B",
+   "explanation": "",
+   "number": 16,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 1,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "B",
+   "explanation": "",
+   "number": 17,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 1,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "D",
+   "explanation": "",
+   "number": 18,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 1,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "B",
+   "explanation": "",
+   "number": 19,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 1,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "C",
+   "explanation": "",
+   "number": 20,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 1,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "C",
+   "explanation": "",
+   "number": 21,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 1,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "D",
+   "explanation": "",
+   "number": 22,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 1,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "C",
+   "explanation": "",
+   "number": 23,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 1,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "B",
+   "explanation": "",
+   "number": 24,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 1,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "D",
+   "explanation": "",
+   "number": 25,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 1,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "C",
+   "explanation": "",
+   "number": 1,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 2,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "C",
+   "explanation": "",
+   "number": 2,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 2,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "A",
+   "explanation": "",
+   "number": 3,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 2,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "B",
+   "explanation": "",
+   "number": 4,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 2,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "B",
+   "explanation": "",
+   "number": 5,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 2,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "C",
+   "explanation": "",
+   "number": 6,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 2,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "C",
+   "explanation": "",
+   "number": 7,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 2,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "D",
+   "explanation": "",
+   "number": 8,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 2,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "A",
+   "explanation": "",
+   "number": 9,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 2,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "C",
+   "explanation": "",
+   "number": 10,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 2,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "B",
+   "explanation": "",
+   "number": 11,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 2,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "D",
+   "explanation": "",
+   "number": 12,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 2,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "A",
+   "explanation": "",
+   "number": 13,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 2,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "B",
+   "explanation": "",
+   "number": 14,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 2,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "D",
+   "explanation": "",
+   "number": 15,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 2,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "C",
+   "explanation": "",
+   "number": 16,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 2,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "A",
+   "explanation": "",
+   "number": 17,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 2,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "C",
+   "explanation": "",
+   "number": 18,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 2,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "C",
+   "explanation": "",
+   "number": 19,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 2,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "C",
+   "explanation": "",
+   "number": 20,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 2,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "C",
+   "explanation": "",
+   "number": 21,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 2,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "C",
+   "explanation": "",
+   "number": 22,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 2,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "D",
+   "explanation": "",
+   "number": 23,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 2,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "A",
+   "explanation": "",
+   "number": 24,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 2,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "A",
+   "explanation": "",
+   "number": 25,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 2,
+   "stem": "",
+   "stemImages": []
+  }
+ ],
+ "schemaVersion": 1,
+ "set": "tuning",
+ "setStatus": "pending",
+ "sourcePdf": "E:/BaiduNetdiskDownload/考公刷题本答案/071.2027四海行测2000题海海刷1期/讲义/答案/【四海】26下-海海刷1期-数量关系题本（参考答案）.pdf",
+ "tables": [],
+ "watermarks": []
+}

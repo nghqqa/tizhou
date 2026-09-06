@@ -59,3 +59,24 @@ $PY tools/experimental/tests/test_regression.py             # 阶段8 真实样�
 
 **本轮不做任何「资料分析/图形推理已达自动高准确率」的声称**；
 只有真实样本指标改善且静默丢题为 0 之后，才允许讨论替换生产通道。
+
+## 阶段二：Golden Set 与人工标注
+
+- `golden-set.json`：固定种子选出的 30 页清单，调优/验证/留出为 18/6/6；同一 PDF 不跨集合。
+- `golden/annotations/*.json`：OCR 预填标注。当前 30 页全部为 `pending`，不是人工真值。
+- `phase2-report.md`：实验结论与消融摘要；其中准确率均明确标为未核实参考。
+- `tools/experimental/annotator_server.py`：本地标注服务，原 PDF 只读，不调用外部 API。
+- `tools/experimental/eval_real.py`：只有通过 schema 且 `setStatus=confirmed` 的标注才进入 Ground Truth；缺标注或缺整页 worker 输出不会被静默跳过。
+- `tools/experimental/prefill_golden.py`：默认保留已有标注；只有人工标注开始前才可显式使用 `--force` 覆盖。
+
+实验运行目录可通过 `TIZHU_EXP_DIR` 覆盖，真实 PDF 根目录可通过 `TIZHU_SAMPLE_DIR` 覆盖。二者都在仓库外：
+
+```powershell
+$env:TIZHU_EXP_DIR = 'E:\tizhou-ocr-bank\exp'
+$env:TIZHU_SAMPLE_DIR = 'E:\BaiduNetdiskDownload\考公刷题本答案'
+python tools/experimental/annotator_server.py
+python tools/experimental/ablation.py tuning
+python tools/experimental/eval_real.py --worker <pages.json> --out <metrics.json>
+```
+
+调参和消融只使用 `tuning`；`validation` 用于定型检查，`heldout` 只允许在配置冻结后评测。渲染图、裁剪图、模型、OCR 运行目录和真实 PDF 均不提交 Git。

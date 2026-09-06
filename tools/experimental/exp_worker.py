@@ -237,6 +237,10 @@ def _iou(a: list[float], b: list[float]) -> float:
     return inter / union if union > 0 else 0.0
 
 
+# 公开别名：供 exp_worker2 等下游模块复用
+iou = _iou
+
+
 def merge_figure_regions(candidate_bboxes: list[list[float]],
                          page_w: int, page_h: int) -> list[dict]:
     """合并图片对象矩形与边缘检测区域；过滤页眉通栏横幅与碎片噪声。"""

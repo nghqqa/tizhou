@@ -1,0 +1,1043 @@
+{
+ "annotator": "ocr-prefill-v1",
+ "charts": [
+  {
+   "bbox": [
+    228.0,
+    160.0,
+    1533.0,
+    318.0
+   ],
+   "kind": ""
+  }
+ ],
+ "footer": null,
+ "header": null,
+ "notes": "OCR 预填，未经人工确认，不得计入 Ground Truth",
+ "numbers": [
+  "5",
+  "1",
+  "6",
+  "10",
+  "11",
+  "15",
+  "16",
+  "20",
+  "21",
+  "25",
+  "7",
+  "8",
+  "2"
+ ],
+ "pageId": "e6a33d9d-p0002",
+ "pageNumber": 2,
+ "pageType": "解析册",
+ "questions": [
+  {
+   "answer": "A",
+   "explanation": "",
+   "number": 1,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 1,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "A",
+   "explanation": "",
+   "number": 2,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 1,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "B",
+   "explanation": "",
+   "number": 3,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 1,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "B",
+   "explanation": "",
+   "number": 4,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 1,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "B",
+   "explanation": "",
+   "number": 5,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 1,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "C",
+   "explanation": "",
+   "number": 6,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 1,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "B",
+   "explanation": "",
+   "number": 7,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 1,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "A",
+   "explanation": "",
+   "number": 8,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 1,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "A",
+   "explanation": "",
+   "number": 9,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 1,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "B",
+   "explanation": "",
+   "number": 10,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 1,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "D",
+   "explanation": "",
+   "number": 11,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 1,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "A",
+   "explanation": "",
+   "number": 12,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 1,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "A",
+   "explanation": "",
+   "number": 13,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 1,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "B",
+   "explanation": "",
+   "number": 14,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 1,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "D",
+   "explanation": "",
+   "number": 15,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 1,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "D",
+   "explanation": "",
+   "number": 16,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 1,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "A",
+   "explanation": "",
+   "number": 17,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 1,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "A",
+   "explanation": "",
+   "number": 18,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 1,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "C",
+   "explanation": "",
+   "number": 19,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 1,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "C",
+   "explanation": "",
+   "number": 20,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 1,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "A",
+   "explanation": "",
+   "number": 21,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 1,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "D",
+   "explanation": "",
+   "number": 22,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 1,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "A",
+   "explanation": "",
+   "number": 23,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 1,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "A",
+   "explanation": "",
+   "number": 24,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 1,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "D",
+   "explanation": "",
+   "number": 25,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 1,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "A",
+   "explanation": "",
+   "number": 1,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 2,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "A",
+   "explanation": "",
+   "number": 2,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 2,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "D",
+   "explanation": "",
+   "number": 3,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 2,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "A",
+   "explanation": "",
+   "number": 4,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 2,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "A",
+   "explanation": "",
+   "number": 5,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 2,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "D",
+   "explanation": "",
+   "number": 6,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 2,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "D",
+   "explanation": "",
+   "number": 7,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 2,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "C",
+   "explanation": "",
+   "number": 8,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 2,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "D",
+   "explanation": "",
+   "number": 9,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 2,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "D",
+   "explanation": "",
+   "number": 10,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 2,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "D",
+   "explanation": "",
+   "number": 11,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 2,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "C",
+   "explanation": "",
+   "number": 12,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 2,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "D",
+   "explanation": "",
+   "number": 13,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 2,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "C",
+   "explanation": "",
+   "number": 14,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 2,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "A",
+   "explanation": "",
+   "number": 15,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 2,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "B",
+   "explanation": "",
+   "number": 16,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 2,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "D",
+   "explanation": "",
+   "number": 17,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 2,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "A",
+   "explanation": "",
+   "number": 18,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 2,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "D",
+   "explanation": "",
+   "number": 19,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 2,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "B",
+   "explanation": "",
+   "number": 20,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 2,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "D",
+   "explanation": "",
+   "number": 21,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 2,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "B",
+   "explanation": "",
+   "number": 22,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 2,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "D",
+   "explanation": "",
+   "number": 23,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 2,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "B",
+   "explanation": "",
+   "number": 24,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 2,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "B",
+   "explanation": "",
+   "number": 25,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 2,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "D",
+   "explanation": "",
+   "number": 1,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 3,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "A",
+   "explanation": "",
+   "number": 2,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 3,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "A",
+   "explanation": "",
+   "number": 3,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 3,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "D",
+   "explanation": "",
+   "number": 4,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 3,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "C",
+   "explanation": "",
+   "number": 5,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 3,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "A",
+   "explanation": "",
+   "number": 6,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 3,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "B",
+   "explanation": "",
+   "number": 7,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 3,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "A",
+   "explanation": "",
+   "number": 8,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 3,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "A",
+   "explanation": "",
+   "number": 9,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 3,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "A",
+   "explanation": "",
+   "number": 10,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 3,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "C",
+   "explanation": "",
+   "number": 11,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 3,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "B",
+   "explanation": "",
+   "number": 12,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 3,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "C",
+   "explanation": "",
+   "number": 13,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 3,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "C",
+   "explanation": "",
+   "number": 14,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 3,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "D",
+   "explanation": "",
+   "number": 15,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 3,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "D",
+   "explanation": "",
+   "number": 16,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 3,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "C",
+   "explanation": "",
+   "number": 17,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 3,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "A",
+   "explanation": "",
+   "number": 18,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 3,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "A",
+   "explanation": "",
+   "number": 19,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 3,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "A",
+   "explanation": "",
+   "number": 20,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 3,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "B",
+   "explanation": "",
+   "number": 21,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 3,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "D",
+   "explanation": "",
+   "number": 22,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 3,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "B",
+   "explanation": "",
+   "number": 23,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 3,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "A",
+   "explanation": "",
+   "number": 24,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 3,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "B",
+   "explanation": "",
+   "number": 25,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 3,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "C",
+   "explanation": "",
+   "number": 1,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 4,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "A",
+   "explanation": "",
+   "number": 2,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 4,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "A",
+   "explanation": "",
+   "number": 3,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 4,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "D",
+   "explanation": "",
+   "number": 4,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 4,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "D",
+   "explanation": "",
+   "number": 5,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 4,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "B",
+   "explanation": "",
+   "number": 6,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 4,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "C",
+   "explanation": "",
+   "number": 7,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 4,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "D",
+   "explanation": "",
+   "number": 8,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 4,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "B",
+   "explanation": "",
+   "number": 9,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 4,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "B",
+   "explanation": "",
+   "number": 10,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 4,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "D",
+   "explanation": "",
+   "number": 11,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 4,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "C",
+   "explanation": "",
+   "number": 12,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 4,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "C",
+   "explanation": "",
+   "number": 13,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 4,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "B",
+   "explanation": "",
+   "number": 14,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 4,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "D",
+   "explanation": "",
+   "number": 15,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 4,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "D",
+   "explanation": "",
+   "number": 16,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 4,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "A",
+   "explanation": "",
+   "number": 17,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 4,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "B",
+   "explanation": "",
+   "number": 18,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 4,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "C",
+   "explanation": "",
+   "number": 19,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 4,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "B",
+   "explanation": "",
+   "number": 20,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 4,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "C",
+   "explanation": "",
+   "number": 21,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 4,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "D",
+   "explanation": "",
+   "number": 22,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 4,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "B",
+   "explanation": "",
+   "number": 23,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 4,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "A",
+   "explanation": "",
+   "number": 24,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 4,
+   "stem": "",
+   "stemImages": []
+  },
+  {
+   "answer": "A",
+   "explanation": "",
+   "number": 25,
+   "optionImages": [],
+   "options": [],
+   "setNumber": 4,
+   "stem": "",
+   "stemImages": []
+  }
+ ],
+ "schemaVersion": 1,
+ "set": "tuning",
+ "setStatus": "pending",
+ "sourcePdf": "E:/BaiduNetdiskDownload/考公刷题本答案/071.2027四海行测2000题海海刷1期/讲义/答案/【四海】26下-海海刷1期-数量关系题本（参考答案）.pdf",
+ "tables": [],
+ "watermarks": []
+}

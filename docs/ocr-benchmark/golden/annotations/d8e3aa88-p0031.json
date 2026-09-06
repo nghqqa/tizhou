@@ -1,0 +1,188 @@
+{
+ "annotator": "ocr-prefill-v1",
+ "charts": [
+  {
+   "bbox": [
+    893.0,
+    594.0,
+    1350.0,
+    1055.0
+   ],
+   "kind": ""
+  },
+  {
+   "bbox": [
+    821.0,
+    1078.0,
+    1426.0,
+    1245.0
+   ],
+   "kind": ""
+  }
+ ],
+ "footer": null,
+ "header": null,
+ "notes": "OCR 预填，未经人工确认，不得计入 Ground Truth",
+ "numbers": [
+  "7",
+  "2024",
+  "8",
+  "6",
+  "9",
+  "2023",
+  "27"
+ ],
+ "pageId": "d8e3aa88-p0031",
+ "pageNumber": 31,
+ "pageType": "图形推理",
+ "questions": [
+  {
+   "answer": "",
+   "explanation": "",
+   "number": 7,
+   "optionImages": [],
+   "options": [
+    {
+     "key": "A",
+     "text": ""
+    },
+    {
+     "key": "B",
+     "text": ""
+    },
+    {
+     "key": "C",
+     "text": ""
+    },
+    {
+     "key": "D",
+     "text": ""
+    }
+   ],
+   "setNumber": 1,
+   "stem": "【2024联考】请从四个选项中选出最恰当的一项填入问号处，使题干图形呈现一定的规律性：",
+   "stemImages": [
+    {
+     "bbox": [
+      893.0,
+      594.0,
+      1350.0,
+      1055.0
+     ]
+    },
+    {
+     "bbox": [
+      821.0,
+      1078.0,
+      1426.0,
+      1245.0
+     ]
+    }
+   ]
+  },
+  {
+   "answer": "",
+   "explanation": "",
+   "number": 8,
+   "optionImages": [],
+   "options": [
+    {
+     "key": "A",
+     "text": "①④⑥，②③⑤"
+    },
+    {
+     "key": "B",
+     "text": "①⑤⑥，②③④"
+    },
+    {
+     "key": "C",
+     "text": "①②⑥，③④⑤"
+    },
+    {
+     "key": "D",
+     "text": "①③⑥， ②④⑤"
+    }
+   ],
+   "setNumber": 1,
+   "stem": "【2024国考】把下面的六个图形分为两类，使每一类图形都有各自的共同特征或规律，分类正确的一项是：①G6",
+   "stemImages": [
+    {
+     "bbox": [
+      893.0,
+      594.0,
+      1350.0,
+      1055.0
+     ]
+    },
+    {
+     "bbox": [
+      821.0,
+      1078.0,
+      1426.0,
+      1245.0
+     ]
+    }
+   ]
+  },
+  {
+   "answer": "",
+   "explanation": "",
+   "number": 9,
+   "optionImages": [],
+   "options": [
+    {
+     "key": "A",
+     "text": "①②③，④⑤⑥"
+    },
+    {
+     "key": "B",
+     "text": "①②⑥， ③④⑤"
+    },
+    {
+     "key": "C",
+     "text": "①④⑥，②③⑤"
+    },
+    {
+     "key": "D",
+     "text": "①⑤⑥， ②③④"
+    }
+   ],
+   "setNumber": 1,
+   "stem": "【2023浙江】把下面的六个图形分为两类，使每一类图形都有各自的共同特征或规律，分类正确的一项是：①③27",
+   "stemImages": [
+    {
+     "bbox": [
+      893.0,
+      594.0,
+      1350.0,
+      1055.0
+     ]
+    },
+    {
+     "bbox": [
+      821.0,
+      1078.0,
+      1426.0,
+      1245.0
+     ]
+    }
+   ]
+  }
+ ],
+ "schemaVersion": 1,
+ "set": "heldout",
+ "setStatus": "pending",
+ "sourcePdf": "E:/BaiduNetdiskDownload/考公刷题本答案/实战公考-酷酷刷-判断推理.pdf",
+ "tables": [],
+ "watermarks": [
+  {
+   "bbox": [
+    1709.2,
+    221.7,
+    1972.4,
+    274.0
+   ],
+   "text": "超格学员专用"
+  }
+ ]
+}

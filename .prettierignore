@@ -7,3 +7,5 @@ fixtures/
 rc-evidence/
 docs/quality-baseline.json
 docs/quality-baseline.md
+docs/ocr-benchmark/*.json
+docs/ocr-benchmark/golden/

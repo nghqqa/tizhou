@@ -1,0 +1,185 @@
+{
+ "annotator": "ocr-prefill-v1",
+ "charts": [],
+ "footer": null,
+ "header": null,
+ "notes": "OCR 预填，未经人工确认，不得计入 Ground Truth",
+ "numbers": [
+  "16",
+  "5",
+  "8",
+  "6",
+  "3",
+  "4",
+  "17",
+  "36",
+  "30",
+  "32",
+  "11",
+  "12",
+  "18",
+  "60",
+  "40",
+  "1",
+  "2",
+  "39",
+  "46",
+  "19",
+  "14",
+  "10",
+  "22",
+  "9",
+  "20",
+  "50%",
+  "75",
+  "72",
+  "81",
+  "96"
+ ],
+ "pageId": "0087ce22-p0010",
+ "pageNumber": 10,
+ "pageType": "普通文字",
+ "questions": [
+  {
+   "answer": "",
+   "explanation": "",
+   "number": 16,
+   "optionImages": [],
+   "options": [
+    {
+     "key": "A",
+     "text": "3"
+    },
+    {
+     "key": "B",
+     "text": "4"
+    },
+    {
+     "key": "C",
+     "text": "5"
+    },
+    {
+     "key": "D",
+     "text": "6"
+    }
+   ],
+   "setNumber": 1,
+   "stem": "有一水池，如果打开甲水龙头注水，需要5个小时装满水，如果打开乙水龙头注水，需要8个小时装满水，如果打开丙水龙头放水，需要6小时放空水池。现打开甲水龙头一小时，然后打开乙水龙头，过一小时后再打开丙水龙头，问再过多少小时可以注满水池？",
+   "stemImages": []
+  },
+  {
+   "answer": "",
+   "explanation": "",
+   "number": 17,
+   "optionImages": [],
+   "options": [
+    {
+     "key": "A",
+     "text": "11 天整"
+    },
+    {
+     "key": "B",
+     "text": "11 天多"
+    },
+    {
+     "key": "C",
+     "text": "12 天整"
+    },
+    {
+     "key": "D",
+     "text": "12 天多"
+    }
+   ],
+   "setNumber": 1,
+   "stem": "单独完成某项工程，甲队需要36天，乙队需要30天，丙队需要32天。如果安排合作施工，按照甲乙、乙丙、丙甲、甲乙……的顺序按天轮转，问完成这项工作时，甲工作了多少天？",
+   "stemImages": []
+  },
+  {
+   "answer": "",
+   "explanation": "",
+   "number": 18,
+   "optionImages": [],
+   "options": [
+    {
+     "key": "A",
+     "text": "30 天"
+    },
+    {
+     "key": "B",
+     "text": "39 天"
+    },
+    {
+     "key": "C",
+     "text": "40 天"
+    },
+    {
+     "key": "D",
+     "text": "46 天"
+    }
+   ],
+   "setNumber": 1,
+   "stem": "一项工程，甲单独做要60天完工，乙单独做要40天，现在两队合做，甲队做3天休息1天，乙队做2天休息2天。则完成这项工作需要约多少天？",
+   "stemImages": []
+  },
+  {
+   "answer": "",
+   "explanation": "",
+   "number": 19,
+   "optionImages": [],
+   "options": [
+    {
+     "key": "A",
+     "text": "9"
+    },
+    {
+     "key": "B",
+     "text": "10"
+    },
+    {
+     "key": "C",
+     "text": "11"
+    },
+    {
+     "key": "D",
+     "text": "12"
+    }
+   ],
+   "setNumber": 1,
+   "stem": "某桥梁工程有甲、乙两个建筑队参与，若甲、乙两队合作14天，剩余工程由乙队单干4天可完成；若甲、乙两队合作10天，剩余工程由甲队单干14天可完成。若要使该工程在22天内结束，甲队至少需要参与施工多少天?",
+   "stemImages": []
+  },
+  {
+   "answer": "",
+   "explanation": "",
+   "number": 20,
+   "optionImages": [],
+   "options": [
+    {
+     "key": "A",
+     "text": "60"
+    },
+    {
+     "key": "B",
+     "text": "72"
+    },
+    {
+     "key": "C",
+     "text": "81"
+    },
+    {
+     "key": "D",
+     "text": "96"
+    }
+   ],
+   "setNumber": 1,
+   "stem": "某建筑队完成某项工程的后，购买了新设备，工作效率提升了50%；但同时由于酷暑难耐，为工人健康着想，每天工作时间减少为原来的，最终工程共用75天完成。若按原有的效率和每天的工作时间，完成工程共需多少天？第 9 页",
+   "stemImages": []
+  }
+ ],
+ "schemaVersion": 1,
+ "set": "heldout",
+ "setStatus": "pending",
+ "sourcePdf": "E:/BaiduNetdiskDownload/考公刷题本答案/071.2027四海行测2000题海海刷1期/讲义/题本/【四海】26下-海海刷1期-数量关系题本.pdf",
+ "tables": [],
+ "watermarks": []
+}

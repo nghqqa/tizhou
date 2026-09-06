@@ -1,0 +1,292 @@
+{
+ "constraints": {
+  "maxPagesPerPdf": 4,
+  "minDistinctPdfs": 5,
+  "pdfDisjointAcrossSets": true
+ },
+ "distinctPdfs": 12,
+ "pageCount": 30,
+ "pages": [
+  {
+   "file": "【四海】26下-海海刷1期-数量关系题本.pdf",
+   "page": 10,
+   "pageId": "0087ce22-p0010",
+   "pageType": "普通文字",
+   "relPath": "E:/BaiduNetdiskDownload/考公刷题本答案/071.2027四海行测2000题海海刷1期/讲义/题本/【四海】26下-海海刷1期-数量关系题本.pdf",
+   "set": "heldout"
+  },
+  {
+   "file": "实战公考-酷酷刷-判断推理.pdf",
+   "page": 31,
+   "pageId": "d8e3aa88-p0031",
+   "pageType": "图形推理",
+   "relPath": "E:/BaiduNetdiskDownload/考公刷题本答案/实战公考-酷酷刷-判断推理.pdf",
+   "set": "heldout"
+  },
+  {
+   "file": "实战公考-酷酷刷-资料分析.pdf",
+   "page": 92,
+   "pageId": "8e9227c9-p0092",
+   "pageType": "资料分析表格",
+   "relPath": "E:/BaiduNetdiskDownload/考公刷题本答案/实战公考-酷酷刷-资料分析.pdf",
+   "set": "heldout"
+  },
+  {
+   "file": "实战公考-酷酷刷-资料分析.pdf",
+   "page": 96,
+   "pageId": "8e9227c9-p0096",
+   "pageType": "资料分析统计图",
+   "relPath": "E:/BaiduNetdiskDownload/考公刷题本答案/实战公考-酷酷刷-资料分析.pdf",
+   "set": "heldout"
+  },
+  {
+   "file": "实战公考-酷酷刷-资料分析.pdf",
+   "page": 109,
+   "pageId": "8e9227c9-p0109",
+   "pageType": "资料分析表格",
+   "relPath": "E:/BaiduNetdiskDownload/考公刷题本答案/实战公考-酷酷刷-资料分析.pdf",
+   "set": "heldout"
+  },
+  {
+   "file": "2025年花生片段阅读600题-解析【下】.pdf",
+   "page": 173,
+   "pageId": "20e699d0-p0173",
+   "pageType": "解析册",
+   "relPath": "E:/BaiduNetdiskDownload/考公刷题本答案/片段阅读600题/完整题本/2025年花生片段阅读600题-解析【下】.pdf",
+   "set": "heldout"
+  },
+  {
+   "file": "【四海】26下-海海刷1期-数量关系题本（参考答案）.pdf",
+   "page": 1,
+   "pageId": "e6a33d9d-p0001",
+   "pageType": "解析册",
+   "relPath": "E:/BaiduNetdiskDownload/考公刷题本答案/071.2027四海行测2000题海海刷1期/讲义/答案/【四海】26下-海海刷1期-数量关系题本（参考答案）.pdf",
+   "set": "tuning"
+  },
+  {
+   "file": "【四海】26下-海海刷1期-数量关系题本（参考答案）.pdf",
+   "page": 2,
+   "pageId": "e6a33d9d-p0002",
+   "pageType": "解析册",
+   "relPath": "E:/BaiduNetdiskDownload/考公刷题本答案/071.2027四海行测2000题海海刷1期/讲义/答案/【四海】26下-海海刷1期-数量关系题本（参考答案）.pdf",
+   "set": "tuning"
+  },
+  {
+   "file": "【四海】26下-海海刷1期-数量关系题本（参考答案）.pdf",
+   "page": 3,
+   "pageId": "e6a33d9d-p0003",
+   "pageType": "解析册",
+   "relPath": "E:/BaiduNetdiskDownload/考公刷题本答案/071.2027四海行测2000题海海刷1期/讲义/答案/【四海】26下-海海刷1期-数量关系题本（参考答案）.pdf",
+   "set": "tuning"
+  },
+  {
+   "file": "【四海】26下-海海刷1期-判断推理题本.pdf",
+   "page": 49,
+   "pageId": "fc15bb1c-p0049",
+   "pageType": "图形推理",
+   "relPath": "E:/BaiduNetdiskDownload/考公刷题本答案/071.2027四海行测2000题海海刷1期/讲义/题本/【四海】26下-海海刷1期-判断推理题本.pdf",
+   "set": "tuning"
+  },
+  {
+   "file": "【四海】26下-海海刷1期-判断推理题本.pdf",
+   "page": 82,
+   "pageId": "fc15bb1c-p0082",
+   "pageType": "图形推理",
+   "relPath": "E:/BaiduNetdiskDownload/考公刷题本答案/071.2027四海行测2000题海海刷1期/讲义/题本/【四海】26下-海海刷1期-判断推理题本.pdf",
+   "set": "tuning"
+  },
+  {
+   "file": "【四海】26下-海海刷1期-判断推理题本.pdf",
+   "page": 174,
+   "pageId": "fc15bb1c-p0174",
+   "pageType": "图形推理",
+   "relPath": "E:/BaiduNetdiskDownload/考公刷题本答案/071.2027四海行测2000题海海刷1期/讲义/题本/【四海】26下-海海刷1期-判断推理题本.pdf",
+   "set": "tuning"
+  },
+  {
+   "file": "【四海】26下-海海刷1期-判断推理题本.pdf",
+   "page": 188,
+   "pageId": "fc15bb1c-p0188",
+   "pageType": "图形推理",
+   "relPath": "E:/BaiduNetdiskDownload/考公刷题本答案/071.2027四海行测2000题海海刷1期/讲义/题本/【四海】26下-海海刷1期-判断推理题本.pdf",
+   "set": "tuning"
+  },
+  {
+   "file": "【四海】26下-海海刷1期-言语理解题本.pdf",
+   "page": 30,
+   "pageId": "ce3bea8c-p0030",
+   "pageType": "普通文字",
+   "relPath": "E:/BaiduNetdiskDownload/考公刷题本答案/071.2027四海行测2000题海海刷1期/讲义/题本/【四海】26下-海海刷1期-言语理解题本.pdf",
+   "set": "tuning"
+  },
+  {
+   "file": "【四海】26下-海海刷1期-言语理解题本.pdf",
+   "page": 90,
+   "pageId": "ce3bea8c-p0090",
+   "pageType": "普通文字",
+   "relPath": "E:/BaiduNetdiskDownload/考公刷题本答案/071.2027四海行测2000题海海刷1期/讲义/题本/【四海】26下-海海刷1期-言语理解题本.pdf",
+   "set": "tuning"
+  },
+  {
+   "file": "【四海】26下-海海刷1期-言语理解题本.pdf",
+   "page": 99,
+   "pageId": "ce3bea8c-p0099",
+   "pageType": "普通文字",
+   "relPath": "E:/BaiduNetdiskDownload/考公刷题本答案/071.2027四海行测2000题海海刷1期/讲义/题本/【四海】26下-海海刷1期-言语理解题本.pdf",
+   "set": "tuning"
+  },
+  {
+   "file": "【四海】26下-海海刷1期-言语理解题本.pdf",
+   "page": 112,
+   "pageId": "ce3bea8c-p0112",
+   "pageType": "普通文字",
+   "relPath": "E:/BaiduNetdiskDownload/考公刷题本答案/071.2027四海行测2000题海海刷1期/讲义/题本/【四海】26下-海海刷1期-言语理解题本.pdf",
+   "set": "tuning"
+  },
+  {
+   "file": "【四海】26下-海海刷1期-资料分析题本.pdf",
+   "page": 14,
+   "pageId": "549420f7-p0014",
+   "pageType": "资料分析统计图",
+   "relPath": "E:/BaiduNetdiskDownload/考公刷题本答案/071.2027四海行测2000题海海刷1期/讲义/题本/【四海】26下-海海刷1期-资料分析题本.pdf",
+   "set": "tuning"
+  },
+  {
+   "file": "【四海】26下-海海刷1期-资料分析题本.pdf",
+   "page": 41,
+   "pageId": "549420f7-p0041",
+   "pageType": "资料分析统计图",
+   "relPath": "E:/BaiduNetdiskDownload/考公刷题本答案/071.2027四海行测2000题海海刷1期/讲义/题本/【四海】26下-海海刷1期-资料分析题本.pdf",
+   "set": "tuning"
+  },
+  {
+   "file": "【四海】26下-海海刷1期-资料分析题本.pdf",
+   "page": 55,
+   "pageId": "549420f7-p0055",
+   "pageType": "资料分析表格",
+   "relPath": "E:/BaiduNetdiskDownload/考公刷题本答案/071.2027四海行测2000题海海刷1期/讲义/题本/【四海】26下-海海刷1期-资料分析题本.pdf",
+   "set": "tuning"
+  },
+  {
+   "file": "2027资料分析-夸夸刷-必考题型专项拔高.pdf",
+   "page": 88,
+   "pageId": "f2042f61-p0088",
+   "pageType": "资料分析统计图",
+   "relPath": "E:/BaiduNetdiskDownload/考公刷题本答案/2027资料分析-夸夸刷-必考题型专项拔高.pdf",
+   "set": "tuning"
+  },
+  {
+   "file": "2027资料分析-夸夸刷-必考题型专项拔高.pdf",
+   "page": 141,
+   "pageId": "f2042f61-p0141",
+   "pageType": "资料分析统计图",
+   "relPath": "E:/BaiduNetdiskDownload/考公刷题本答案/2027资料分析-夸夸刷-必考题型专项拔高.pdf",
+   "set": "tuning"
+  },
+  {
+   "file": "2027资料分析-夸夸刷-必考题型专项拔高.pdf",
+   "page": 211,
+   "pageId": "f2042f61-p0211",
+   "pageType": "资料分析表格",
+   "relPath": "E:/BaiduNetdiskDownload/考公刷题本答案/2027资料分析-夸夸刷-必考题型专项拔高.pdf",
+   "set": "tuning"
+  },
+  {
+   "file": "2027资料分析-夸夸刷-必考题型专项拔高.pdf",
+   "page": 294,
+   "pageId": "f2042f61-p0294",
+   "pageType": "资料分析表格",
+   "relPath": "E:/BaiduNetdiskDownload/考公刷题本答案/2027资料分析-夸夸刷-必考题型专项拔高.pdf",
+   "set": "tuning"
+  },
+  {
+   "file": "2027判断推理-专项提升夸夸刷.pdf",
+   "page": 1,
+   "pageId": "13403035-p0001",
+   "pageType": "普通文字",
+   "relPath": "E:/BaiduNetdiskDownload/考公刷题本答案/2027判断推理-专项提升夸夸刷.pdf",
+   "set": "validation"
+  },
+  {
+   "file": "2027判断推理-专项提升夸夸刷.pdf",
+   "page": 174,
+   "pageId": "13403035-p0174",
+   "pageType": "图形推理",
+   "relPath": "E:/BaiduNetdiskDownload/考公刷题本答案/2027判断推理-专项提升夸夸刷.pdf",
+   "set": "validation"
+  },
+  {
+   "file": "2025年花生片段阅读600题-解析【上】.pdf",
+   "page": 96,
+   "pageId": "320afcfc-p0096",
+   "pageType": "解析册",
+   "relPath": "E:/BaiduNetdiskDownload/考公刷题本答案/片段阅读600题/完整题本/2025年花生片段阅读600题-解析【上】.pdf",
+   "set": "validation"
+  },
+  {
+   "file": "2025年花生片段阅读600题-解析【上】.pdf",
+   "page": 128,
+   "pageId": "320afcfc-p0128",
+   "pageType": "解析册",
+   "relPath": "E:/BaiduNetdiskDownload/考公刷题本答案/片段阅读600题/完整题本/2025年花生片段阅读600题-解析【上】.pdf",
+   "set": "validation"
+  },
+  {
+   "file": "资料分析600题-题本（1-6）.pdf",
+   "page": 7,
+   "pageId": "7e9767b6-p0007",
+   "pageType": "资料分析统计图",
+   "relPath": "E:/BaiduNetdiskDownload/考公刷题本答案/资料分析600题/资料分析600题-题本（1-6）.pdf",
+   "set": "validation"
+  },
+  {
+   "file": "资料分析600题-题本（1-6）.pdf",
+   "page": 23,
+   "pageId": "7e9767b6-p0023",
+   "pageType": "资料分析表格",
+   "relPath": "E:/BaiduNetdiskDownload/考公刷题本答案/资料分析600题/资料分析600题-题本（1-6）.pdf",
+   "set": "validation"
+  }
+ ],
+ "schemaVersion": 1,
+ "seed": 20260906,
+ "sets": {
+  "heldout": [
+   "0087ce22-p0010",
+   "20e699d0-p0173",
+   "8e9227c9-p0092",
+   "8e9227c9-p0096",
+   "8e9227c9-p0109",
+   "d8e3aa88-p0031"
+  ],
+  "tuning": [
+   "549420f7-p0014",
+   "549420f7-p0041",
+   "549420f7-p0055",
+   "ce3bea8c-p0030",
+   "ce3bea8c-p0090",
+   "ce3bea8c-p0099",
+   "ce3bea8c-p0112",
+   "e6a33d9d-p0001",
+   "e6a33d9d-p0002",
+   "e6a33d9d-p0003",
+   "f2042f61-p0088",
+   "f2042f61-p0141",
+   "f2042f61-p0211",
+   "f2042f61-p0294",
+   "fc15bb1c-p0049",
+   "fc15bb1c-p0082",
+   "fc15bb1c-p0174",
+   "fc15bb1c-p0188"
+  ],
+  "validation": [
+   "13403035-p0001",
+   "13403035-p0174",
+   "320afcfc-p0096",
+   "320afcfc-p0128",
+   "7e9767b6-p0007",
+   "7e9767b6-p0023"
+  ]
+ },
+ "sourceBenchmark": "benchmark-pages.json (seed=20260906, 95页)"
+}
