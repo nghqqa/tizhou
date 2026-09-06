@@ -5,7 +5,7 @@ import { defineConfig } from 'vitest/config'
 export default defineConfig({
   test: {
     environment: 'node',
-    include: ['e2e/**/*.e2e.test.ts'],
+    include: ['e2e/**/*.e2e.test.ts', 'e2e/**/*.unit.test.ts'],
     testTimeout: 180_000,
     hookTimeout: 180_000,
     // Electron 实例有状态，文件内串行、多文件也不并行

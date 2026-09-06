@@ -2,9 +2,18 @@
 import { _electron as electron, type ElectronApplication, type Page } from 'playwright'
 import { DatabaseSync } from 'node:sqlite'
 import { createHash } from 'node:crypto'
-import { mkdtempSync, mkdirSync, rmSync } from 'node:fs'
+import {
+  lstatSync,
+  mkdtempSync,
+  mkdirSync,
+  rmdirSync,
+  rmSync,
+  existsSync,
+  realpathSync,
+  type Stats
+} from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { isAbsolute, join, relative, resolve } from 'node:path'
 
 export interface AppHandle {
   electronApp: ElectronApplication
@@ -70,18 +79,58 @@ export async function closeApp(app: AppHandle): Promise<void> {
 }
 
 /** 删除 E2E 临时数据目录（仅接受 tizhou-e2e-* 目录）：Windows 文件占用时有限次重试 */
+/** 删除 E2E 临时数据目录（严格边界版）：
+ *  - 目标与系统临时目录都做 resolve，并用 path.relative 验证目标严格位于临时目录内；
+ *  - 末段目录名必须以 tizhou-e2e- 开头；
+ *  - 拒绝空路径、临时目录根本身、绝对路径逃逸与 .. 段；
+ *  - 目标是符号链接/junction 时不递归跟随，只移除链接本身；
+ *  - 目标不存在时幂等返回；
+ *  - 3 次重试后仍失败则抛错（调用方据用例成败决定门禁失败或保留诊断）。 */
 export async function removeTempDataDir(dir: string): Promise<void> {
-  const base = dir.split(/[\\/]/).pop() ?? ''
+  if (!dir || !dir.trim()) throw new Error('拒绝删除：目录路径为空')
+  if (/(^|[\\/])\.\.($|[\\/])/.test(dir)) throw new Error(`拒绝包含 .. 的路径：${dir}`)
+  const segments = dir.split(/[\\/]/).filter(Boolean)
+  const base = segments[segments.length - 1] ?? ''
   if (!base.startsWith('tizhou-e2e-')) throw new Error(`拒绝删除非 E2E 临时目录：${dir}`)
+
+  const tempRoot = resolve(tmpdir())
+  const target = resolve(dir)
+  const rel = relative(tempRoot, target)
+  if (rel === '' || rel.startsWith('..') || isAbsolute(rel))
+    throw new Error(`拒绝删除系统临时目录之外的目标：${dir}`)
+
+  // 不存在 → 幂等返回
+  let stats: Stats | undefined
+  let real = target
+  try {
+    stats = lstatSync(target)
+    real = realpathSync(target)
+  } catch {
+    return
+  }
+  // 链接与 junction 一律只移除链接本身，不递归跟随其真实目标
+  if (stats.isSymbolicLink() || real !== target) {
+    try {
+      rmSync(target, { force: true })
+    } catch {
+      rmdirSync(target)
+    }
+    return
+  }
+  if (!stats.isDirectory()) throw new Error(`拒绝删除非目录目标：${dir}`)
+
+  let lastError: unknown
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
-      rmSync(dir, { recursive: true, force: true })
-      return
-    } catch {
-      await new Promise((resolve) => setTimeout(resolve, 400))
+      rmSync(target, { recursive: true, force: true })
+      if (!existsSync(target)) return
+      lastError = new Error('目录仍存在')
+    } catch (error) {
+      lastError = error
     }
+    await new Promise((resolve) => setTimeout(resolve, 400))
   }
-  console.error(`[e2e] 临时数据目录未能删除（保留供诊断）：${dir}`)
+  throw lastError instanceof Error ? lastError : new Error(`目录删除失败：${dir}`)
 }
 
 /** 向已初始化的本地数据库种入 20 道客观题 + 1 道申论题（内建库），供模考 E2E 使用 */
