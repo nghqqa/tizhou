@@ -13,6 +13,7 @@ import { MigrationService } from './services/migration'
 import { renderReportMarkdown, reportFileName } from './services/report-markdown'
 import { StudyService } from './services/study'
 import { VaultService } from './services/vault'
+import { resolveTestRuntime } from './services/test-runtime'
 import { resolveUpdateFeed } from './services/update-feed'
 
 // electron-updater 是 CommonJS 包，用 createRequire 兼容 ESM 主进程
@@ -63,16 +64,6 @@ function createE2EMockUpdater(scenario: string) {
 }
 
 const electronUpdater = nodeRequire('electron-updater') as typeof import('electron-updater')
-// E2E 注入总开关：仅「非打包实例 + 显式环境变量」同时满足才生效——
-// 正式包（app.isPackaged）无论环境变量如何都不会启用 mock 更新器/保存失败注入/测试窗口标记
-const isE2EMode = !app.isPackaged && process.env.WORKBENCH_E2E === '1'
-const autoUpdater = isE2EMode
-  ? (createE2EMockUpdater(
-      process.env.WORKBENCH_E2E_UPDATE_SCENARIO ?? 'none'
-    ) as unknown as typeof electronUpdater.autoUpdater)
-  : electronUpdater.autoUpdater
-// E2E 注入点：WORKBENCH_E2E_FAIL_SAVE=once 时第一次 exam.save 抛错（验证交卷阻止与重试）
-let e2eExamSaveFailedOnce = false
 
 const currentDirectory = dirname(fileURLToPath(import.meta.url))
 let mainWindow: BrowserWindow | null = null
@@ -87,8 +78,29 @@ function isWithin(root: string, candidate: string): boolean {
   )
 }
 
-if (process.env.WORKBENCH_SMOKE_DATA_DIR) {
-  app.setPath('userData', resolve(process.env.WORKBENCH_SMOKE_DATA_DIR))
+// 测试运行时判定（--smoke-test / WORKBENCH_E2E）：必须在 app.setPath 之前完成，
+// 数据目录覆盖只允许在测试运行时（冒烟或 E2E）下生效——
+// 正式包普通启动时单独设置 WORKBENCH_SMOKE_DATA_DIR 等环境变量不会改变任何行为
+const testRuntime = resolveTestRuntime({
+  isPackaged: app.isPackaged,
+  argv: process.argv,
+  env: process.env
+})
+const isSmokeTest = testRuntime.isSmokeTest
+const isE2EMode = testRuntime.isE2EMode
+const isTestRuntime = testRuntime.isTestRuntime
+
+// mock 更新器只在 isE2EMode 下启用；正式包始终使用真实 electron-updater
+const autoUpdater = isE2EMode
+  ? (createE2EMockUpdater(
+      process.env.WORKBENCH_E2E_UPDATE_SCENARIO ?? 'none'
+    ) as unknown as typeof electronUpdater.autoUpdater)
+  : electronUpdater.autoUpdater
+// E2E 注入点：WORKBENCH_E2E_FAIL_SAVE=once 时第一次 exam.save 抛错（验证交卷阻止与重试）
+let e2eExamSaveFailedOnce = false
+
+if (testRuntime.dataDirOverride) {
+  app.setPath('userData', testRuntime.dataDirOverride)
 }
 
 function createWindow(): void {
@@ -109,7 +121,8 @@ function createWindow(): void {
     }
   })
   mainWindow.once('ready-to-show', () => mainWindow?.show())
-  if (process.env.WORKBENCH_SMOKE_CAPTURE) {
+  // 截图/路由/滚动断言注入：仅测试运行时（冒烟或 E2E）生效
+  if (isTestRuntime && process.env.WORKBENCH_SMOKE_CAPTURE) {
     mainWindow.webContents.once('did-finish-load', () => {
       setTimeout(async () => {
         const capturePath = resolve(process.env.WORKBENCH_SMOKE_CAPTURE!)
@@ -703,7 +716,7 @@ function getUpdateStatus() {
 }
 
 // ── 启动烟雾测试：验证主进程可完整加载并初始化 ──
-const isSmokeTest = process.argv.includes('--smoke-test')
+// （isSmokeTest 已在顶部测试运行时判定中定义）
 
 if (isSmokeTest) {
   app.whenReady().then(async () => {

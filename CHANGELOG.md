@@ -7,6 +7,7 @@
 - 新增 `e2e/` Electron UI E2E 套件（Playwright 驱动本机 Electron，独立配置与脚本 `npm run test:e2e`，不进入 `npm test`）：10 项用例覆盖应用启动/侧栏路由、模考创建-作答-交卷-结果页、保存失败阻止交卷与重试放行、申论草稿输入保存、报告页、备份/迁移入口、更新检查无更新/有更新/失败三态、页面崩溃错误边界
 - 确定性保障：临时数据目录（WORKBENCH_SMOKE_DATA_DIR）、mock updater（WORKBENCH_E2E 场景驱动）、保存失败注入（WORKBENCH_E2E_FAIL_SAVE=once）、题库种子脚本；不调用真实 AI、不访问真实更新服务
 - 失败现场自动转储截图与页面 HTML（e2e-artifacts/，已 gitignore）
+- **可靠性加固**：消除用例顺序依赖（每个 describe 自建实例、模考套件独立种子题库，任意用例可 -t 单独运行）；isE2EMode =「非打包实例 + WORKBENCH_E2E」双门控，正式包永不启用任何 E2E 注入，update-feed service 不再读取 E2E 环境变量；全部用例统一失败转储（onTestFailed 异步等待完成）；申论草稿持久化升级为跨重启断言；临时数据目录用后清理（Windows 占用有限次重试，失败保留并输出路径）
 - 测试分层说明：tests/ = 单元/集成；smoke:packaged = 打包启动冒烟；e2e/ = Electron UI E2E；**真实自动更新安装与跨机迁移重启仍未自动化验证**（需人工执行）
 - **可靠性加固**：消除用例顺序依赖——每个 describe 自建应用实例、模考套件独立种子题库，任意用例可 -t 单独运行（已验证 4 个代表性用例单跑通过）
 - E2E 注入统一收敛：isE2EMode =「非打包实例 + WORKBENCH_E2E」双门控，正式包永不启用 mock 更新器/保存失败注入/测试窗口标记；update-feed service 不再读取 E2E 环境变量（探测禁用由主进程显式传参）

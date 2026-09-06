@@ -8,9 +8,17 @@ import { afterAll, beforeAll, describe, expect, it, onTestFailed } from 'vitest'
 import type { Page } from 'playwright'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { closeApp, launchApp, launchSeededExamApp, type AppHandle } from './helpers'
+import {
+  closeApp,
+  launchApp,
+  launchSeededExamApp,
+  removeTempDataDir,
+  type AppHandle
+} from './helpers'
 
 let app: AppHandle | undefined
+/** 当前套件内是否有用例失败：失败时保留临时数据目录供诊断 */
+let failedInCurrentSuite = false
 
 async function useApp(handle: AppHandle): Promise<Page> {
   app = handle
@@ -20,7 +28,20 @@ async function useApp(handle: AppHandle): Promise<Page> {
 async function closeCurrent(): Promise<void> {
   if (!app) return
   await closeApp(app)
+}
+
+/** 套件收尾：关闭应用后清理 tizhou-e2e-* 临时数据目录（失败时保留并输出路径） */
+async function closeCurrentAndClean(): Promise<void> {
+  const dataDir = app?.dataDir
+  await closeCurrent()
   app = undefined
+  if (!dataDir) return
+  if (failedInCurrentSuite) {
+    console.error(`[e2e] 用例失败，保留数据目录供诊断：${dataDir}`)
+    failedInCurrentSuite = false
+    return
+  }
+  await removeTempDataDir(dataDir)
 }
 
 /** 统一用例包装：注册失败转储（截图 + 页面 HTML 到 e2e-artifacts/），不覆盖原始异常 */
@@ -28,8 +49,9 @@ function itE2E(name: string, fn: (page: Page) => Promise<void>): void {
   it(
     name,
     async () => {
-      onTestFailed(() => {
-        if (app) void dumpFailure(name, app.page)
+      onTestFailed(async () => {
+        failedInCurrentSuite = true
+        await dumpFailure(name, app?.page)
       })
       await fn(app!.page)
     },
@@ -55,7 +77,7 @@ describe('启动、导航与全局功能', () => {
     app = await launchApp()
   })
   afterAll(async () => {
-    await closeCurrent()
+    await closeCurrentAndClean()
   })
 
   itE2E('应用启动并显示工作台，侧栏导航与路由切换可用', async (page) => {
@@ -142,7 +164,7 @@ describe('模考全流程（独立种子题库，正常保存）', () => {
     app = await launchSeededExamApp()
   })
   afterAll(async () => {
-    await closeCurrent()
+    await closeCurrentAndClean()
   })
 
   itE2E('创建模考 → 逐题作答（含申论）→ 交卷 → 结果页', async (page) => {
@@ -180,7 +202,7 @@ describe('模考（保存失败阻止交卷，重试后放行）', () => {
     app = await launchSeededExamApp({ failSaveOnce: true })
   })
   afterAll(async () => {
-    await closeCurrent()
+    await closeCurrentAndClean()
   })
 
   itE2E('首次交卷被阻止并自动重试，再次交卷成功', async (page) => {
@@ -188,8 +210,18 @@ describe('模考（保存失败阻止交卷，重试后放行）', () => {
     await page.getByRole('button', { name: '创建并开始' }).click()
     await page.getByTestId('exam-submit').waitFor({ timeout: 60_000 })
 
-    // 只答第一题（其余留空也可交卷）：首次保存注入失败
-    await page.getByTestId('exam-option-A').click()
+    // 答第一题：可能是客观题（点选项）或申论题（填草稿，600ms 防抖后自动保存）
+    const optionA = page.getByTestId('exam-option-A')
+    if (await optionA.count()) {
+      await optionA.first().click()
+    } else {
+      const textarea = page.getByPlaceholder(
+        '建议先列要点，再组织成完整答案。草稿会在停止输入后自动保存。'
+      )
+      await textarea.fill('E2E 申论作答内容（首题）')
+      // 等待 600ms 防抖自动保存触发完成
+      await new Promise((resolve) => setTimeout(resolve, 1_000))
+    }
     await page.getByTestId('exam-submit').click()
     await page.getByRole('button', { name: '确认交卷' }).click()
     // 交卷被阻止：drain 发现失败 → 自动重试 → 提示稍后再次交卷
@@ -208,7 +240,7 @@ describe('更新检查状态：无更新', () => {
     app = await launchApp()
   })
   afterAll(async () => {
-    await closeCurrent()
+    await closeCurrentAndClean()
   })
   itE2E('提示最新版本并显示更新源', async (page) => {
     const messages: string[] = []
@@ -229,7 +261,7 @@ describe('更新检查状态：有更新（发现 → 下载 → 安装提示）
     app = await launchApp({ updateScenario: 'available' })
   })
   afterAll(async () => {
-    await closeCurrent()
+    await closeCurrentAndClean()
   })
   itE2E('完整事件链提示', async (page) => {
     const messages: string[] = []
@@ -249,7 +281,7 @@ describe('更新检查状态：检查失败', () => {
     app = await launchApp({ updateScenario: 'error' })
   })
   afterAll(async () => {
-    await closeCurrent()
+    await closeCurrentAndClean()
   })
   itE2E('明确错误提示', async (page) => {
     const messages: string[] = []
