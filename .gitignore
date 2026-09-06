@@ -42,3 +42,5 @@ dist-v1010/
 dist-v1012/
 e2e-artifacts/
 docs/ocr-benchmark/
+tools/experimental/
+__pycache__/
