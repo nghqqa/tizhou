@@ -47,7 +47,7 @@ import {
   CAPABILITY_LABELS,
   batchFactsMessage,
   classifyFileCapability,
-  isValidPageCount,
+  collectPageFacts,
   tierForArtifact,
   loadStructuredRegions,
   scanNumericAnomalies,
@@ -1875,24 +1875,14 @@ export class KnowledgeBuilderService {
           artifact.importQualityTier = tierForArtifact(artifact)
           this.saveArtifact(job, artifact)
         }
+        // 页数事实统一走 collectPageFacts（唯一规则：有效性 + 空白页钳制）
+        const pageFacts = collectPageFacts(job.files)
         const facts: ImportBatchFacts = {
           fileCount: job.files.length,
           failedFileCount: job.files.filter((file) => file.state === 'failed').length,
-          filesWithKnownPages: job.files.filter((file) =>
-            isValidPageCount(file.ocrQuality?.totalPages)
-          ).length,
-          knownInputPages: job.files.reduce(
-            (sum, file) =>
-              sum +
-              (isValidPageCount(file.ocrQuality?.totalPages) ? file.ocrQuality!.totalPages! : 0),
-            0
-          ),
-          knownEmptyPages: job.files.reduce(
-            (sum, file) =>
-              sum +
-              (isValidPageCount(file.ocrQuality?.emptyPages) ? file.ocrQuality!.emptyPages! : 0),
-            0
-          ),
+          filesWithKnownPages: pageFacts.filesWithKnownPages,
+          knownInputPages: pageFacts.knownInputPages,
+          knownEmptyPages: pageFacts.knownEmptyPages,
           structuredArtifacts: allArtifacts.filter((a) => a.importQualityTier === 'structured')
             .length,
           reviewRequiredArtifacts: allArtifacts.filter(
@@ -1905,7 +1895,8 @@ export class KnowledgeBuilderService {
           skippedIncomplete,
           skippedMisaligned,
           skippedDuplicate,
-          abortedBooks
+          abortedBooks,
+          inconsistentQualityReports: pageFacts.inconsistentQualityReports
         }
         job.message =
           `[批次 9/1 00:0x 构建] ` +

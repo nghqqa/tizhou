@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   batchFactsMessage,
   cleanExplanation,
+  collectPageFacts,
   isValidPageCount,
   isNumberStreamLine,
   quarantineNumberStreamLine,
@@ -230,7 +231,8 @@ describe('批次质量汇总 batchFactsMessage', () => {
     skippedIncomplete: 1,
     skippedMisaligned: 2,
     skippedDuplicate: 4,
-    abortedBooks: 0
+    abortedBooks: 0,
+    inconsistentQualityReports: 0
   }
 
   it('页数只来自 ocrQuality.totalPages：全部已知时显示总页数', () => {
@@ -270,17 +272,28 @@ describe('批次质量汇总 batchFactsMessage', () => {
     )
   })
 
-  it('failed 文件数与 abortedBooks 拦截提示如实展示，不统一声称「转换失败」', () => {
+  it('failed 文件文案如实展示，不统一声称「转换失败」', () => {
     const message = batchFactsMessage({ ...baseFacts, failedFileCount: 1, abortedBooks: 2 })
     // failed 状态可能是转换异常/中断/配对拦截——文案必须涵盖「或被拦截」，不猜原因
     expect(message).toContain('处理失败或被拦截文件 1 个')
     expect(message).not.toContain('转换失败')
-    expect(message).toContain('2 本书因疑似套号错位被拦截')
+  })
+
+  it('abortedBooks 的错位拦截文案不在 batchFactsMessage 重复输出（只在主消息展示一次）', () => {
+    // 部分成功 + 部分拦截：汇总段不出现，主消息出现（管线级测试断言次数）
+    expect(batchFactsMessage({ ...baseFacts, abortedBooks: 2 })).not.toContain('套号错位被拦截')
+    expect(batchFactsMessage({ ...baseFacts, abortedBooks: 0 })).not.toContain('套号错位')
   })
 
   it('knownEmptyPages > 0 时显示报告空白页，为 0 时不显示', () => {
     expect(batchFactsMessage({ ...baseFacts, knownEmptyPages: 2 })).toContain('报告空白页 2 页')
     expect(batchFactsMessage({ ...baseFacts, knownEmptyPages: 0 })).not.toContain('空白页')
+  })
+
+  it('转换质量数据不一致计数进入汇总文案', () => {
+    expect(batchFactsMessage({ ...baseFacts, inconsistentQualityReports: 1 })).toContain(
+      '转换质量数据不一致 1 个文件'
+    )
   })
 
   it('isValidPageCount 拒绝 undefined/NaN/小数/负数，只接受非负整数', () => {
@@ -290,5 +303,45 @@ describe('批次质量汇总 batchFactsMessage', () => {
     expect(isValidPageCount(-1)).toBe(false)
     expect(isValidPageCount(0)).toBe(true)
     expect(isValidPageCount(36)).toBe(true)
+  })
+})
+
+describe('collectPageFacts 页数事实边界', () => {
+  it('totalPages 缺失、emptyPages=3：不计入任何页数统计', () => {
+    const facts = collectPageFacts([{ ocrQuality: { emptyPages: 3 } }])
+    expect(facts.filesWithKnownPages).toBe(0)
+    expect(facts.knownInputPages).toBe(0)
+    expect(facts.knownEmptyPages).toBe(0)
+  })
+
+  it('totalPages 为负数或小数：不计入', () => {
+    expect(
+      collectPageFacts([{ ocrQuality: { totalPages: -5, emptyPages: 1 } }]).knownInputPages
+    ).toBe(0)
+    expect(
+      collectPageFacts([{ ocrQuality: { totalPages: 3.5, emptyPages: 1 } }]).filesWithKnownPages
+    ).toBe(0)
+  })
+
+  it('totalPages=10、emptyPages=2：计入 2 页空白', () => {
+    const facts = collectPageFacts([{ ocrQuality: { totalPages: 10, emptyPages: 2 } }])
+    expect(facts.knownInputPages).toBe(10)
+    expect(facts.knownEmptyPages).toBe(2)
+    expect(facts.inconsistentQualityReports).toBe(0)
+  })
+
+  it('totalPages=10、emptyPages=12：不得计入 12——钳制到 10 并记不一致', () => {
+    const facts = collectPageFacts([{ ocrQuality: { totalPages: 10, emptyPages: 12 } }])
+    expect(facts.knownEmptyPages).toBe(10)
+    expect(facts.knownEmptyPages).not.toBe(12)
+    expect(facts.inconsistentQualityReports).toBe(1)
+  })
+
+  it('totalPages=0、emptyPages=0：作为有效报告处理（计入已知文件，空白为 0）', () => {
+    const facts = collectPageFacts([{ ocrQuality: { totalPages: 0, emptyPages: 0 } }])
+    expect(facts.filesWithKnownPages).toBe(1)
+    expect(facts.knownInputPages).toBe(0)
+    expect(facts.knownEmptyPages).toBe(0)
+    expect(facts.inconsistentQualityReports).toBe(0)
   })
 })

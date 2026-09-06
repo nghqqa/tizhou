@@ -420,8 +420,10 @@ export interface ImportBatchFacts {
   skippedIncomplete: number
   skippedMisaligned: number
   skippedDuplicate: number
-  /** 因疑似套号错位被整书拦截的本数 */
+  /** 因疑似套号错位被整书拦截的本数（文案只在主消息展示一次） */
   abortedBooks: number
+  /** 转换质量数据不一致的文件数（如 emptyPages > totalPages） */
+  inconsistentQualityReports: number
 }
 
 /** 页数有效性：只有非负整数才是可用的转换器报告页数（拒绝 undefined/NaN/小数/负数） */
@@ -443,6 +445,8 @@ export function batchFactsMessage(facts: ImportBatchFacts): string {
   }
   // 空白页仅来自转换器报告，不是确认丢题
   if (facts.knownEmptyPages > 0) parts.push(`报告空白页 ${facts.knownEmptyPages} 页`)
+  if (facts.inconsistentQualityReports > 0)
+    parts.push(`转换质量数据不一致 ${facts.inconsistentQualityReports} 个文件`)
   parts.push(`结构化题目 ${facts.structuredArtifacts}`)
   parts.push(`待人工审核 ${facts.reviewRequiredArtifacts}`)
   parts.push(`原始资料保留 ${facts.preservedSourceArtifacts}`)
@@ -455,7 +459,47 @@ export function batchFactsMessage(facts: ImportBatchFacts): string {
   parts.push(`跳过（${skips.join('·')}）`)
   // failed 状态可能来自转换异常/中断/配对拦截——统一为「处理失败或被拦截」，不猜原因
   if (facts.failedFileCount > 0) parts.push(`处理失败或被拦截文件 ${facts.failedFileCount} 个`)
-  if (facts.abortedBooks > 0) parts.push(`${facts.abortedBooks} 本书因疑似套号错位被拦截`)
+  // abortedBooks 的错位拦截提示只在主消息展示一次（batchFactsMessage 不重复输出）
   parts.push('缺题数和原图页覆盖率无法计算：当前未建立来源页到题目/图片的完整映射')
   return parts.join(' · ')
+}
+
+/** 页数事实汇总输入：KnowledgeBuildFile 的可观测字段子集 */
+export interface PageFactsFile {
+  ocrQuality?: { totalPages?: number; emptyPages?: number }
+}
+
+export interface PageFacts {
+  filesWithKnownPages: number
+  knownInputPages: number
+  knownEmptyPages: number
+  /** 转换质量数据不一致的文件数（如 emptyPages > totalPages，空白页按保守钳制计入） */
+  inconsistentQualityReports: number
+}
+
+/** 页数事实的唯一汇总规则（纯函数）：
+ *  - totalPages 有效（非负整数）才计入 filesWithKnownPages / knownInputPages；
+ *  - emptyPages 仅在 totalPages 与 emptyPages 均有效时计入；
+ *  - emptyPages > totalPages 时不原样计入——按 Math.min 钳制并记为质量数据不一致。 */
+export function collectPageFacts(files: PageFactsFile[]): PageFacts {
+  let filesWithKnownPages = 0
+  let knownInputPages = 0
+  let knownEmptyPages = 0
+  let inconsistentQualityReports = 0
+  for (const file of files) {
+    const totalPages = file.ocrQuality?.totalPages
+    if (!isValidPageCount(totalPages)) continue
+    filesWithKnownPages += 1
+    knownInputPages += totalPages
+    const emptyPages = file.ocrQuality?.emptyPages
+    if (!isValidPageCount(emptyPages)) continue
+    if (emptyPages > totalPages) {
+      // 保守处理：钳制到 totalPages，并暴露数据不一致事实
+      knownEmptyPages += totalPages
+      inconsistentQualityReports += 1
+    } else {
+      knownEmptyPages += emptyPages
+    }
+  }
+  return { filesWithKnownPages, knownInputPages, knownEmptyPages, inconsistentQualityReports }
 }
