@@ -44,3 +44,5 @@ e2e-artifacts/
 docs/ocr-benchmark/
 tools/experimental/
 __pycache__/
+fixtures/
+rc-evidence/

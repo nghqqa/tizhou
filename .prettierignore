@@ -1,8 +1,9 @@
-.venv-markitdown/
-artifacts/
-dist/
 node_modules/
 out/
-*.tsbuildinfo
+dist/
+dist-release/
+artifacts/
+fixtures/
+rc-evidence/
 docs/quality-baseline.json
 docs/quality-baseline.md
