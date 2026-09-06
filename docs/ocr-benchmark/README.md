@@ -12,15 +12,15 @@
 
 ## 文件说明
 
-| 文件 | 生成者 | 说明 |
-| --- | --- | --- |
-| `inventory.json` / `inventory.md` | `survey_pdfs.py` | 阶段1：逐 PDF 页数/文字层/扫描页比例/图片对象/分类 |
-| `page-stats.json` | `benchmark_build.py` | 逐页文字层字符与图片对象信号（审计用） |
-| `benchmark-pages.json` | `benchmark_build.py` | 阶段2：固定种子抽取的 95 页基准页面清单 |
-| `annotation-template.csv` | `benchmark_build.py` | 人工标注模板（已自动填写可自动获得的列） |
-| `metrics-*.json` | `eval_metrics.py` | 各引擎在 95 页基准上的自动化指标 |
-| `baseline.md` | 人工 | 阶段2基线：指标口径、自动化结果、待人工标注清单 |
-| `research-report.md` | 人工 | 阶段9：调研报告（瓶颈/对比/推荐） |
+| 文件                              | 生成者               | 说明                                               |
+| --------------------------------- | -------------------- | -------------------------------------------------- |
+| `inventory.json` / `inventory.md` | `survey_pdfs.py`     | 阶段1：逐 PDF 页数/文字层/扫描页比例/图片对象/分类 |
+| `page-stats.json`                 | `benchmark_build.py` | 逐页文字层字符与图片对象信号（审计用）             |
+| `benchmark-pages.json`            | `benchmark_build.py` | 阶段2：固定种子抽取的 95 页基准页面清单            |
+| `annotation-template.csv`         | `benchmark_build.py` | 人工标注模板（已自动填写可自动获得的列）           |
+| `metrics-*.json`                  | `eval_metrics.py`    | 各引擎在 95 页基准上的自动化指标                   |
+| `baseline.md`                     | 人工                 | 阶段2基线：指标口径、自动化结果、待人工标注清单    |
+| `research-report.md`              | 人工                 | 阶段9：调研报告（瓶颈/对比/推荐）                  |
 
 ## 确定性与工作区清洁
 

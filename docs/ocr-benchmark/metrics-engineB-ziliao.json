@@ -1,36 +1,36 @@
 {
- "engine": "B: PP-StructureV3(paddleocr3.7.0+paddle3.0.0 CPU) 资料分析20页",
- "runName": "engineB-ziliao",
- "pages": 20,
- "peakRssMb": 6680.6,
- "medianMsPerPage": 124651,
- "errors": 0,
- "charsTotal": 27033,
- "charsPerType": {
-  "资料分析": {
-   "pages": 20,
-   "avgChars": 1352
-  }
- },
- "silentDropSuspects": null,
- "optionCompleteProxy": null,
- "tableStructProxy": {
-  "tables": 0,
-  "imageRegions": 0
- },
- "graphicBindProxy": null,
- "digitConsistencyVsA": {
-  "vs": "engineA-200dpi",
-  "meanJaccard": 0.524,
-  "pagesChecked": 20
- },
- "pendingHumanMetrics": [
-  "题干完整率",
-  "选项完整率(真实)",
-  "数字准确率",
-  "表格单元格准确率",
-  "图片选项绑定率(真实)",
-  "答案配对率(真实)",
-  "静默丢题数(真实)"
- ]
+  "engine": "B: PP-StructureV3(paddleocr3.7.0+paddle3.0.0 CPU) 资料分析20页",
+  "runName": "engineB-ziliao",
+  "pages": 20,
+  "peakRssMb": 6680.6,
+  "medianMsPerPage": 124651,
+  "errors": 0,
+  "charsTotal": 27033,
+  "charsPerType": {
+    "资料分析": {
+      "pages": 20,
+      "avgChars": 1352
+    }
+  },
+  "silentDropSuspects": null,
+  "optionCompleteProxy": null,
+  "tableStructProxy": {
+    "tables": 0,
+    "imageRegions": 0
+  },
+  "graphicBindProxy": null,
+  "digitConsistencyVsA": {
+    "vs": "engineA-200dpi",
+    "meanJaccard": 0.524,
+    "pagesChecked": 20
+  },
+  "pendingHumanMetrics": [
+    "题干完整率",
+    "选项完整率(真实)",
+    "数字准确率",
+    "表格单元格准确率",
+    "图片选项绑定率(真实)",
+    "答案配对率(真实)",
+    "静默丢题数(真实)"
+  ]
 }
