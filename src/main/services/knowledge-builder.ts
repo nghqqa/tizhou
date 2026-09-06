@@ -46,6 +46,7 @@ import { mergeByDocumentOrder } from './direct-sequential-merge'
 import {
   CAPABILITY_LABELS,
   classifyFileCapability,
+  computeImportSummary,
   loadStructuredRegions,
   scanNumericAnomalies,
   scanTableQuality
@@ -1862,6 +1863,23 @@ export class KnowledgeBuilderService {
           }
         }
         job.status = staged > 0 ? 'review' : 'completed'
+        // 导入质量分级汇总：结构完整 / 原图保留 / 不可靠
+        const allStaged = job.artifactIds
+          .map((id) => this.loadArtifact(job, id))
+          .filter((a) => a && a.kind === 'question')
+        const qualitySummary = computeImportSummary({
+          totalPages: Math.max(1, allStaged.length),
+          items: allStaged.map((a) => ({
+            stem: a.preview ?? '',
+            optionCount: (a.markdown.match(/data-testid="exam-option-|^\s*[A-D][.、．]/gm) ?? [])
+              .length,
+            hasImage: a.markdown.includes('images/')
+          })),
+          skippedNoAnswer,
+          skippedIncomplete,
+          skippedMisaligned
+        })
+        const qualityTag = `结构完整 ${qualitySummary.structured} · 原图保留 ${qualitySummary.imageBacked} · 不可靠 ${qualitySummary.unsupported} · 嫌疑缺题 ${qualitySummary.suspectedLossCount}`
         job.message =
           `[批次 9/1 00:0x 构建] ` +
           (staged
@@ -1869,16 +1887,15 @@ export class KnowledgeBuilderService {
                 stagedEssays
                   ? `，其中申论主观题 ${stagedEssays} 道（无参考答案，发布后经「申论作答」页 AI 批改练习）`
                   : ''
-              }（配对验证错位剔除 ${skippedMisaligned}、无答案跳过 ${skippedNoAnswer}、不完整 ${skippedIncomplete}、与现有题库重复 ${skippedDuplicate}）——请抽查后「全部批准」并「发布」入库${
-                abortedBooks ? `；${abortedBooks} 本书因疑似套号错位被拦截` : ''
-              }`
+              }（配对验证错位剔除 ${skippedMisaligned}、无答案跳过 ${skippedNoAnswer}、不完整 ${skippedIncomplete}、与现有题库重复 ${skippedDuplicate}）`
             : skippedDuplicate
               ? `直导完成：${skippedDuplicate} 题与现有题库重复，未生成新题${abortedBooks ? `；${abortedBooks} 本书因疑似套号错位被拦截` : ''}`
               : abortedBooks
                 ? `直导完成：全部题本被配对校验拦截（疑似套号错位），未生成产物`
                 : trainingMarkers >= 3
                   ? `直导完成：检测到 ${trainingMarkers} 处训练式标题但未能稳定切分出题目——这本书大概率是主观题教材，请改用「模型提炼」模式导入`
-                  : '直导完成：未切出题目（未识别出题目或全部缺少答案）')
+                  : '直导完成：未切出题目（未识别出题目或全部缺少答案）') +
+          ` [质量] ${qualityTag}`
       } else {
         const artifacts = job.artifactIds.map((artifactId) => this.loadArtifact(job, artifactId))
         job.status = artifacts.some((artifact) => artifact.status === 'pending')
