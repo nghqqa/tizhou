@@ -1423,12 +1423,15 @@ export class KnowledgeBuilderService {
           this.saveJob(job)
           if (job.options.mode === 'direct') {
             // 页清单（OCR=_pages.json / structured=_regions.json 派生）：行→页映射与来源证据
+            // 结构解析失败回退 OCR 时 images/ 下是 _pages.json 而非 _regions.json——
+            // 两种 sidecar 都要尝试，否则回退批次全部页映射丢失
             const imagesDir = join(dirname(rawPath), 'images')
             let pageManifest: PageManifest | undefined
-            if (useStructured) {
-              const regions = loadStructuredRegions(imagesDir)
-              if (regions) pageManifest = manifestFromRegions(regions.regions)
-            } else {
+            const structuredRegions = loadStructuredRegions(imagesDir)
+            if (useStructured && structuredRegions) {
+              pageManifest = manifestFromRegions(structuredRegions.regions)
+            }
+            if (!pageManifest) {
               pageManifest = parsePageManifest(readFileSyncSafe(join(imagesDir, '_pages.json')))
             }
             const { lines: directLines, pageMap: fileLinePageMap } = toLinesWithPageMap(

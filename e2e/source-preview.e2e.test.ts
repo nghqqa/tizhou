@@ -153,14 +153,25 @@ describe('来源页预览 UI E2E（模拟证据·组件行为）', () => {
       await page.getByRole('button', { name: '关闭' }).click()
       await page.getByTestId('source-preview-image').waitFor({ state: 'detached', timeout: 10_000 })
 
-      // 11. 键盘语义：焦点在标题选择按钮上按 Enter 打开产物（不触发预览按钮）
+      // 11. 键盘语义：焦点在标题选择按钮上按 Enter 打开产物
+      //     （不触发预览按钮；按钮是同级独立元素）
       const selectButton = page.getByTestId('builder-artifact-select').first()
       await selectButton.focus()
       await selectButton.press('Enter')
-      // 打开产物后右侧应出现预览面板（标题变化即可确认产物已打开）
       await page.waitForTimeout(1_000)
-      const bodyAfterEnter = await page.locator('body').innerText()
-      expect(bodyAfterEnter.length).toBeGreaterThan(0)
+      // 打开的产物标题必须出现在预览面板（非空断言——不是仅检查 body 有内容）
+      const previewPanelText = await page
+        .locator('.builder-artifact-preview')
+        .innerText()
+        .catch(() => '')
+      expect(previewPanelText.length).toBeGreaterThan(10)
+      // 无 button 嵌套 button（DOM 结构断言）
+      const nestedButtons = await page
+        .getByTestId('builder-artifact-item')
+        .first()
+        .locator('button button')
+        .count()
+      expect(nestedButtons).toBe(0)
     } catch (error) {
       onTestFailed(async () => {
         await dump('来源页预览', app?.page)

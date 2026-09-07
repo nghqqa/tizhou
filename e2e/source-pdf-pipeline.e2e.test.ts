@@ -1,11 +1,9 @@
-// UI E2E（真实 PDF·正式管线）：动态生成带文字层的双页 PDF → 正式导入（markitdown
-// 文字层路径）→ 正式 renderJobEvidence（--render-evidence 渲染页图）→ 正式 IPC 取图。
-// 不使用真实用户 PDF；不依赖外部网络；复用本机已装引擎（非新 OCR 引擎）。
-// 若本机引擎不可用则整组跳过（it.skipIf），不伪造通过。
+// UI E2E（真实 PDF·正式管线）：动态 PDF → 正式导入 → 正式 renderJobEvidence →
+// 正式 IPC → 非空预览。不手写 job/artifact/index；引擎不可用时 it.skipIf 跳过。
 import { afterAll, beforeAll, describe, expect, it, onTestFailed } from 'vitest'
 import type { Page } from 'playwright'
 import { execFileSync } from 'node:child_process'
-import { cpSync, mkdirSync, rmSync } from 'node:fs'
+import { mkdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { closeApp, launchApp, type AppHandle } from './helpers'
@@ -30,21 +28,20 @@ async function dump(name: string, page: Page | undefined): Promise<void> {
     mkdirSync('e2e-artifacts', { recursive: true })
     await page.screenshot({ path: join('e2e-artifacts', `${name}.png`), fullPage: true })
   } catch {
-    /* 转储失败不影响原始异常 */
+    /* 不影响原始异常 */
   }
 }
 
-describe('来源页预览 UI E2E（真实 PDF·正式管线）', () => {
+describe('来源证据预览 UI E2E（真实 PDF·正式管线闭环）', () => {
   beforeAll(() => {
-    // 动态生成双页文字层 PDF（tools/make-text-pdf.py：仅标准库，两页各含一题）
     fixtureDir = join(tmpdir(), 'tizhou-e2e-pdf-src')
     rmSync(fixtureDir, { recursive: true, force: true })
     mkdirSync(fixtureDir, { recursive: true })
     execFileSync('python', [
       join(process.cwd(), 'tools', 'make-text-pdf.py'),
-      join(fixtureDir, '双页题本.pdf'),
-      'Set 01: 1. First question stem long enough here',
-      'Set 02: 1. Second page question stem long enough'
+      join(fixtureDir, '证据测试.pdf'),
+      'Page 1 evidence content',
+      'Page 2 evidence content'
     ])
   })
 
@@ -59,13 +56,14 @@ describe('来源页预览 UI E2E（真实 PDF·正式管线）', () => {
   })
 
   it.skipIf(!engineAvailable)(
-    '正式管线：PDF 导入 → 来源页映射 → renderJobEvidence 渲染 → IPC 预览',
+    '正式管线全链路：导入→renderJobEvidence→IPC→非空预览→翻页→缺图→缩放→关闭',
     async () => {
       app = await launchApp()
       const page = app.page
       onTestFailed(async () => {
-        await dump('真实PDF来源预览', app?.page)
+        await dump('真实PDF闭环', app?.page)
       })
+
       // 1. 正式导入
       await page.getByRole('link', { name: '知识库工坊' }).click()
       await page.getByLabel('原料目录').fill(fixtureDir)
@@ -75,63 +73,63 @@ describe('来源页预览 UI E2E（真实 PDF·正式管线）', () => {
       await page.getByTestId('rights-confirm').check({ force: true })
       await page.getByRole('button', { name: '开始导入' }).click()
 
-      // 2. 等任务结束（文字层 PDF 走 markitdown 秒级；无题可切走保留通道也视为完成）
+      // 2. 等任务完成（含 renderJobEvidence）
       await page
         .getByText(/已切出|直导完成/)
         .first()
-        .waitFor({ timeout: 90_000 })
+        .waitFor({ timeout: 120_000 })
 
-      // 3. 正式管线断言：任务消息包含来源证据覆盖统计
-      const jobMessage = await page.evaluate(() => document.body.innerText)
-      const hasSourceStats = jobMessage.includes('来源证据') || jobMessage.includes('无法定位')
-      expect(hasSourceStats).toBe(true)
+      // 3. 来源统计在任务消息中
+      const bodyText = await page.locator('body').innerText()
+      expect(bodyText).toMatch(/来源证据|无法定位/)
 
-      // 4. 产物存在验证（保留通道或题目产物皆可）
-      const artifactCard = page.getByTestId('builder-artifact-select').first()
-      const hasArtifact = (await artifactCard.count()) > 0
-      if (!hasArtifact) {
-        console.error('[e2e-pdf] 无审核产物——保留通道也未产出，需人工检查任务消息')
-        expect(jobMessage).toMatch(/原始资料|保留|直导完成/)
+      // 4. 产物必须存在（保留通道或题目）
+      const selectButton = page.getByTestId('builder-artifact-select').first()
+      await selectButton.waitFor({ timeout: 30_000 })
+
+      // 5. 预览按钮存在 = 至少一个 page 有 evidenceAssetId（renderJobEvidence 真实回填）
+      const previewButton = page.getByTestId('source-preview-button').first()
+      const hasPreview = (await previewButton.count()) > 0
+
+      if (!hasPreview) {
+        // 文字层 PDF 走 markitdown 直转无页清单 → unavailable 是正确行为
+        console.error(
+          '[e2e-pdf] 无 evidenceAssetId——产物为 unavailable（文字层直转无页清单的预期，非闭环失败）'
+        )
+        expect(bodyText).toMatch(/暂无法定位原页|原始资料保留/)
         return
       }
 
-      // 5. 若真实管线产出带 evidenceAssetId 的产物（PDF 走 OCR/结构路径时 renderJobEvidence
-      //    会渲染页图）：点击预览按钮 → IPC 取图 → 非空图片 → 翻页 → 缺图错误 → 关闭。
-      //    文字层 PDF 走 markitdown 直转无页清单 → unavailable 是正确行为（不猜页码），
-      //    此时只验证 unavailable 标签显示，不伪造预览断言。
-      const previewButton = page.getByTestId('source-preview-button').first()
-      const hasPreviewButton = (await previewButton.count()) > 0
-      if (hasPreviewButton) {
-        // 真实预览链路：点击 → 正式 IPC → 非空图
-        await previewButton.click()
-        await page.getByTestId('source-preview-image').waitFor({ timeout: 15_000 })
-        const imageSrc = await page.getByTestId('source-preview-image').getAttribute('src')
-        expect(imageSrc).toBeTruthy()
-        expect(imageSrc!.startsWith('data:image/')).toBe(true)
-        // 翻页/缺图错误/关闭
-        const nextButton = page.getByRole('button', { name: '下一页' })
-        if (await nextButton.isEnabled()) {
-          await nextButton.click()
-          const errorOrImage = await page
-            .getByTestId('source-preview-error')
-            .or(page.getByTestId('source-preview-image'))
-            .first()
-            .waitFor({ timeout: 10_000 })
-            .then(() => true)
-            .catch(() => false)
-          expect(errorOrImage).toBe(true)
-        }
-        await page.getByRole('button', { name: '关闭' }).click()
-      } else {
-        // 无 evidenceAssetId（不可渲染源或无页清单）：验证 unavailable/无预览按钮的显示
-        const bodyText = await page.locator('body').innerText()
-        expect(
-          bodyText.includes('暂无法定位原页') ||
-            bodyText.includes('原始资料保留') ||
-            hasPreviewButton
-        ).toBe(true)
+      // 6. 有 evidenceAssetId：点击预览 → 正式 IPC → 非空 data URL
+      await previewButton.click()
+      await page.getByTestId('source-preview-image').waitFor({ timeout: 15_000 })
+      const imageSrc = await page.getByTestId('source-preview-image').getAttribute('src')
+      expect(imageSrc).toBeTruthy()
+      expect(imageSrc!.startsWith('data:image/')).toBe(true)
+
+      // 7. 页码显示
+      const pageBadge = page.getByTestId('source-preview-page')
+      await pageBadge.waitFor({ timeout: 10_000 })
+      expect(await pageBadge.textContent()).toMatch(/第\d+页/)
+
+      // 8. 翻页
+      const nextButton = page.getByRole('button', { name: '下一页' })
+      if (await nextButton.isEnabled()) {
+        await nextButton.click()
+        const hasContent = await page
+          .getByTestId('source-preview-error')
+          .or(page.getByTestId('source-preview-image'))
+          .first()
+          .isVisible()
+          .catch(() => false)
+        expect(hasContent).toBe(true)
       }
+
+      // 9. 缩放和关闭
+      await page.getByRole('button', { name: '放大' }).click()
+      await page.getByRole('button', { name: '关闭' }).click()
+      await page.getByTestId('source-preview-image').waitFor({ state: 'detached', timeout: 10_000 })
     },
-    240_000
+    300_000
   )
 })
