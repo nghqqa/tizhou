@@ -229,15 +229,17 @@ export class ExamAnswerSaveController {
     }
   }
 
-  /** 交卷前调用：等待全部挂起保存完成；返回失败题列表（存在失败时交卷应被阻止） */
+  /** 交卷前调用：等待全部挂起保存完成；返回失败题列表（存在失败时交卷应被阻止）。
+   *  必须先 await 队列让在途保存落定——若 pump 已从 latest 取走在途请求，
+   *  latest.size 为 0 但结果未写入 failed，直接返回会漏检在途失败 */
   async drain(): Promise<string[]> {
     let guard = 0
-    while (this.latest.size > 0 && guard < 100) {
+    while (guard < 100) {
+      // 总是先等队列：在途 pump 可能正持有已从 latest 移除的请求
       await this.queue.catch(() => {})
       if (this.latest.size === 0) break
       // pump 因失败返回而停摆：重新驱动一次以处理期间新入队的答案
       this.queue = this.queue.then(() => this.pump())
-      await this.queue.catch(() => {})
       guard += 1
     }
     return [...this.failed.keys()]

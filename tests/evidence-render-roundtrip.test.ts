@@ -380,26 +380,29 @@ describe('真实完整管线：动态 PDF → 正式 scan → startJob → 真�
         return evidence?.references?.some((r) => r.pages?.some((p) => p.evidenceAssetId))
       })
 
-      // 断言 evidence/index.json 真实生成
+      // 断言 evidence/index.json 真实生成（硬断言——不允许无证据时通过）
       const evidenceDir = join(job.outputPath, 'evidence')
-      const indexExists = existsSync(join(evidenceDir, 'index.json'))
-      const imageFiles = indexExists
-        ? readdirSync(evidenceDir, { recursive: true })
-            .map(String)
-            .filter((n) => n.includes('evidence-p'))
-        : []
+      expect(existsSync(join(evidenceDir, 'index.json'))).toBe(true)
+      const imageFiles = readdirSync(evidenceDir, { recursive: true })
+        .map(String)
+        .filter((n) => n.includes('evidence-p'))
+      expect(imageFiles.length).toBeGreaterThan(0)
 
-      if (withAssetId.length === 0 || !indexExists || imageFiles.length === 0) {
-        // 文字层 PDF 走 markitdown 直转无页清单 → unavailable 是正确行为
-        // 此测试必须如实报告这一限制，不伪造通过
-        console.error(
-          `[evrt-full] 完整管线完成但无证据资产：产物 ${job.artifacts.length} 项，` +
-            `带 sourceEvidence ${withEvidence.length} 项，带 assetId ${withAssetId.length} 项，` +
-            `index.json ${indexExists ? '存在' : '不存在'}，图片 ${imageFiles.length} 张`
-        )
-        // 验证 unavailable 分支至少有产物
-        expect(job.artifacts.length).toBeGreaterThan(0)
-        return
+      // 硬断言：至少一个产物有 sourceEvidence 且有 evidenceAssetId
+      // （renderJobEvidence 在 job 完成时已自动执行并回填）
+      expect(withEvidence.length).toBeGreaterThan(0)
+      expect(withAssetId.length).toBeGreaterThan(0)
+
+      // 硬断言：index 中至少一项合法相对 evidenceDir 的路径
+      const index = JSON.parse(readFileSync(join(evidenceDir, 'index.json'), 'utf8')) as Record<
+        string,
+        string
+      >
+      const indexEntries = Object.entries(index)
+      expect(indexEntries.length).toBeGreaterThan(0)
+      for (const [, relativePath] of indexEntries) {
+        expect(relativePath).not.toMatch(/^evidence[/\\]/)
+        expect(relativePath).toMatch(/evidence-p\d+\.jpg$/)
       }
 
       // 正式 readEvidenceAsset 读取（IPC 同一路径）
@@ -419,7 +422,7 @@ describe('真实完整管线：动态 PDF → 正式 scan → startJob → 真�
         }
       }
 
-      // 清空 conversion cache 后仍可读取
+      // 清空 conversion cache 后仍可读取（硬断言——不清缓存不算完整闭环）
       svc.clearConversionCache()
       const firstAsset = withAssetId[0] as {
         sourceEvidence: { references: Array<{ pages: Array<{ evidenceAssetId?: string }> }> }
@@ -427,10 +430,9 @@ describe('真实完整管线：动态 PDF → 正式 scan → startJob → 真�
       const firstPage = firstAsset.sourceEvidence.references[0]!.pages.find(
         (p) => p.evidenceAssetId
       )
-      if (firstPage?.evidenceAssetId) {
-        const afterClear = svc.readEvidenceAsset(job.id, firstPage.evidenceAssetId)
-        expect(afterClear.startsWith('data:image/jpeg;base64,')).toBe(true)
-      }
+      expect(firstPage?.evidenceAssetId).toBeDefined()
+      const afterClear = svc.readEvidenceAsset(job.id, firstPage!.evidenceAssetId!)
+      expect(afterClear.startsWith('data:image/jpeg;base64,')).toBe(true)
     },
     180_000
   )
