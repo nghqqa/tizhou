@@ -2092,3 +2092,25 @@ a {
   outline: 2px solid var(--tz-vermillion);
   outline-offset: -2px;
 }
+/* 条目选择按钮：承载键盘焦点与打开行为（预览按钮为同级独立元素） */
+.builder-artifact-select {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+.builder-artifact-select:focus-visible {
+  outline: 2px solid var(--tz-vermillion);
+  outline-offset: 2px;
+}
+.builder-artifact-select strong {
+  display: block;
+}
+.builder-artifact-select p {
+  margin: 4px 0 0;
+}

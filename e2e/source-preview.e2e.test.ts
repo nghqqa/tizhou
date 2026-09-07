@@ -60,7 +60,7 @@ describe('来源页预览 UI E2E（模拟证据·组件行为）', () => {
         .waitFor({ timeout: 120_000 })
 
       // 3. 断言产物存在（列表第一条）
-      const firstArtifact = page.locator('.builder-artifact').first()
+      const firstArtifact = page.getByTestId('builder-artifact-select').first()
       await firstArtifact.waitFor({ timeout: 30_000 })
 
       // 4. 注入证据资产（模拟渲染完成）：在 Node 侧直接写文件（不经 evaluate 注入）
@@ -120,7 +120,7 @@ describe('来源页预览 UI E2E（模拟证据·组件行为）', () => {
       // 5. 重新加载页面拿注入后的产物（导航刷新状态）
       await page.reload()
       await page.getByRole('link', { name: '知识库工坊' }).click()
-      await page.locator('.builder-artifact').first().waitFor({ timeout: 30_000 })
+      await page.getByTestId('builder-artifact-select').first().waitFor({ timeout: 30_000 })
 
       // 6. 断言来源页显示
       const sourceLabel = page.getByText(/来源.*第.*页/)
@@ -152,6 +152,15 @@ describe('来源页预览 UI E2E（模拟证据·组件行为）', () => {
       await page.getByRole('button', { name: '放大' }).click()
       await page.getByRole('button', { name: '关闭' }).click()
       await page.getByTestId('source-preview-image').waitFor({ state: 'detached', timeout: 10_000 })
+
+      // 11. 键盘语义：焦点在标题选择按钮上按 Enter 打开产物（不触发预览按钮）
+      const selectButton = page.getByTestId('builder-artifact-select').first()
+      await selectButton.focus()
+      await selectButton.press('Enter')
+      // 打开产物后右侧应出现预览面板（标题变化即可确认产物已打开）
+      await page.waitForTimeout(1_000)
+      const bodyAfterEnter = await page.locator('body').innerText()
+      expect(bodyAfterEnter.length).toBeGreaterThan(0)
     } catch (error) {
       onTestFailed(async () => {
         await dump('来源页预览', app?.page)

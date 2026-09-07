@@ -2507,7 +2507,22 @@ export class KnowledgeBuilderService {
   readEvidenceAsset(jobId: string, assetId: string): string {
     if (!/^ev-[0-9a-f]{20}$/.test(assetId)) throw new Error('证据资产 ID 无效')
     const job = this.loadJob(jobId)
+    // evidence 目录自身安全链：存在 → lstat 拒符号链接/junction → realpath 位于真实 outputPath 内
     const evidenceDir = join(job.outputPath, 'evidence')
+    let evidenceStats
+    try {
+      evidenceStats = lstatSync(evidenceDir)
+    } catch {
+      throw new Error('证据资产索引不存在或已损坏，请重新导入生成证据')
+    }
+    if (evidenceStats.isSymbolicLink())
+      throw new Error('证据目录非法（符号链接/junction），拒绝读取')
+    if (!evidenceStats.isDirectory()) throw new Error('证据目录不是目录')
+    const realEvidenceDir = realpathSync(evidenceDir)
+    const realOutputPath = realpathSync(job.outputPath)
+    const evidenceRel = relative(realOutputPath, realEvidenceDir)
+    if (evidenceRel === '' || evidenceRel.startsWith('..') || isAbsolute(evidenceRel))
+      throw new Error('证据目录逃逸（realpath 校验失败）')
     const indexPath = join(evidenceDir, 'index.json')
     let index: Record<string, string>
     try {
@@ -2518,6 +2533,14 @@ export class KnowledgeBuilderService {
     const registered = index[assetId]
     if (!registered || typeof registered !== 'string') throw new Error('证据资产不存在')
     if (registered.includes('..') || isAbsolute(registered)) throw new Error('证据路径非法')
+    // 统一契约：index 值相对 evidenceDir（<hash>/evidence-pN.jpg）——
+    // 旧格式（evidence/ 前缀）会解析成 evidence/evidence/...，按非法路径拒绝
+    if (
+      registered === 'index.json' ||
+      registered.startsWith('evidence/') ||
+      registered.startsWith('evidence\\')
+    )
+      throw new Error('证据路径非法（索引格式不兼容）')
     const file = resolve(evidenceDir, registered)
     const rel = relative(evidenceDir, file)
     if (rel === '' || rel.startsWith('..') || isAbsolute(rel))
@@ -2533,9 +2556,9 @@ export class KnowledgeBuilderService {
     if (!stats.isFile()) throw new Error('证据目标不是普通文件')
     if (stats.size > KnowledgeBuilderService.EVIDENCE_ASSET_MAX_BYTES)
       throw new Error('证据文件超出大小上限')
-    // realpath 再校验一次（防 junction 等解析后逃逸）
+    // 最终文件 realpath 也必须位于真实 evidence 目录内（双重逃逸防线）
     const real = realpathSync(file)
-    const realRel = relative(realpathSync(evidenceDir), real)
+    const realRel = relative(realEvidenceDir, real)
     if (realRel === '' || realRel.startsWith('..') || isAbsolute(realRel))
       throw new Error('证据路径逃逸（realpath 校验失败）')
     return `data:image/jpeg;base64,${readFileSync(real).toString('base64')}`
@@ -2593,7 +2616,7 @@ export class KnowledgeBuilderService {
           const image = join(dir, `evidence-p${pageNumber}.jpg`)
           if (!existsSync(image)) continue
           const assetId = evidenceAssetId(sourceId, pageNumber)
-          assetIndex.set(assetId, join('evidence', dirHash, `evidence-p${pageNumber}.jpg`))
+          assetIndex.set(assetId, join(dirHash, `evidence-p${pageNumber}.jpg`))
         }
       } catch {
         // 渲染失败（非 PDF 源/引擎不可用）：该文件证据缺图，页映射保留、预览不可用

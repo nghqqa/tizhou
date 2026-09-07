@@ -81,25 +81,56 @@ describe('来源页预览 UI E2E（真实 PDF·正式管线）', () => {
         .first()
         .waitFor({ timeout: 90_000 })
 
-      // 3. 正式管线断言：任务消息包含来源证据覆盖统计（exact 页 ≥1 说明页映射建立）
+      // 3. 正式管线断言：任务消息包含来源证据覆盖统计
       const jobMessage = await page.evaluate(() => document.body.innerText)
       const hasSourceStats = jobMessage.includes('来源证据') || jobMessage.includes('无法定位')
       expect(hasSourceStats).toBe(true)
 
-      // 4. 若产物存在且带证据：验证预览链路；产物为保留通道时验证 document 证据页
-      const artifactCard = page.locator('.builder-artifact').first()
+      // 4. 产物存在验证（保留通道或题目产物皆可）
+      const artifactCard = page.getByTestId('builder-artifact-select').first()
       const hasArtifact = (await artifactCard.count()) > 0
       if (!hasArtifact) {
-        // 双页文字层 PDF 无套号/题号结构 → 走保留通道是预期行为：验证该路径有产物
         console.error('[e2e-pdf] 无审核产物——保留通道也未产出，需人工检查任务消息')
         expect(jobMessage).toMatch(/原始资料|保留|直导完成/)
         return
       }
-      await artifactCard.click()
-      await page.waitForTimeout(500)
-      // 来源标签或「暂无法定位原页」二选一（文字层直转无 _pages.json 时 unavailable 是正确行为）
-      const bodyText = await page.locator('body').innerText()
-      expect(bodyText.includes('来源') || bodyText.includes('暂无法定位原页')).toBe(true)
+
+      // 5. 若真实管线产出带 evidenceAssetId 的产物（PDF 走 OCR/结构路径时 renderJobEvidence
+      //    会渲染页图）：点击预览按钮 → IPC 取图 → 非空图片 → 翻页 → 缺图错误 → 关闭。
+      //    文字层 PDF 走 markitdown 直转无页清单 → unavailable 是正确行为（不猜页码），
+      //    此时只验证 unavailable 标签显示，不伪造预览断言。
+      const previewButton = page.getByTestId('source-preview-button').first()
+      const hasPreviewButton = (await previewButton.count()) > 0
+      if (hasPreviewButton) {
+        // 真实预览链路：点击 → 正式 IPC → 非空图
+        await previewButton.click()
+        await page.getByTestId('source-preview-image').waitFor({ timeout: 15_000 })
+        const imageSrc = await page.getByTestId('source-preview-image').getAttribute('src')
+        expect(imageSrc).toBeTruthy()
+        expect(imageSrc!.startsWith('data:image/')).toBe(true)
+        // 翻页/缺图错误/关闭
+        const nextButton = page.getByRole('button', { name: '下一页' })
+        if (await nextButton.isEnabled()) {
+          await nextButton.click()
+          const errorOrImage = await page
+            .getByTestId('source-preview-error')
+            .or(page.getByTestId('source-preview-image'))
+            .first()
+            .waitFor({ timeout: 10_000 })
+            .then(() => true)
+            .catch(() => false)
+          expect(errorOrImage).toBe(true)
+        }
+        await page.getByRole('button', { name: '关闭' }).click()
+      } else {
+        // 无 evidenceAssetId（不可渲染源或无页清单）：验证 unavailable/无预览按钮的显示
+        const bodyText = await page.locator('body').innerText()
+        expect(
+          bodyText.includes('暂无法定位原页') ||
+            bodyText.includes('原始资料保留') ||
+            hasPreviewButton
+        ).toBe(true)
+      }
     },
     240_000
   )

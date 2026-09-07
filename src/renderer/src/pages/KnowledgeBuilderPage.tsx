@@ -1207,17 +1207,9 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
                 )}
                 {paginatedArtifacts.map((item) => (
                   <div
-                    role="button"
-                    tabIndex={0}
                     key={item.id}
                     className={`builder-artifact ${artifact?.id === item.id ? 'active' : ''}`}
-                    onClick={() => void openArtifact(item.id)}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter' || event.key === ' ') {
-                        event.preventDefault()
-                        void openArtifact(item.id)
-                      }
-                    }}
+                    data-testid="builder-artifact-item"
                   >
                     <span>
                       <Badge appearance={statusAppearance(item.status)}>
@@ -1249,32 +1241,40 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
                       {sourceEvidenceLabel(item.sourceEvidence) && (
                         <small title="来源页证据：仅供对照原页核对（推测页码已标注），不是准确率验证">
                           {sourceEvidenceLabel(item.sourceEvidence)}
-                          {item.sourceEvidence?.status !== 'unavailable' &&
-                            item.sourceEvidence?.references.some((r) =>
-                              r.pages.some((p) => p.evidenceAssetId)
-                            ) && (
-                              <Button
-                                size="small"
-                                appearance="subtle"
-                                icon={<EyeIcon />}
-                                data-testid="source-preview-button"
-                                title="查看原页预览（仅供对照核对）"
-                                onClick={(event) => {
-                                  event.stopPropagation()
-                                  openSourcePreview(item.sourceEvidence)
-                                }}
-                              />
-                            )}
                         </small>
                       )}
+                      {item.sourceEvidence?.status !== 'unavailable' &&
+                        item.sourceEvidence?.references.some((r) =>
+                          r.pages.some((p) => p.evidenceAssetId)
+                        ) && (
+                          <Button
+                            size="small"
+                            appearance="subtle"
+                            icon={<EyeIcon />}
+                            data-testid="source-preview-button"
+                            title="查看原页预览（仅供对照核对）"
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              openSourcePreview(item.sourceEvidence)
+                            }}
+                          />
+                        )}
                       {item.warnings.length > 0 && (
                         <small className="warning" title={item.warnings.join('\n')}>
                           ⚠ {item.warnings[0]}
                         </small>
                       )}
                     </span>
-                    <strong>{item.title}</strong>
-                    <p>{item.preview}</p>
+                    {/* 标题区域是独立的选择按钮：键盘 Enter/Space 只作用于这里，不冒泡到预览按钮 */}
+                    <button
+                      type="button"
+                      data-testid="builder-artifact-select"
+                      className="builder-artifact-select"
+                      onClick={() => void openArtifact(item.id)}
+                    >
+                      <strong>{item.title}</strong>
+                      <p>{item.preview}</p>
+                    </button>
                   </div>
                 ))}
                 {totalPages > 1 && (
