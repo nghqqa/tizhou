@@ -100,28 +100,41 @@ describe('来源证据预览 UI E2E（真实 PDF·正式管线）', () => {
       const pageBadge = page.getByTestId('source-preview-page')
       await pageBadge.waitFor({ timeout: 10_000 })
       const firstPageText = await pageBadge.textContent()
-      expect(firstPageText).toMatch(/第\d+页/)
+      expect(firstPageText).toMatch(/第(\d+)页/)
+      const firstPageNum = Number(firstPageText!.match(/第(\d+)页/)![1])
 
-      // 翻页后页码变化或显示明确错误
+      // 翻页：下一页按钮必须可用（不允许禁用时跳过验证）
       const nextButton = page.getByRole('button', { name: '下一页' })
-      if (await nextButton.isEnabled()) {
-        await nextButton.click()
-        const newBadge = page.getByTestId('source-preview-page')
-        const secondPageText = await newBadge.textContent()
-        // 页码变化或第二页无图显示错误——二选一必须发生
-        const hasError = await page
-          .getByTestId('source-preview-error')
-          .isVisible()
-          .catch(() => false)
-        const hasImage = await page
-          .getByTestId('source-preview-image')
-          .isVisible()
-          .catch(() => false)
-        expect(hasError || hasImage).toBe(true)
-        if (!hasError && secondPageText !== firstPageText) {
-          expect(secondPageText).toMatch(/第\d+页/)
-        }
-      }
+      expect(await nextButton.isEnabled()).toBe(true)
+      await nextButton.click()
+
+      // 页码必须从 N 变为 M（M !== N）
+      await page.waitForTimeout(500) // 等待状态更新
+      const secondPageText = await page.getByTestId('source-preview-page').textContent()
+      expect(secondPageText).toMatch(/第(\d+)页/)
+      const secondPageNum = Number(secondPageText!.match(/第(\d+)页/)![1])
+      expect(secondPageNum).not.toBe(firstPageNum)
+
+      // 第二页要么显示非空图片要么显示明确错误
+      const hasError = await page
+        .getByTestId('source-preview-error')
+        .isVisible()
+        .catch(() => false)
+      const hasImage = await page
+        .getByTestId('source-preview-image')
+        .isVisible()
+        .catch(() => false)
+      expect(hasError || hasImage).toBe(true)
+
+      // 上一页恢复：页码回到原页
+      const prevButton = page.getByRole('button', { name: '上一页' })
+      expect(await prevButton.isEnabled()).toBe(true)
+      await prevButton.click()
+      await page.waitForTimeout(500)
+      const restoredPageText = await page.getByTestId('source-preview-page').textContent()
+      expect(restoredPageText).toMatch(/第(\d+)页/)
+      const restoredPageNum = Number(restoredPageText!.match(/第(\d+)页/)![1])
+      expect(restoredPageNum).toBe(firstPageNum)
 
       // 缩放和关闭
       await page.getByRole('button', { name: '放大' }).click()
@@ -202,18 +215,13 @@ describe('来源证据预览 UI E2E（真实 PDF·正式管线）', () => {
       const selectButton = page.getByTestId('builder-artifact-select').first()
       await selectButton.waitFor({ timeout: 30_000 })
 
-      // .md 源无页清单 → 不应有预览按钮（unavailable 不猜页码）
-      const previewButton = page.getByTestId('source-preview-button').first()
-      const hasPreview = (await previewButton.count()) > 0
+      // .md 源走 markitdown 直转，无页清单 → 严格断言 unavailable 语义：
+      // 1. 不存在预览按钮（无 evidenceAssetId 时按钮不渲染）
+      // 2. 页面显示「暂无法定位原页」
+      const previewButton = page.getByTestId('source-preview-button')
+      expect(await previewButton.count()).toBe(0)
       const bodyText = await page.locator('body').innerText()
-
-      // 二选一：有证据（显示来源页码）或无证据（显示暂无法定位）——
-      // 关键是不出现空白或误导
-      if (hasPreview) {
-        expect(bodyText).toMatch(/来源.*第\d+页/)
-      } else {
-        expect(bodyText).toMatch(/暂无法定位原页/)
-      }
+      expect(bodyText).toContain('暂无法定位原页')
 
       rmSync(mdDir, { recursive: true, force: true })
     },

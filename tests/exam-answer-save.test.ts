@@ -130,3 +130,42 @@ describe('ExamAnswerSaveController', () => {
     expect(saveCalls.find((call) => call.questionId === 'q2')?.answer).toEqual(['A', 'C'])
   })
 })
+
+describe('drain 在途保存竞态回归', () => {
+  it('saveFn 在途挂起时 drain 必须等待其完成并返回失败（不得错误放行）', async () => {
+    // 挂起控制器：saveFn 返回我们手动控制的 promise
+    let releaseReject!: (cause: unknown) => void
+    const gate = new Promise<never>((_, reject) => {
+      releaseReject = reject
+    })
+    const saveCalls: Array<{ questionId: string }> = []
+    const saveFn = vi.fn(
+      async (request: { examId: string; questionId: string; answer: string[] }) => {
+        saveCalls.push({ questionId: request.questionId })
+        await gate // 挂起——模拟在途 IPC
+      }
+    )
+    const controller = new ExamAnswerSaveController(saveFn as never)
+
+    // save() 触发 pump → pump 从 latest 取走请求 → saveFn 挂起
+    controller.save({ examId: 'e', questionId: 'q1', answer: ['A'] })
+    // 等 pump 启动（微任务链走到 saveFn 的 await）
+    await new Promise((resolve) => setTimeout(resolve, 50))
+
+    // 在途状态：latest 已空（pump 取走），failed 也空（saveFn 尚未返回）
+    // 此时 drain 不应直接返回空列表——必须等待队列完成
+    const drainPromise = controller.drain()
+
+    // 再等一下确保 drain 正在等待
+    await new Promise((resolve) => setTimeout(resolve, 50))
+
+    // 释放挂起的 saveFn——让它抛错
+    releaseReject(new Error('网络错误'))
+    const failed = await drainPromise
+
+    // drain 必须返回失败题（不得为空——否则交卷被错误放行）
+    expect(failed).toEqual(['q1'])
+    expect(controller.failedQuestionIds()).toEqual(['q1'])
+    expect(saveCalls).toHaveLength(1) // 只调了一次（失败后不自动重试）
+  })
+})
