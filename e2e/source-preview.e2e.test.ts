@@ -154,18 +154,39 @@ describe('来源页预览 UI E2E（模拟证据·组件行为）', () => {
       await page.getByTestId('source-preview-image').waitFor({ state: 'detached', timeout: 10_000 })
 
       // 11. 键盘语义：焦点在标题选择按钮上按 Enter 打开产物
-      //     （不触发预览按钮；按钮是同级独立元素）
       const selectButton = page.getByTestId('builder-artifact-select').first()
+      // 记录目标产物标题（按钮内 strong 文本）
+      const targetTitle = await selectButton.locator('strong').textContent()
+      expect(targetTitle).toBeTruthy()
       await selectButton.focus()
       await selectButton.press('Enter')
       await page.waitForTimeout(1_000)
-      // 打开的产物标题必须出现在预览面板（非空断言——不是仅检查 body 有内容）
+      // 打开的产物标题必须与目标一致（不是仅检查面板有内容）
       const previewPanelText = await page
         .locator('.builder-artifact-preview')
         .innerText()
         .catch(() => '')
       expect(previewPanelText.length).toBeGreaterThan(10)
-      // 无 button 嵌套 button（DOM 结构断言）
+      expect(previewPanelText).toContain(targetTitle!.slice(0, 10))
+
+      // 12. 来源预览按钮与标题按钮是独立元素（同级，非嵌套）
+      const buttonTagNames = await page
+        .getByTestId('builder-artifact-item')
+        .first()
+        .locator('button')
+        .evaluateAll((buttons) =>
+          buttons.map((btn) => ({
+            tag: btn.tagName,
+            testid: btn.getAttribute('data-testid'),
+            parentTag: btn.parentElement?.tagName
+          }))
+        )
+      // 所有 button 的父元素都不是 button（无嵌套）
+      for (const info of buttonTagNames) {
+        expect(info.parentTag).not.toBe('BUTTON')
+      }
+
+      // 13. DOM 中不存在 button 嵌套 button
       const nestedButtons = await page
         .getByTestId('builder-artifact-item')
         .first()
