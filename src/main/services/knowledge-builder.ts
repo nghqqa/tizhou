@@ -29,6 +29,7 @@ import type {
   KnowledgeSourceFile,
   OcrQualityReport,
   KnowledgeSourceScan,
+  SourceEvidence,
   Subject,
   VaultIndexResult
 } from '../../shared/contracts'
@@ -54,6 +55,18 @@ import {
   scanTableQuality,
   type ImportBatchFacts
 } from './import-quality'
+import {
+  buildSourceEvidence,
+  EVIDENCE_PAGE_LIMIT,
+  collectEvidencePageKeys,
+  evidenceAssetId,
+  manifestFromRegions,
+  computeTraceCoverage,
+  parsePageManifest,
+  traceCoverageMessage,
+  type PageManifest,
+  type ReferenceBuildInput
+} from './source-evidence'
 import {
   buildGraphicPreservation,
   extractGraphicQuestions,
@@ -81,6 +94,7 @@ import {
   parseQuestionBook,
   parseSolutionBook,
   toLines,
+  toLinesWithPageMap,
   type DirectQuestion,
   type ParsedEssayUnit,
   type ParsedSolution
@@ -171,6 +185,15 @@ interface StoredJob {
 
 function now(): string {
   return new Date().toISOString()
+}
+
+/** best-effort 文本读取：缺失/损坏返回 undefined（页清单等 sidecar 容错） */
+function readFileSyncSafe(path: string): string | undefined {
+  try {
+    return readFileSync(path, 'utf8')
+  } catch {
+    return undefined
+  }
 }
 
 function hash(value: string): string {
@@ -1210,6 +1233,8 @@ export class KnowledgeBuilderService {
         qualityWarnings?: string[]
         /** 能力边界分类（题本通道） */
         capability?: ImportCapability
+        /** 题本行 → 页映射（与 parseQuestionBook 消费的行数组平行；来源页证据） */
+        linePageMap?: Array<number | undefined>
       }> = []
       // 能力边界保留通道：图推/图片题/无法结构化的资料——不生成题目，保留原始资料进人工审核
       const directPreservation: Array<{
@@ -1218,15 +1243,23 @@ export class KnowledgeBuilderService {
         capability: ImportCapability
         summary: string
         docs: Array<{ id: string; title: string; markdown: string; warnings: string[] }>
+        /** 保留文件的页清单页码（整页证据：preserved-page role） */
+        pages?: number[]
       }> = []
       const directEssays: Array<{
         sourceId: string
         relativePath: string
         units: ParsedEssayUnit[]
+        /** 行 → 页映射（与 parseEssayBook 消费的行数组平行） */
+        linePageMap?: Array<number | undefined>
       }> = []
       // 无客观题书的面板提示线索：全文含训练式标题的行数（用于收尾时给出模式建议）
       let trainingMarkers = 0
       const directSolutions = new Map<string, ParsedSolution>()
+      // 解析册行 → 页映射（与 directSolutions 的行号对齐；解析册是独立文件独立转换）
+      const solutionPageMaps = new Map<string, Array<number | undefined>>()
+      // 解析条目 → 解析册 sourceId（来源证据按题本/解析册分别记录）
+      const solutionSourceOf = new Map<string, string>()
       const subject = job.options.subject === 'auto' ? 'xingce' : job.options.subject
       const subjectLabel =
         subject === 'xingce' ? '行测' : subject === 'shenlun' ? '申论' : '公共知识'
@@ -1388,7 +1421,19 @@ export class KnowledgeBuilderService {
               : 'Markdown 转换完成'
           this.saveJob(job)
           if (job.options.mode === 'direct') {
-            const directLines = toLines(raw)
+            // 页清单（OCR=_pages.json / structured=_regions.json 派生）：行→页映射与来源证据
+            const imagesDir = join(dirname(rawPath), 'images')
+            let pageManifest: PageManifest | undefined
+            if (useStructured) {
+              const regions = loadStructuredRegions(imagesDir)
+              if (regions) pageManifest = manifestFromRegions(regions.regions)
+            } else {
+              pageManifest = parsePageManifest(readFileSyncSafe(join(imagesDir, '_pages.json')))
+            }
+            const { lines: directLines, pageMap: fileLinePageMap } = toLinesWithPageMap(
+              raw,
+              pageManifest
+            )
             const solutionMarks = (raw.match(/【参考答案(及正确率)?】/g) ?? []).length
             // 质量模型：数字异常/表格结构/噪声剥离按书统计——只告警不静默修正
             const numeric = scanNumericAnomalies(directLines)
@@ -1407,7 +1452,11 @@ export class KnowledgeBuilderService {
                 if (!ocrQuality.warnings.includes(warning)) ocrQuality.warnings.push(warning)
             if (solutionMarks >= 3) {
               const solutions = parseSolutionBook(directLines)
-              for (const [key, value] of solutions) directSolutions.set(key, value)
+              for (const [key, value] of solutions) {
+                directSolutions.set(key, value)
+                solutionSourceOf.set(key, file.sourceId)
+              }
+              solutionPageMaps.set(file.sourceId, fileLinePageMap)
               file.state = 'ready'
               file.message = `解析册：提取 ${solutions.size} 条参考答案`
             } else {
@@ -1444,7 +1493,8 @@ export class KnowledgeBuilderService {
                     markdown: page.markdown,
                     warnings: [...page.warnings, ...qualityWarnings]
                   })),
-                  summary: `图形推理图片题 · 暂不支持自动结构化：已保留 ${pages.length} 页原始页面，请人工审核`
+                  summary: `图形推理图片题 · 暂不支持自动结构化：已保留 ${pages.length} 页原始页面，请人工审核`,
+                  pages: (pageManifest?.pages ?? []).map((page) => page.pageNumber)
                 })
                 file.state = 'ready'
                 file.message = `${CAPABILITY_LABELS['graphic-review']} · 已保留 ${pages.length} 页原始页面，请人工审核`
@@ -1476,7 +1526,8 @@ export class KnowledgeBuilderService {
                     summary: `图推：切出 ${graphic.questions.length} 题（整图版式 ${graphic.singleFigureGroups}、四图绑定 ${graphic.boundOptionGroups}、待人工核对 ${graphic.incompleteOptionQuestions}、未绑定图片 ${graphic.unboundImages}）`
                   },
                   qualityWarnings,
-                  capability: 'graphic-review'
+                  capability: 'graphic-review',
+                  linePageMap: fileLinePageMap
                 })
                 file.state = 'ready'
                 file.message = `${CAPABILITY_LABELS['graphic-review']} · ${graphic.questions.length} 题走实验性图形通道（发布需人工确认）`
@@ -1484,7 +1535,8 @@ export class KnowledgeBuilderService {
                 directEssays.push({
                   sourceId: file.sourceId,
                   relativePath: file.relativePath,
-                  units: essays.units
+                  units: essays.units,
+                  linePageMap: fileLinePageMap
                 })
                 file.state = 'ready'
                 file.message = `切出 ${essays.units.length} 道申论题（无参考答案），批次结束后生成待审核产物`
@@ -1500,6 +1552,7 @@ export class KnowledgeBuilderService {
                   sourceId: file.sourceId,
                   relativePath: file.relativePath,
                   capability,
+                  pages: (pageManifest?.pages ?? []).map((page) => page.pageNumber),
                   summary: CAPABILITY_LABELS[capability],
                   docs: [
                     {
@@ -1548,7 +1601,8 @@ export class KnowledgeBuilderService {
                   questions,
                   groups: parseAnswerGroups(directLines),
                   qualityWarnings,
-                  capability
+                  capability,
+                  linePageMap: fileLinePageMap
                 })
                 file.state = 'ready'
                 file.message = `${CAPABILITY_LABELS[capability]} · 切出 ${questions.length} 题，批次结束后自动合并发布`
@@ -1627,7 +1681,20 @@ export class KnowledgeBuilderService {
               preview: doc.title,
               markdown: doc.markdown,
               evidenceExcerpt: doc.title,
-              capability: preserved.capability
+              capability: preserved.capability,
+              // 整页证据：保留文件的全部页清单页（无法定位具体页时 unavailable，不猜）
+              sourceEvidence: buildSourceEvidence({
+                references: (preserved.pages ?? []).length
+                  ? ([
+                      {
+                        role: 'preserved-page',
+                        sourceId: preserved.sourceId,
+                        relativePath: preserved.relativePath,
+                        exactPages: preserved.pages ?? []
+                      }
+                    ] as ReferenceBuildInput[])
+                  : []
+              })
             }
             this.saveArtifact(job, artifact)
             if (!job.artifactIds.includes(artifact.id)) job.artifactIds.push(artifact.id)
@@ -1691,7 +1758,8 @@ export class KnowledgeBuilderService {
             subject,
             category: `${subjectLabel}-直导题库`,
             sourceFile: book.relativePath,
-            tags: job.options.tags
+            tags: job.options.tags,
+            solutionSourceOf
           })
           // 顺序配对兜底：套号钥匙配对失败（中止或近零产出）而解析册有答案时，
           // 按文档顺序位置配对，并用题干相似度逐对验证——两本书的题目顺序天然一致
@@ -1777,7 +1845,14 @@ export class KnowledgeBuilderService {
               capability: book.capability,
               preview: item.stem.slice(0, 180),
               markdown,
-              evidenceExcerpt: item.stem.slice(0, 80)
+              evidenceExcerpt: item.stem.slice(0, 80),
+              sourceEvidence: this.buildArtifactEvidence(
+                item,
+                book.sourceId,
+                book.relativePath,
+                book.linePageMap,
+                solutionPageMaps
+              )
             }
             this.saveArtifact(job, artifact)
             if (!job.artifactIds.includes(artifact.id)) job.artifactIds.push(artifact.id)
@@ -1849,7 +1924,14 @@ export class KnowledgeBuilderService {
                 : ['暂无参考答案，建议在备考开始前用 AI 批改补齐要点'],
               preview: unit.stem.slice(0, 180),
               markdown,
-              evidenceExcerpt: unit.stem.slice(0, 80)
+              evidenceExcerpt: unit.stem.slice(0, 80),
+              sourceEvidence: this.buildArtifactEvidence(
+                { lineStart: unit.lineStart },
+                book.sourceId,
+                book.relativePath,
+                book.linePageMap,
+                solutionPageMaps
+              )
             }
             this.saveArtifact(job, artifact)
             if (!job.artifactIds.includes(artifact.id)) job.artifactIds.push(artifact.id)
@@ -1875,6 +1957,8 @@ export class KnowledgeBuilderService {
           artifact.importQualityTier = tierForArtifact(artifact)
           this.saveArtifact(job, artifact)
         }
+        // 来源证据页渲染（job 内去重 + 容量上限；.md 源等失败不阻塞）
+        const persistedEvidencePages = await this.renderJobEvidence(job, allArtifacts)
         // 页数事实统一走 collectPageFacts（唯一规则：有效性 + 空白页钳制）
         const pageFacts = collectPageFacts(job.files)
         const facts: ImportBatchFacts = {
@@ -1915,7 +1999,8 @@ export class KnowledgeBuilderService {
                 : trainingMarkers >= 3
                   ? `直导完成：检测到 ${trainingMarkers} 处训练式标题但未能稳定切分出题目——这本书大概率是主观题教材，请改用「模型提炼」模式导入`
                   : '直导完成：未切出题目（未识别出题目或全部缺少答案）') +
-          ` [质量] ${batchFactsMessage(facts)}`
+          ` [质量] ${batchFactsMessage(facts)}` +
+          ` [来源] ${traceCoverageMessage(computeTraceCoverage(allArtifacts, persistedEvidencePages))}`
       } else {
         const artifacts = job.artifactIds.map((artifactId) => this.loadArtifact(job, artifactId))
         job.status = artifacts.some((artifact) => artifact.status === 'pending')
@@ -2410,6 +2495,145 @@ export class KnowledgeBuilderService {
       ...summary
     } = artifact
     return summary
+  }
+
+  /** 读取证据资产 dataUrl：只允许任务 evidence/index.json 登记的相对路径（拒绝逃逸） */
+  readEvidenceAsset(jobId: string, assetId: string): string {
+    if (!/^ev-[0-9a-f]{20}$/.test(assetId)) throw new Error('证据资产 ID 无效')
+    const job = this.loadJob(jobId)
+    const indexPath = join(job.outputPath, 'evidence', 'index.json')
+    const index = JSON.parse(readFileSync(indexPath, 'utf8')) as Record<string, string>
+    const registered = index[assetId]
+    if (!registered || typeof registered !== 'string') throw new Error('证据资产不存在')
+    if (registered.includes('..') || isAbsolute(registered)) throw new Error('证据路径非法')
+    const file = resolve(job.outputPath, registered)
+    if (!existsSync(file) || !statSync(file).isFile()) throw new Error('证据文件不存在')
+    const rel = relative(job.outputPath, file)
+    if (rel.startsWith('..') || isAbsolute(rel)) throw new Error('证据路径超出任务目录')
+    return `data:image/jpeg;base64,${readFileSync(file).toString('base64')}`
+  }
+
+  /** 渲染证据页并回填 evidenceAssetId：按 sourceId+pageNumber 在 job 内去重，
+   *  上限 EVIDENCE_PAGE_LIMIT；渲染失败（如 .md 源）跳过该文件不阻塞。
+   *  输出 evidence/{源短哈希}/evidence-p{N}.jpg + index.json 资产表（渲染层经 IPC 取图）。 */
+  private async renderJobEvidence(job: StoredJob, artifacts: StoredArtifact[]): Promise<number> {
+    const pageKeys = collectEvidencePageKeys(artifacts)
+    if (pageKeys.size === 0 || pageKeys.size > EVIDENCE_PAGE_LIMIT) return 0
+    const bySource = new Map<string, Set<number>>()
+    for (const key of pageKeys) {
+      const [sourceId, pagePart] = key.split('#p')
+      const pageNumber = Number(pagePart)
+      const list = bySource.get(sourceId!) ?? new Set<number>()
+      list.add(pageNumber)
+      bySource.set(sourceId!, list)
+    }
+    const evidenceDir = join(job.outputPath, 'evidence')
+    const assetIndex = new Map<string, string>()
+    const engine = await this.engineStatus()
+    for (const [sourceId, pageNumbers] of bySource) {
+      const file = job.files.find((candidate) => candidate.sourceId === sourceId)
+      if (!file || !engine.pythonPath) continue
+      try {
+        const source = this.resolveSourceFile(job, file)
+        const dirHash = hash(sourceId).slice(0, 10)
+        const dir = join(evidenceDir, dirHash)
+        mkdirSync(dir, { recursive: true })
+        const pagesArg = [...pageNumbers].sort((a, b) => a - b).join(',')
+        const worker = this.ocrWorkerPath()
+        await new Promise<void>((resolvePromise, rejectPromise) => {
+          const child = spawn(
+            engine.pythonPath!,
+            [worker, source, dir, '--render-evidence', pagesArg],
+            { windowsHide: true, shell: false, stdio: ['ignore', 'ignore', 'ignore'] }
+          )
+          child.once('error', rejectPromise)
+          child.once('close', (code) =>
+            code === 0 ? resolvePromise() : rejectPromise(new Error('render failed'))
+          )
+        })
+        for (const pageNumber of pageNumbers) {
+          const image = join(dir, `evidence-p${pageNumber}.jpg`)
+          if (!existsSync(image)) continue
+          const assetId = evidenceAssetId(sourceId, pageNumber)
+          assetIndex.set(assetId, join('evidence', dirHash, `evidence-p${pageNumber}.jpg`))
+        }
+      } catch {
+        // 渲染失败（非 PDF 源/引擎不可用）：该文件证据缺图，页映射保留、预览不可用
+      }
+    }
+    if (assetIndex.size === 0) return 0
+    writeFileSync(
+      join(evidenceDir, 'index.json'),
+      JSON.stringify(Object.fromEntries([...assetIndex.entries()].sort()), null, 1),
+      'utf8'
+    )
+    // 回填 evidenceAssetId（页映射保留，无图页不填）
+    for (const artifact of artifacts) {
+      const evidence = artifact.sourceEvidence
+      if (!evidence || evidence.status === 'unavailable') continue
+      let updated = false
+      for (const reference of evidence.references)
+        for (const page of reference.pages) {
+          const assetId = evidenceAssetId(reference.sourceId, page.pageNumber)
+          if (assetIndex.has(assetId)) {
+            page.evidenceAssetId = assetId
+            updated = true
+          }
+        }
+      if (updated) this.saveArtifact(job, artifact)
+    }
+    return assetIndex.size
+  }
+
+  /** 产物级来源证据：题本页（question/material role）与解析册页（solution role）分别记录 */
+  private buildArtifactEvidence(
+    item: {
+      lineStart?: number
+      materialLineRange?: { start: number; end: number }
+      solutionLineStart?: number
+      solutionSourceId?: string
+    },
+    sourceId: string,
+    relativePath: string,
+    linePageMap: Array<number | undefined> | undefined,
+    solutionPageMaps: Map<string, Array<number | undefined>>
+  ): SourceEvidence {
+    const solutionMap = item.solutionSourceId
+      ? solutionPageMaps.get(item.solutionSourceId)
+      : undefined
+    return buildSourceEvidence({
+      references: [
+        {
+          role: 'question',
+          sourceId,
+          relativePath,
+          lineStart: item.lineStart,
+          linePageMap: linePageMap ?? []
+        },
+        ...(item.materialLineRange
+          ? [
+              {
+                role: 'material' as const,
+                sourceId,
+                relativePath,
+                lineRange: item.materialLineRange,
+                linePageMap: linePageMap ?? []
+              }
+            ]
+          : []),
+        ...(item.solutionLineStart !== undefined && item.solutionSourceId && solutionMap
+          ? [
+              {
+                role: 'solution' as const,
+                sourceId: item.solutionSourceId,
+                relativePath: item.solutionSourceId,
+                lineStart: item.solutionLineStart,
+                linePageMap: solutionMap
+              }
+            ]
+          : [])
+      ]
+    })
   }
 
   private jobDirectory(id: string): string {

@@ -67,7 +67,7 @@ export function quarantineNumberStreamLine(line: string): string {
   )
 }
 
-const WATERMARK_PATTERNS = [
+export const WATERMARK_PATTERNS = [
   /公考最新资料[、，]?\s*更新进度微信\S*/g,
   /微信SKA\d+/g,
   /公众号[：:]\S+/g,

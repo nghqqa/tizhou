@@ -380,6 +380,8 @@ async function initialize(): Promise<void> {
           request.params.artifactIds,
           request.params.status
         )
+      case 'knowledgeBuilder.evidence.get':
+        return knowledgeBuilder.readEvidenceAsset(request.params.jobId, request.params.assetId)
       case 'knowledgeBuilder.cache.stats':
         return knowledgeBuilder.cacheStats()
       case 'knowledgeBuilder.cache.clear':

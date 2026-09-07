@@ -323,9 +323,54 @@ def run_structured(source: Path, output: Path) -> int:
                          + (f'，已剥离页眉/水印噪声 {removed_noise} 处' if removed_noise else '')]})
     return 0
 
+def render_evidence_pages(source: Path, out_dir: Path, pages_arg: str) -> int:
+    """按需渲染来源页低分辨率预览（复用 pypdfium2，不引入新引擎）。
+
+    pages_arg：逗号分隔的 1-based 页码。输出 evidence-p{N}.jpg（长边 ≤1280、质量 80），
+    确定性文件名；页码越界直接跳过。原 PDF 只读。
+    """
+    import pypdfium2 as pdfium
+    out_dir.mkdir(parents=True, exist_ok=True)
+    wanted: set[int] = set()
+    for part in pages_arg.split(','):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            n = int(part)
+        except ValueError:
+            continue
+        if n >= 1:
+            wanted.add(n)
+    if not wanted:
+        return 0
+    document = pdfium.PdfDocument(str(source))
+    try:
+        total = len(document)
+        for n in sorted(wanted):
+            if n > total:
+                continue
+            page = document[n - 1]
+            scale = 1280.0 / max(1.0, max(page.get_size()))
+            bitmap = page.render(scale=scale)
+            pil = bitmap.to_pil().convert('RGB')
+            pil.save(out_dir / f'evidence-p{n}.jpg', 'JPEG', quality=80)
+    finally:
+        document.close()
+    return 0
+
+
 def main() -> int:
+    if len(sys.argv) >= 5 and sys.argv[3] == '--render-evidence':
+        source = Path(sys.argv[1]).resolve(strict=True)
+        out_dir = Path(sys.argv[2]).resolve()
+        if not source.is_file():
+            raise ValueError('input must be a local regular file')
+        return render_evidence_pages(source, out_dir, sys.argv[4])
     if len(sys.argv) not in (3, 4):
-        raise ValueError('usage: ocr-worker.py <local-input> <markdown-output> [--structured]')
+        raise ValueError(
+            'usage: ocr-worker.py <local-input> <markdown-output> [--structured] '
+            '| ocr-worker.py <pdf> <out-dir> --render-evidence <pages-csv>')
 
     source = Path(sys.argv[1]).resolve(strict=True)
     output = Path(sys.argv[2]).resolve()
@@ -410,6 +455,26 @@ def main() -> int:
     kept_pages, quality = filter_lines(pages_data, heights, page_sources)
     merged = '\n\n'.join('\n'.join(lines) for lines in kept_pages if lines)
     output.write_text(merged, encoding='utf-8')
+
+    # 页清单 sidecar（确定性、无时间戳）：逐页记录过滤后的行内容，
+    # 供导入管线建立「行 → 页」映射与来源证据——不改变 markdown 正文本身
+    page_manifest = {
+        'pages': [
+            {
+                'pageNumber': index + 1,
+                'source': page_sources[index] if index < len(page_sources) else 'ocr',
+                'lines': list(lines),
+            }
+            for index, lines in enumerate(kept_pages)
+            if lines
+        ]
+    }
+    try:
+        (output.parent / 'images').mkdir(parents=True, exist_ok=True)
+        (output.parent / 'images' / '_pages.json').write_text(
+            json.dumps(page_manifest, ensure_ascii=False, sort_keys=True), encoding='utf-8')
+    except Exception:
+        pass
 
     # 质量评估
     if quality['averageConfidence'] and quality['averageConfidence'] < LOW_CONFIDENCE_THRESHOLD:

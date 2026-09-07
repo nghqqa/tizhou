@@ -2,7 +2,10 @@
 // 版式假设来自实测的花生/四海/超格系题本：套标题 + 「N. 题干 + A-D 选项」+ 解析册【参考答案】标记块，
 // 或书尾「第N篇 + 1-5:BBDBC」分组答案页。
 import { createHash } from 'node:crypto'
+import type { PageManifest } from './source-evidence'
 import {
+  STRUCTURAL_NOISE_LINE,
+  WATERMARK_PATTERNS,
   cleanExplanation,
   quarantineNumberStreamLine,
   stripStructuralNoise,
@@ -23,6 +26,10 @@ export interface ParsedQuestion {
   options: DirectOption[]
   /** 该题所属套的共享材料（统计表/文字资料），资料分析类书籍专用 */
   material?: string
+  /** 题目在输入行数组中的起始行号（0-based，TOC 过滤后）：来源页证据用 */
+  lineStart?: number
+  /** 套内共享材料在输入行数组中的行区间（含端点）：材料页映射传递给组内题目用 */
+  materialLineRange?: { start: number; end: number }
 }
 
 export interface ParsedSolution {
@@ -38,6 +45,8 @@ export interface ParsedSolution {
   answerRate?: number
   /** 解析清洗阶段的可读性/水印警告（人工审核提示） */
   cleanupWarnings?: string[]
+  /** 解析条目在解析册输入行数组中的起始行号（0-based）：解析册来源页证据用 */
+  lineStart?: number
 }
 
 export interface DirectQuestion {
@@ -65,6 +74,13 @@ export interface DirectQuestion {
   groupOrder?: number
   /** 解析清洗警告（水印/断句/括号未闭），人工审核提示 */
   cleanupWarnings?: string[]
+  /** 来源页证据透传：题本行号（与题本行页映射平行） */
+  lineStart?: number
+  /** 套内共享材料行区间（题本行号） */
+  materialLineRange?: { start: number; end: number }
+  /** 配对解析条目的行号（解析册行号）与解析册 sourceId */
+  solutionLineStart?: number
+  solutionSourceId?: string
 }
 
 const SET_TITLE = /^#{0,4}\s*练习题\s*0*(\d{1,3})\s*套?\s*#*\s*$/
@@ -94,35 +110,61 @@ const ESSAY_LEADER_LINE = /^[.。…·•]{2,}\s*\d{0,4}$/
 const ESSAY_PAGE_NUMBER = /^\d{1,4}$/
 
 export function toLines(raw: string): string[] {
-  const lines = raw
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    // OCR 把 ≈ 与数值区间都识别成半角 ~，而 GFM 单双波浪线（~/~~）都是删除线语法，
-    // 任意两个波浪线之间的解析会被整段划掉——统一替换为全角～（中文区间标准写法），
-    // 读感不变且彻底脱离 Markdown 触发条件
-    .map((line) => line.replace(/~+/g, '～'))
-    // 解析册每套末尾印的「【全篇答案】CBADD」汇总行会扫进最后一题的解析，
-    // 剥掉标记与答案字母（行内其他内容保留，独立成行则整行过滤）
-    .map((line) => line.replace(/【全篇答案】[A-D]{2,}/g, '').trim())
-    .filter(Boolean)
-  // 行内水印（公考最新资料/微信号/机构宣传片段）只剥离命中片段，出处与年份不动
-  const watermarkStripped = stripWatermarkFragments(lines)
-  // 「请回答1～5题」等组题指引行不是题干也不是材料——过滤（不允许当普通题干）
-  return stripStructuralNoise(watermarkStripped.lines).lines
+  return toLinesWithPageMap(raw).lines
+}
+
+/** toLines 的带页版本：过滤链逐行判定与 toLines 完全一致（trim/波浪线/全篇答案/
+ *  水印片段/结构噪声都是行级操作），页标签与输出行严格平行。
+ *  页标签来自页清单（worker _pages.json 的行序 = markdown 非空行序）；
+ *  解析状态机消费这些行（LocatedLine）时的页标签即 exact 依据；无清单时全 undefined。 */
+export function toLinesWithPageMap(
+  raw: string,
+  manifest?: PageManifest
+): { lines: string[]; pageMap: Array<number | undefined> } {
+  const rawPageOf: Array<number | undefined> = []
+  if (manifest)
+    for (const page of manifest.pages) for (const _ of page.lines) rawPageOf.push(page.pageNumber)
+  let manifestCursor = 0
+  const lines: string[] = []
+  const pageMap: Array<number | undefined> = []
+  for (const rawLine of raw.split(/\r?\n/)) {
+    let line = rawLine.trim()
+    const isBlank = !line
+    // markdown 非空行序与页清单行序一致（同一 worker 生成）：非空行依序消费标签
+    const label = manifest && !isBlank ? (rawPageOf[manifestCursor++] ?? undefined) : undefined
+    if (isBlank) continue
+    line = line.replace(/~+/g, '～')
+    line = line.replace(/【全篇答案】[A-D]{2,}/g, '').trim()
+    if (!line) continue
+    // 行内水印剥离（与 stripWatermarkFragments 同一模式表：只删片段、保留其余内容）
+    for (const pattern of WATERMARK_PATTERNS) line = line.replace(pattern, '')
+    line = line.replace(/\s{2,}/g, ' ').trim()
+    if (!line) continue
+    if (STRUCTURAL_NOISE_LINE.test(line)) continue
+    lines.push(line)
+    pageMap.push(label)
+  }
+  return { lines, pageMap }
 }
 // 书首目录过滤（双通道规则）：
 // 题本/解析册常在开头整页印「练习题01套…练习题30套」目录，使按序递增的套号状态机在
 // 正文开始前就被推到最大套号（实测解析册 392 页全程错位，只识别出最后一套）。
 // 判定：把所有套标题按相邻间距聚簇；只有当某簇的套号集合在后文【再次】成簇出现时，
 // 该簇才是目录副本并删除——真实正文锚点不会原样重现。无重复证据的小夹具/普通书不受影响。
-function stripTocSetTitleRuns(lines: string[]): string[] {
+/** TOC 过滤结果：lines 为过滤后数组，removedRows 为被删的输入行号（来源页证据行号修正用） */
+export interface TocStrippedLines {
+  lines: string[]
+  removedRows: Set<number>
+}
+
+function stripTocSetTitleRuns(lines: string[]): TocStrippedLines {
   const titleRows: Array<{ row: number; set: number }> = []
   lines.forEach((line, row) => {
     const match = line.match(SET_TITLE)
     if (!match) return
     titleRows.push({ row, set: Number(match[1] ?? '0') })
   })
-  if (titleRows.length < 2) return lines
+  if (titleRows.length < 2) return { lines, removedRows: new Set<number>() }
 
   // 相邻标题行间距 <= TOC_GAP 视为同一簇（簇内保留行间内容不动）
   const TOC_GAP = 3
@@ -157,12 +199,13 @@ function stripTocSetTitleRuns(lines: string[]): string[] {
         poisonedClusters.add(a)
       }
     }
-  if (!poisonedClusters.size) return lines
+  if (!poisonedClusters.size) return { lines, removedRows: new Set<number>() }
 
   const removeRows = new Set<number>()
   for (const clusterIndex of poisonedClusters)
     for (const item of clusters[clusterIndex]!.rows) removeRows.add(item.row)
-  return lines.filter((_, index) => !removeRows.has(index))
+  const kept = lines.filter((_, index) => !removeRows.has(index))
+  return { lines: kept, removedRows: removeRows }
 }
 
 // 套内共享材料行拼合为材料文本（过滤纯页码行与混入的套标题行——结构解析 md 的标题常带 # 前缀）
@@ -176,20 +219,32 @@ function materialText(materialLines: string[]): string | undefined {
 }
 
 // 题本切题：期望题号状态机；目录页连续标题只认第一行；题号行丢失时跳号续切；选项换行并入末选项
+// lineStart 为输入行数组的 0-based 起始行号（TOC 删除行已修正回输入索引），
+// 与调用方 toLines 输出的行号对齐——来源页证据用
 export function parseQuestionBook(inputLines: string[]): ParsedQuestion[] {
-  const lines = stripTocSetTitleRuns(inputLines)
+  const { lines: tocLines, removedRows } = stripTocSetTitleRuns(inputLines)
+  // 过滤后索引 → 输入索引（TOC 删除仅发生在书首目录，正文索引平移由此修正）
+  const inputIndexOf: number[] = []
+  for (let index = 0; index < inputLines.length; index += 1)
+    if (!removedRows.has(index)) inputIndexOf.push(index)
+  const lines = tocLines
   const questions: ParsedQuestion[] = []
   let setNo = 0
   let current: ParsedQuestion | null = null
   let expected = 1
   let nextOption: string | null = null
   let lastLineWasHeader = false
+  let currentStartLine = 0
   // 套内共享材料：套标题之后、第一道题之前的统计表/文字资料，附着给套内每道题
   let setMaterial: string[] = []
+  let materialRange: { start: number; end: number } | undefined
   const closeQuestion = () => {
-    if (current && current.stem) questions.push(current)
+    if (current && current.stem) {
+      current.lineStart = currentStartLine
+      questions.push(current)
+    }
   }
-  for (const line of lines) {
+  for (const [lineIndex, line] of lines.entries()) {
     if (NOISE.test(line)) continue
     if (ANSWER_SECTION.test(line)) break // 书尾分组答案区不再属于题干
     const setTitle = line.match(SET_TITLE)
@@ -202,6 +257,7 @@ export function parseQuestionBook(inputLines: string[]): ParsedQuestion[] {
         expected = 1
         nextOption = null
         setMaterial = []
+        materialRange = undefined
       }
       lastLineWasHeader = true
       continue
@@ -211,14 +267,17 @@ export function parseQuestionBook(inputLines: string[]): ParsedQuestion[] {
     if (match) {
       const num = Number(match[1] ?? '0')
       const rest = match[2] ?? ''
+      const inputLine = inputIndexOf[lineIndex] ?? lineIndex
       if (!current && num === 1) {
         if (setNo === 0) setNo = 1
+        currentStartLine = inputLine
         current = {
           set: setNo,
           num: 1,
           stem: rest,
           options: [],
-          material: materialText(setMaterial)
+          material: materialText(setMaterial),
+          materialLineRange: materialRange
         }
         expected = 2
         nextOption = 'A'
@@ -226,7 +285,15 @@ export function parseQuestionBook(inputLines: string[]): ParsedQuestion[] {
       }
       if (num === expected && current) {
         closeQuestion()
-        current = { set: setNo, num, stem: rest, options: [], material: materialText(setMaterial) }
+        currentStartLine = inputLine
+        current = {
+          set: setNo,
+          num,
+          stem: rest,
+          options: [],
+          material: materialText(setMaterial),
+          materialLineRange: materialRange
+        }
         expected = num + 1
         nextOption = 'A'
         continue
@@ -234,12 +301,14 @@ export function parseQuestionBook(inputLines: string[]): ParsedQuestion[] {
       if (num === 1 && current && current.num >= 5) {
         closeQuestion()
         setNo += 1
+        currentStartLine = inputLine
         current = {
           set: setNo,
           num: 1,
           stem: rest,
           options: [],
-          material: materialText(setMaterial)
+          material: materialText(setMaterial),
+          materialLineRange: materialRange
         }
         expected = 2
         nextOption = 'A'
@@ -248,6 +317,7 @@ export function parseQuestionBook(inputLines: string[]): ParsedQuestion[] {
       // OCR 偶尔丢失题号行：当前题结构完整时允许跳号续切，避免后续题目全部并入前一题
       if (num > expected && num <= expected + 5 && current && current.options.length >= 3) {
         closeQuestion()
+        currentStartLine = inputLine
         current = { set: setNo, num, stem: rest, options: [] }
         expected = num + 1
         nextOption = 'A'
@@ -257,6 +327,10 @@ export function parseQuestionBook(inputLines: string[]): ParsedQuestion[] {
     // 题目未开始时：非题号/选项的正文行累积为该套共享材料（统计表/文字资料）
     if (!current) {
       setMaterial.push(line)
+      const inputLine = inputIndexOf[lineIndex] ?? lineIndex
+      materialRange = materialRange
+        ? { start: materialRange.start, end: inputLine }
+        : { start: inputLine, end: inputLine }
       continue
     }
     if (current && nextOption) {
@@ -287,7 +361,11 @@ export function parseSolutionBook(
   inputLines: string[],
   events?: string[]
 ): Map<string, ParsedSolution> {
-  const lines = stripTocSetTitleRuns(inputLines)
+  const { lines: tocLines, removedRows } = stripTocSetTitleRuns(inputLines)
+  const inputIndexOf: number[] = []
+  for (let index = 0; index < inputLines.length; index += 1)
+    if (!removedRows.has(index)) inputIndexOf.push(index)
+  const lines = tocLines
   const solutions = new Map<string, ParsedSolution>()
   const emit = (message: string): void => {
     if (events) events.push(message)
@@ -299,8 +377,14 @@ export function parseSolutionBook(
   let lastLineWasHeader = false
   let excerptLines: string[] = []
   let lineNumber = 0
-  for (const line of lines) {
+  let solutionStartLine = 0
+  const registerSolution = (key: string): void => {
+    current!.lineStart = solutionStartLine
+    solutions.set(key, current!)
+  }
+  for (const [lineIndex, line] of lines.entries()) {
     lineNumber += 1
+    solutionStartLine = inputIndexOf[lineIndex] ?? lineIndex
     if (NOISE.test(line)) continue
     const setTitle = line.match(SET_TITLE)
     if (setTitle) {
@@ -343,7 +427,7 @@ export function parseSolutionBook(
           stemExcerpt: undefined,
           origin: originData
         }
-        solutions.set(`${setNo}-${num}`, current)
+        registerSolution(`${setNo}-${num}`)
         inExplanation = false
         excerptLines = []
         expected = num + 1
@@ -360,7 +444,7 @@ export function parseSolutionBook(
           stemExcerpt: undefined,
           origin: originData
         }
-        solutions.set(`${setNo}-1`, current)
+        registerSolution(`${setNo}-1`)
         inExplanation = false
         excerptLines = []
         expected = 2
@@ -377,7 +461,7 @@ export function parseSolutionBook(
           stemExcerpt: undefined,
           origin: originData
         }
-        solutions.set(`${setNo}-1`, current)
+        registerSolution(`${setNo}-1`)
         inExplanation = false
         excerptLines = []
         expected = 2
@@ -494,6 +578,10 @@ export interface ParsedEssayUnit {
   paper?: string
   /** 单元内的参考答案/要点段（现版教材通常没有） */
   explanation: string
+  /** 单元起始行号（输入行数组 0-based）：来源页证据用 */
+  lineStart?: number
+  /** 提问段行号（材料结束后、提问句所在行区间） */
+  promptLineStart?: number
 }
 
 export interface ParsedEssayBook {
@@ -604,10 +692,15 @@ interface EssayUnitEntry {
   chapter: string
   title: string
   body: string[]
+  /** 单元起始行（输入行数组 0-based）与最近正文行（提问段近似位置） */
+  startLine: number
+  promptLine: number
 }
 
 function buildEssayUnit(entry: EssayUnitEntry, seq: number): ParsedEssayUnit | undefined {
   const body = entry.body
+  const lineStart = entry.startLine
+  const promptLineStart = entry.promptLine
   let requirement = ''
   let requirementIndex = -1
   let originYear: number | undefined
@@ -684,17 +777,21 @@ function buildEssayUnit(entry: EssayUnitEntry, seq: number): ParsedEssayUnit | u
     material,
     ...(originYear && Number.isFinite(originYear) ? { year: originYear } : {}),
     ...(originPaper ? { paper: originPaper } : {}),
-    explanation: answerIndex >= 0 ? joinProse(body.slice(answerIndex + 1)).trim() : ''
+    explanation: answerIndex >= 0 ? joinProse(body.slice(answerIndex + 1)).trim() : '',
+    lineStart,
+    promptLineStart
   }
 }
 
 export function parseEssayBook(lines: string[]): ParsedEssayBook {
   const entries: EssayUnitEntry[] = []
   let chapter = ''
-  for (const rawLine of lines) {
+  let promptLine = 0
+  for (const [lineIndex, rawLine] of lines.entries()) {
     // OCR 断字噪声在收集入口统一清洗：后续所有标记匹配、题干、材料、解析都继承干净文本
     const line = normalizeOcrText(rawLine)
     if (!line || isEssayNoiseLine(line)) continue
+    promptLine = lineIndex
     const chapterMatch = line.match(ESSAY_CHAPTER_MARK)
     if (chapterMatch) {
       chapter = cleanEssayTitle(chapterMatch[1] ?? '')
@@ -717,11 +814,14 @@ export function parseEssayBook(lines: string[]): ParsedEssayBook {
         )
       }
       if (twinIndex >= 0) entries.splice(twinIndex, 1)
-      entries.push({ chapter, title, body: [] })
+      entries.push({ chapter, title, body: [], startLine: lineIndex, promptLine })
       continue
     }
     const last = entries[entries.length - 1]
-    if (last) last.body.push(line)
+    if (last) {
+      last.body.push(line)
+      last.promptLine = lineIndex
+    }
   }
 
   const units: ParsedEssayUnit[] = []
@@ -738,7 +838,14 @@ export function mergeDirectQuestions(
   questions: ParsedQuestion[],
   solutions: Map<string, ParsedSolution>,
   answerGroups: Map<string, string>,
-  options: { subject: string; category: string; sourceFile: string; tags: string[] }
+  options: {
+    subject: string
+    category: string
+    sourceFile: string
+    tags: string[]
+    /** 解析条目 → 解析册 sourceId（来源证据分别记录题本页与解析册页） */
+    solutionSourceOf?: Map<string, string>
+  }
 ): {
   items: DirectQuestion[]
   skippedNoAnswer: number
@@ -806,6 +913,12 @@ export function mergeDirectQuestions(
       options: question.options,
       material: question.material,
       cleanupWarnings: solution?.cleanupWarnings,
+      lineStart: question.lineStart,
+      materialLineRange: question.materialLineRange,
+      solutionLineStart: solution?.lineStart,
+      solutionSourceId: solution
+        ? options.solutionSourceOf?.get(`${question.set}-${question.num}`)
+        : undefined,
       answer: answerText.split(''),
       explanation
     })

@@ -159,6 +159,9 @@ export function mergeByDocumentOrder(
         options: question.options,
         material: question.material,
         cleanupWarnings: solution.cleanupWarnings,
+        lineStart: question.lineStart,
+        materialLineRange: question.materialLineRange,
+        solutionLineStart: solution.lineStart,
         answer: answerText.split(''),
         explanation
       })

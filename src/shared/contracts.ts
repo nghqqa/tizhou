@@ -212,6 +212,36 @@ export interface KnowledgeArtifactSummary {
   /** 导入质量分层（产物形态，不代表 OCR 内容正确）：
    *  structured=可作答结构 · review-required=能力边界需人工核对 · preserved-source=仅保留原始资料 */
   importQualityTier?: ImportQualityTier
+  /** 来源页证据：产物可追溯到的 PDF 页（仅供人工对照原页，不代表 OCR 内容正确） */
+  sourceEvidence?: SourceEvidence
+}
+
+/** 来源证据：多来源引用（题本/共享材料/解析册/保留页分开记录，不混为一个页码）。
+ *  status 表示证据资产可用性（图片是否存在/完整）；mapping 表示页码来源（exact/estimated）——两者语义独立。 */
+export interface SourceEvidence {
+  status: 'available' | 'partial' | 'unavailable'
+  /** partial 时的原因（如证据页超出任务容量上限） */
+  partialReason?: string
+  references: SourceReference[]
+}
+
+export interface SourceReference {
+  role: 'question' | 'material' | 'solution' | 'preserved-page'
+  sourceId: string
+  relativePath: string
+  pages: SourceEvidencePage[]
+}
+
+export interface SourceEvidencePage {
+  /** 统一 1-based 页码 */
+  pageNumber: number
+  /** exact 仅来自解析状态机直接消费的行/版面 region；事后文本匹配、题号顺序、邻近关系一律 estimated */
+  mapping: 'exact' | 'estimated'
+  /** 证据资产 ID：渲染层经 IPC 获取，不接触本地路径 */
+  evidenceAssetId?: string
+  /** [0,1] 归一化 bbox（x0,y0,x1,y1，x1≥x0、y1≥y0） */
+  bbox?: [number, number, number, number]
+  regionType?: string
 }
 
 /** 导入质量分层：只反映产物形态，不表示 OCR 识别准确率 */
@@ -652,6 +682,10 @@ export type WorkbenchRequest =
   | { method: 'knowledgeBuilder.job.get'; params: { id: string } }
   | { method: 'knowledgeBuilder.job.cancel'; params: { id: string } }
   | { method: 'knowledgeBuilder.job.retry'; params: { id: string; sourceIds?: string[] } }
+  | {
+      method: 'knowledgeBuilder.evidence.get'
+      params: { jobId: string; assetId: string }
+    }
   | { method: 'knowledgeBuilder.cache.stats' }
   | {
       method: 'knowledgeBuilder.cache.clear'

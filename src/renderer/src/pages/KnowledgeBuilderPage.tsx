@@ -26,6 +26,7 @@ import type {
   BatchReviewResult,
   KnowledgeArtifactDetail,
   KnowledgeArtifactStatus,
+  KnowledgeArtifactSummary,
   KnowledgeBuildJob,
   KnowledgeBuildMode,
   KnowledgeBuildQuality,
@@ -60,6 +61,30 @@ function getDisplayJobStatus(job: KnowledgeBuildJob): string {
     return '本批已处理'
   }
   return jobStatusLabel(job.status)
+}
+
+/** 来源证据标签：文件·页码；estimated 标「页码为推测」；unavailable 标「暂无法定位原页」 */
+function sourceEvidenceLabel(evidence?: KnowledgeArtifactSummary['sourceEvidence']): string {
+  if (!evidence) return ''
+  if (evidence.status === 'unavailable' || evidence.references.length === 0) return '暂无法定位原页'
+  const parts: string[] = []
+  for (const reference of evidence.references) {
+    const pages = [...new Set(reference.pages.map((page) => page.pageNumber))].sort((a, b) => a - b)
+    if (pages.length === 0) continue
+    const pageText =
+      pages.length === 1
+        ? `第${pages[0]}页`
+        : `第${pages[0]}～${pages[pages.length - 1]}页（共${pages.length}页）`
+    const roleLabel =
+      reference.role === 'material' ? '材料' : reference.role === 'solution' ? '解析' : ''
+    parts.push(
+      `${roleLabel}${pageText}${
+        reference.pages.some((page) => page.mapping === 'estimated') ? '（页码为推测）' : ''
+      }`
+    )
+  }
+  if (parts.length === 0) return '暂无法定位原页'
+  return `来源 ${parts.join(' · ')}`
 }
 
 /** OCR 质量摘要：区分文字层页/OCR页/置信度，不与 AI 模型置信度混淆 */
@@ -1131,6 +1156,11 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
                             : item.importQualityTier === 'review-required'
                               ? '待人工审核'
                               : '原始资料保留'}
+                        </small>
+                      )}
+                      {sourceEvidenceLabel(item.sourceEvidence) && (
+                        <small title="来源页证据：仅供对照原页核对（推测页码已标注），不是准确率验证">
+                          {sourceEvidenceLabel(item.sourceEvidence)}
                         </small>
                       )}
                       {item.warnings.length > 0 && (

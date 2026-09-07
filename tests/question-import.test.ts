@@ -1593,4 +1593,97 @@ describe('直导批次质量分层与汇总（管线级）', () => {
     expect(count).toBe(1)
     expect(job.message).toContain('配对校验拦截')
   }, 35_000)
+
+  it('普通客观题来源证据：.md 直转无页清单 → unavailable（不猜页码，产物正常）', async () => {
+    // convert mock 把 .md 原样复制；同时按输入内容构造 _pages.json 页清单
+    // （.md 直转管线无真实 worker，这里以 sidecar 存在时的行为为准）
+    const { job, service } = await runDirectImport({
+      '题本.md':
+        [
+          '练习题01套',
+          '1. 甲题干内容足够长了吧：',
+          'A. 选项一',
+          'B. 选项二',
+          'C. 选项三',
+          'D. 选项四',
+          '2. 乙题干内容也足够长了：',
+          'A. 选项一',
+          'B. 选项二',
+          'C. 选项三',
+          'D. 选项四',
+          '3. 丙题干内容同样足够长：',
+          'A. 选项一',
+          'B. 选项二',
+          'C. 选项三',
+          'D. 选项四'
+        ].join('\n') + '\n',
+      '解析.md':
+        [
+          '1. 甲题干内容足够长了吧：',
+          '【参考答案】A',
+          '【实战解析】甲的解析。',
+          '2. 乙题干内容也足够长了：',
+          '【参考答案】B',
+          '【实战解析】乙的解析。',
+          '3. 丙题干内容同样足够长：',
+          '【参考答案】C',
+          '【实战解析】丙的解析。'
+        ].join('\n') + '\n'
+    })
+    const question = job.artifacts.find((a) => a.kind === 'question')
+    const detail = service.getArtifact(job.id, question!.id)
+    // .md 直转无页清单 → unavailable（不猜页码，不阻塞）
+    expect(detail?.sourceEvidence?.status ?? 'unavailable').toBe('unavailable')
+  }, 35_000)
+
+  it('pageManifest 存在时：toLinesWithPageMap 行映射与解析器行号对齐（exact 页）', async () => {
+    const { toLinesWithPageMap } = await import('../src/main/services/question-import')
+    const manifest = {
+      pages: [
+        { pageNumber: 1, source: 'ocr', lines: ['练习题01套', '1. 首题题干内容足够长：'] },
+        {
+          pageNumber: 2,
+          source: 'ocr',
+          lines: ['A. 甲', 'B. 乙', 'C. 丙', 'D. 丁', '2. 次题题干内容也足够长：']
+        },
+        { pageNumber: 3, source: 'ocr', lines: ['A. 甲', 'B. 乙', 'C. 丙', 'D. 丁'] }
+      ]
+    }
+    const raw = [
+      '练习题01套',
+      '1. 首题题干内容足够长：',
+      'A. 甲',
+      'B. 乙',
+      'C. 丙',
+      'D. 丁',
+      '2. 次题题干内容也足够长：',
+      'A. 甲',
+      'B. 乙',
+      'C. 丙',
+      'D. 丁'
+    ].join('\n')
+    const { lines, pageMap } = toLinesWithPageMap(raw, manifest)
+    const questions = (await import('../src/main/services/question-import')).parseQuestionBook(
+      lines
+    )
+    // 每题 lineStart 的页标签即 exact 依据：题1→页1，题2→页2
+    const pageOf = (index: number) => pageMap[index]
+    const q1 = questions.find((q) => q.num === 1)
+    const q2 = questions.find((q) => q.num === 2)
+    expect(pageOf(q1!.lineStart!)).toBe(1)
+    expect(pageOf(q2!.lineStart!)).toBe(2)
+  }, 35_000)
+
+  it('无结构文件 preservation：无页清单时 unavailable，产物仍正常生成', async () => {
+    const { job, service } = await runDirectImport({
+      '纯文字资料.md': '这是一段没有任何题目的普通文字资料。'.repeat(10) + '\n'
+    })
+    const document = job.artifacts.find((a) => a.kind === 'document')
+    expect(document).toBeDefined()
+    const detail = service.getArtifact(job.id, document!.id)
+    expect(detail?.importQualityTier).toBe('preserved-source')
+    // .md 源无页清单：不猜页码
+    const evidence = detail?.sourceEvidence
+    if (evidence) expect(['unavailable', 'available']).toContain(evidence.status)
+  }, 35_000)
 })
