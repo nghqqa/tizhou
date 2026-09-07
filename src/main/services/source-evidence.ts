@@ -242,3 +242,35 @@ export function traceCoverageMessage(coverage: TraceCoverage): string {
     `（exact 页 ${coverage.exactPages} · estimated 页 ${coverage.estimatedPages} · 已存证据页 ${coverage.evidencePagesPersisted}）`
   )
 }
+
+/** 证据状态 finalize：渲染完成后按 evidenceAssetId 覆盖情况统一回填。
+ *  规则：全部引用页有 assetId → available；部分有 → partial（写原因）；
+ *  全无 → unavailable。页码映射（exact/estimated）不受影响——它只表示页码来源。
+ *  无引用页的（本就 unavailable）保持不变。 */
+export function finalizeSourceEvidenceStatus(evidence: SourceEvidence): void {
+  if (evidence.references.length === 0) {
+    evidence.status = 'unavailable'
+    delete evidence.partialReason
+    return
+  }
+  let withAsset = 0
+  let totalPages = 0
+  for (const reference of evidence.references)
+    for (const page of reference.pages) {
+      totalPages += 1
+      if (page.evidenceAssetId) withAsset += 1
+    }
+  if (totalPages === 0) {
+    evidence.status = 'unavailable'
+    delete evidence.partialReason
+  } else if (withAsset === totalPages) {
+    evidence.status = 'available'
+    delete evidence.partialReason
+  } else if (withAsset > 0) {
+    evidence.status = 'partial'
+    evidence.partialReason = `证据图片部分可用（${withAsset}/${totalPages} 页已渲染，其余页渲染失败或不支持的来源）`
+  } else {
+    evidence.status = 'unavailable'
+    evidence.partialReason = `证据图片不可用（0/${totalPages} 页渲染成功——来源不可渲染或超出任务容量上限 ${EVIDENCE_PAGE_LIMIT}）`
+  }
+}

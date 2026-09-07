@@ -3,6 +3,12 @@ import {
   Badge,
   Button,
   Checkbox,
+  Dialog,
+  DialogActions,
+  DialogBody,
+  DialogContent,
+  DialogSurface,
+  DialogTitle,
   Field,
   Input,
   ProgressBar,
@@ -12,7 +18,10 @@ import {
 } from '@fluentui/react-components'
 import {
   ArrowClockwiseIcon,
+  MagnifyingGlassPlusIcon,
+  MagnifyingGlassMinusIcon,
   CheckCircleIcon,
+  EyeIcon,
   FileMdIcon,
   FolderOpenIcon,
   PlayIcon,
@@ -166,6 +175,23 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
   const [busy, setBusy] = useState('')
   // 能力边界产物的人工确认：勾选「我已查看原始页面并确认内容正确」后解除发布限制
   const [humanConfirmed, setHumanConfirmed] = useState(false)
+  // 来源页预览：证据图片经受控 IPC 获取（dataUrl），不接触本地路径
+  const [preview, setPreview] = useState<
+    | {
+        jobId: string
+        entries: Array<{
+          label: string
+          pageNumber: number
+          mapping: 'exact' | 'estimated'
+          evidenceAssetId?: string
+        }>
+        index: number
+      }
+    | undefined
+  >()
+  const [previewImage, setPreviewImage] = useState('')
+  const [previewError, setPreviewError] = useState('')
+  const [previewZoom, setPreviewZoom] = useState(1)
   const [filterStatus, setFilterStatus] = useState<
     'all' | 'pending' | 'approved' | 'rejected' | 'warnings'
   >('all')
@@ -431,6 +457,60 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
     } finally {
       setBusy('')
     }
+  }
+
+  // 预览当前页：经 IPC 取 dataUrl；缺 assetId/IPC 失败显示明确错误（不空白）
+  useEffect(() => {
+    if (!preview) return
+    const entry = preview.entries[preview.index]
+    setPreviewImage('')
+    setPreviewError('')
+    setPreviewZoom(1)
+    if (!entry) return
+    if (!entry.evidenceAssetId) {
+      setPreviewError('证据图片不可用（该页未渲染预览，可对照原 PDF 核对）')
+      return
+    }
+    let cancelled = false
+    void invoke<string>({
+      method: 'knowledgeBuilder.evidence.get',
+      params: { jobId: preview.jobId, assetId: entry.evidenceAssetId }
+    })
+      .then((dataUrl) => {
+        if (!cancelled) {
+          if (dataUrl && dataUrl.startsWith('data:image/')) setPreviewImage(dataUrl)
+          else setPreviewError('证据图片数据为空，请重新导入生成证据')
+        }
+      })
+      .catch((cause) => {
+        if (!cancelled) setPreviewError(cause instanceof Error ? cause.message : '证据图片读取失败')
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [preview])
+
+  function openSourcePreview(evidence: KnowledgeArtifactSummary['sourceEvidence']): void {
+    if (!job || !evidence || evidence.status === 'unavailable') return
+    const entries = evidence.references.flatMap((reference) =>
+      reference.pages.map((page) => ({
+        label:
+          reference.role === 'material'
+            ? '材料'
+            : reference.role === 'solution'
+              ? '解析'
+              : reference.role === 'preserved-page'
+                ? '保留页'
+                : '题本',
+        pageNumber: page.pageNumber,
+        mapping: page.mapping,
+        evidenceAssetId: page.evidenceAssetId
+      }))
+    )
+    if (entries.length === 0) return
+    // 资料分析优先展示材料页（材料 role 排前）
+    entries.sort((a, b) => (a.label === '材料' ? -1 : b.label === '材料' ? 1 : 0))
+    setPreview({ jobId: job.id, entries, index: 0 })
   }
 
   async function openArtifact(id: string): Promise<void> {
@@ -922,6 +1002,7 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
             </Field>
           )}
           <Checkbox
+            data-testid="rights-confirm"
             checked={rightsConfirmed}
             onChange={(_, data) => setRightsConfirmed(data.checked === true)}
             label="我确认有权处理所选资料，并会在发布前逐项核对答案、事实与来源"
@@ -1161,6 +1242,22 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
                       {sourceEvidenceLabel(item.sourceEvidence) && (
                         <small title="来源页证据：仅供对照原页核对（推测页码已标注），不是准确率验证">
                           {sourceEvidenceLabel(item.sourceEvidence)}
+                          {item.sourceEvidence?.status !== 'unavailable' &&
+                            item.sourceEvidence?.references.some((r) =>
+                              r.pages.some((p) => p.evidenceAssetId)
+                            ) && (
+                              <Button
+                                size="small"
+                                appearance="subtle"
+                                icon={<EyeIcon />}
+                                data-testid="source-preview-button"
+                                title="查看原页预览（仅供对照核对）"
+                                onClick={(event) => {
+                                  event.stopPropagation()
+                                  openSourcePreview(item.sourceEvidence)
+                                }}
+                              />
+                            )}
                         </small>
                       )}
                       {item.warnings.length > 0 && (
@@ -1311,6 +1408,94 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
           )}
         </Section>
       )}
+
+      {/* 来源页预览弹窗：证据图经受控 IPC 获取；翻页/缩放/关闭；错误态不空白 */}
+      <Dialog
+        open={Boolean(preview)}
+        onOpenChange={(_, data) => {
+          if (!data.open) setPreview(undefined)
+        }}
+      >
+        <DialogSurface style={{ maxWidth: 860 }}>
+          <DialogBody>
+            <DialogTitle>
+              来源页预览（仅供对照原页核对，不是准确率验证）
+              {preview && preview.entries[preview.index] && (
+                <span data-testid="source-preview-page">
+                  {` · ${preview.entries[preview.index]!.label} 第${preview.entries[preview.index]!.pageNumber}页${
+                    preview.entries[preview.index]!.mapping === 'estimated' ? '（页码为推测）' : ''
+                  }`}
+                </span>
+              )}
+            </DialogTitle>
+            <DialogContent>
+              {previewError ? (
+                <div
+                  data-testid="source-preview-error"
+                  style={{ padding: '24px 8px', color: 'var(--tz-ink-3)' }}
+                >
+                  {previewError}
+                </div>
+              ) : previewImage ? (
+                <div style={{ textAlign: 'center', overflow: 'auto', maxHeight: '60vh' }}>
+                  <img
+                    data-testid="source-preview-image"
+                    src={previewImage}
+                    alt="来源页证据预览"
+                    style={{
+                      transform: `scale(${previewZoom})`,
+                      transformOrigin: 'top center',
+                      maxWidth: '100%',
+                      transition: 'transform 0.15s ease'
+                    }}
+                  />
+                </div>
+              ) : (
+                <Spinner label="正在读取证据图片…" />
+              )}
+            </DialogContent>
+            <DialogActions>
+              <Button
+                disabled={!preview || preview.index <= 0}
+                onClick={() =>
+                  preview && setPreview({ ...preview, index: Math.max(0, preview.index - 1) })
+                }
+              >
+                上一页
+              </Button>
+              <Button
+                disabled={!preview || preview.index >= preview.entries.length - 1}
+                onClick={() =>
+                  preview &&
+                  setPreview({
+                    ...preview,
+                    index: Math.min(preview.entries.length - 1, preview.index + 1)
+                  })
+                }
+              >
+                下一页
+              </Button>
+              <Button
+                icon={<MagnifyingGlassPlusIcon />}
+                disabled={previewZoom >= 3}
+                onClick={() => setPreviewZoom((zoom) => Math.min(3, zoom + 0.25))}
+              >
+                放大
+              </Button>
+              <Button
+                icon={<MagnifyingGlassMinusIcon />}
+                disabled={previewZoom <= 0.5}
+                onClick={() => setPreviewZoom((zoom) => Math.max(0.5, zoom - 0.25))}
+              >
+                缩小
+              </Button>
+              <Button appearance="primary" onClick={() => setPreview(undefined)}>
+                关闭
+              </Button>
+            </DialogActions>
+          </DialogBody>
+        </DialogSurface>
+      </Dialog>
     </div>
   )
 }

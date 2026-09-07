@@ -193,3 +193,54 @@ describe('证据资产与指标', () => {
     expect(coverage.unavailable).toBe(2)
   })
 })
+
+describe('finalizeSourceEvidenceStatus（资产可用性与页码来源分离）', () => {
+  const base = (assetIds: Array<string | undefined>) => ({
+    status: 'available' as const,
+    references: [
+      {
+        role: 'question' as const,
+        sourceId: 's',
+        relativePath: 'a.pdf',
+        pages: assetIds.map((evidenceAssetId, index) => ({
+          pageNumber: index + 1,
+          mapping: 'exact' as const,
+          ...(evidenceAssetId ? { evidenceAssetId } : {})
+        }))
+      }
+    ]
+  })
+
+  it('全部页有 assetId → available', async () => {
+    const { finalizeSourceEvidenceStatus } = await import('../src/main/services/source-evidence')
+    const evidence = base(['ev-1', 'ev-2'])
+    finalizeSourceEvidenceStatus(evidence)
+    expect(evidence.status).toBe('available')
+    expect(evidence.partialReason).toBeUndefined()
+  })
+
+  it('部分页有 assetId → partial 并写原因', async () => {
+    const { finalizeSourceEvidenceStatus } = await import('../src/main/services/source-evidence')
+    const evidence = base(['ev-1', undefined, 'ev-3'])
+    finalizeSourceEvidenceStatus(evidence)
+    expect(evidence.status).toBe('partial')
+    expect(evidence.partialReason).toContain('2/3')
+  })
+
+  it('全部无 assetId → unavailable 并写原因（页码映射保留）', async () => {
+    const { finalizeSourceEvidenceStatus } = await import('../src/main/services/source-evidence')
+    const evidence = base([undefined, undefined])
+    finalizeSourceEvidenceStatus(evidence)
+    expect(evidence.status).toBe('unavailable')
+    expect(evidence.partialReason).toContain('0/2')
+    // 页码映射不受证据资产可用性影响
+    expect(evidence.references[0]!.pages[0]!.mapping).toBe('exact')
+  })
+
+  it('无引用页 → unavailable', async () => {
+    const { finalizeSourceEvidenceStatus } = await import('../src/main/services/source-evidence')
+    const evidence = { status: 'available' as const, references: [] }
+    finalizeSourceEvidenceStatus(evidence)
+    expect(evidence.status).toBe('unavailable')
+  })
+})

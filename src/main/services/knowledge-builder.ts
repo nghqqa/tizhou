@@ -60,6 +60,7 @@ import {
   EVIDENCE_PAGE_LIMIT,
   collectEvidencePageKeys,
   evidenceAssetId,
+  finalizeSourceEvidenceStatus,
   manifestFromRegions,
   computeTraceCoverage,
   parsePageManifest,
@@ -2497,20 +2498,47 @@ export class KnowledgeBuilderService {
     return summary
   }
 
-  /** 读取证据资产 dataUrl：只允许任务 evidence/index.json 登记的相对路径（拒绝逃逸） */
+  /** 证据资产大小上限（JPEG 页面预览 ≤ 2MB，防异常大文件） */
+  private static readonly EVIDENCE_ASSET_MAX_BYTES = 2 * 1024 * 1024
+
+  /** 读取证据资产 dataUrl：只允许 evidence/index.json 登记的相对路径。
+   *  安全链：assetId 格式 → index 损坏容错 → 相对路径 → 解析位于 evidence/ 目录 →
+   *  lstat 拒符号链接/目录/特殊文件 → realpath 再校验边界 → 大小上限。 */
   readEvidenceAsset(jobId: string, assetId: string): string {
     if (!/^ev-[0-9a-f]{20}$/.test(assetId)) throw new Error('证据资产 ID 无效')
     const job = this.loadJob(jobId)
-    const indexPath = join(job.outputPath, 'evidence', 'index.json')
-    const index = JSON.parse(readFileSync(indexPath, 'utf8')) as Record<string, string>
+    const evidenceDir = join(job.outputPath, 'evidence')
+    const indexPath = join(evidenceDir, 'index.json')
+    let index: Record<string, string>
+    try {
+      index = JSON.parse(readFileSync(indexPath, 'utf8')) as Record<string, string>
+    } catch {
+      throw new Error('证据资产索引不存在或已损坏，请重新导入生成证据')
+    }
     const registered = index[assetId]
     if (!registered || typeof registered !== 'string') throw new Error('证据资产不存在')
     if (registered.includes('..') || isAbsolute(registered)) throw new Error('证据路径非法')
-    const file = resolve(job.outputPath, registered)
-    if (!existsSync(file) || !statSync(file).isFile()) throw new Error('证据文件不存在')
-    const rel = relative(job.outputPath, file)
-    if (rel.startsWith('..') || isAbsolute(rel)) throw new Error('证据路径超出任务目录')
-    return `data:image/jpeg;base64,${readFileSync(file).toString('base64')}`
+    const file = resolve(evidenceDir, registered)
+    const rel = relative(evidenceDir, file)
+    if (rel === '' || rel.startsWith('..') || isAbsolute(rel))
+      throw new Error('证据路径超出证据目录')
+    // lstat 不跟随链接：符号链接/junction 直接拒绝
+    let stats
+    try {
+      stats = lstatSync(file)
+    } catch {
+      throw new Error('证据文件不存在')
+    }
+    if (stats.isSymbolicLink()) throw new Error('证据路径非法（符号链接）')
+    if (!stats.isFile()) throw new Error('证据目标不是普通文件')
+    if (stats.size > KnowledgeBuilderService.EVIDENCE_ASSET_MAX_BYTES)
+      throw new Error('证据文件超出大小上限')
+    // realpath 再校验一次（防 junction 等解析后逃逸）
+    const real = realpathSync(file)
+    const realRel = relative(realpathSync(evidenceDir), real)
+    if (realRel === '' || realRel.startsWith('..') || isAbsolute(realRel))
+      throw new Error('证据路径逃逸（realpath 校验失败）')
+    return `data:image/jpeg;base64,${readFileSync(real).toString('base64')}`
   }
 
   /** 渲染证据页并回填 evidenceAssetId：按 sourceId+pageNumber 在 job 内去重，
@@ -2518,7 +2546,15 @@ export class KnowledgeBuilderService {
    *  输出 evidence/{源短哈希}/evidence-p{N}.jpg + index.json 资产表（渲染层经 IPC 取图）。 */
   private async renderJobEvidence(job: StoredJob, artifacts: StoredArtifact[]): Promise<number> {
     const pageKeys = collectEvidencePageKeys(artifacts)
-    if (pageKeys.size === 0 || pageKeys.size > EVIDENCE_PAGE_LIMIT) return 0
+    if (pageKeys.size === 0 || pageKeys.size > EVIDENCE_PAGE_LIMIT) {
+      // 超限：不渲染任何图；引用页映射保留，状态统一 finalize（partial/unavailable）
+      for (const artifact of artifacts) {
+        if (!artifact.sourceEvidence) continue
+        finalizeSourceEvidenceStatus(artifact.sourceEvidence)
+        this.saveArtifact(job, artifact)
+      }
+      return 0
+    }
     const bySource = new Map<string, Set<number>>()
     for (const key of pageKeys) {
       const [sourceId, pagePart] = key.split('#p')
@@ -2561,26 +2597,17 @@ export class KnowledgeBuilderService {
         // 渲染失败（非 PDF 源/引擎不可用）：该文件证据缺图，页映射保留、预览不可用
       }
     }
-    if (assetIndex.size === 0) return 0
-    writeFileSync(
-      join(evidenceDir, 'index.json'),
-      JSON.stringify(Object.fromEntries([...assetIndex.entries()].sort()), null, 1),
-      'utf8'
-    )
-    // 回填 evidenceAssetId（页映射保留，无图页不填）
+    if (assetIndex.size > 0)
+      writeFileSync(
+        join(evidenceDir, 'index.json'),
+        JSON.stringify(Object.fromEntries([...assetIndex.entries()].sort()), null, 1),
+        'utf8'
+      )
+    // 回填 evidenceAssetId 后统一按资产实际情况 finalize 状态（页映射保留不受影响）
     for (const artifact of artifacts) {
-      const evidence = artifact.sourceEvidence
-      if (!evidence || evidence.status === 'unavailable') continue
-      let updated = false
-      for (const reference of evidence.references)
-        for (const page of reference.pages) {
-          const assetId = evidenceAssetId(reference.sourceId, page.pageNumber)
-          if (assetIndex.has(assetId)) {
-            page.evidenceAssetId = assetId
-            updated = true
-          }
-        }
-      if (updated) this.saveArtifact(job, artifact)
+      if (!artifact.sourceEvidence) continue
+      finalizeSourceEvidenceStatus(artifact.sourceEvidence)
+      this.saveArtifact(job, artifact)
     }
     return assetIndex.size
   }
