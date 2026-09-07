@@ -2547,9 +2547,11 @@ export class KnowledgeBuilderService {
   private async renderJobEvidence(job: StoredJob, artifacts: StoredArtifact[]): Promise<number> {
     const pageKeys = collectEvidencePageKeys(artifacts)
     if (pageKeys.size === 0 || pageKeys.size > EVIDENCE_PAGE_LIMIT) {
-      // 超限：不渲染任何图；引用页映射保留，状态统一 finalize（partial/unavailable）
+      // 超限：不渲染任何图；清除全部陈旧 assetId 后 finalize（不得显示 available）
       for (const artifact of artifacts) {
         if (!artifact.sourceEvidence) continue
+        for (const reference of artifact.sourceEvidence.references)
+          for (const page of reference.pages) delete page.evidenceAssetId
         finalizeSourceEvidenceStatus(artifact.sourceEvidence)
         this.saveArtifact(job, artifact)
       }
@@ -2603,10 +2605,18 @@ export class KnowledgeBuilderService {
         JSON.stringify(Object.fromEntries([...assetIndex.entries()].sort()), null, 1),
         'utf8'
       )
-    // 回填 evidenceAssetId 后统一按资产实际情况 finalize 状态（页映射保留不受影响）
+    // 回填 assetId：命中写入、未命中清除陈旧引用（防上一批残留 assetId 指向已删图片），
+    // 页码与 exact/estimated 映射不动——只更新资产可用性，随后统一 finalize
     for (const artifact of artifacts) {
-      if (!artifact.sourceEvidence) continue
-      finalizeSourceEvidenceStatus(artifact.sourceEvidence)
+      const evidence = artifact.sourceEvidence
+      if (!evidence) continue
+      for (const reference of evidence.references)
+        for (const page of reference.pages) {
+          const assetId = evidenceAssetId(reference.sourceId, page.pageNumber)
+          if (assetIndex.has(assetId)) page.evidenceAssetId = assetId
+          else delete page.evidenceAssetId
+        }
+      finalizeSourceEvidenceStatus(evidence)
       this.saveArtifact(job, artifact)
     }
     return assetIndex.size

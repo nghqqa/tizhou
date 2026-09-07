@@ -1206,11 +1206,18 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
                   </div>
                 )}
                 {paginatedArtifacts.map((item) => (
-                  <button
-                    type="button"
+                  <div
+                    role="button"
+                    tabIndex={0}
                     key={item.id}
                     className={`builder-artifact ${artifact?.id === item.id ? 'active' : ''}`}
                     onClick={() => void openArtifact(item.id)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault()
+                        void openArtifact(item.id)
+                      }
+                    }}
                   >
                     <span>
                       <Badge appearance={statusAppearance(item.status)}>
@@ -1268,7 +1275,7 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
                     </span>
                     <strong>{item.title}</strong>
                     <p>{item.preview}</p>
-                  </button>
+                  </div>
                 ))}
                 {totalPages > 1 && (
                   <div className="builder-pagination">

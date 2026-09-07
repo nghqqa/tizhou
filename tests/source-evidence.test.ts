@@ -244,3 +244,89 @@ describe('finalizeSourceEvidenceStatus（资产可用性与页码来源分离）
     expect(evidence.status).toBe('unavailable')
   })
 })
+
+describe('assetId 回填语义（渲染后写回/清除陈旧/映射不变）', () => {
+  const makeEvidence = () =>
+    buildSourceEvidence({
+      references: [
+        {
+          role: 'question',
+          sourceId: 's1',
+          relativePath: '题本.pdf',
+          lineStart: 0,
+          linePageMap: [1]
+        },
+        {
+          role: 'solution',
+          sourceId: 's2',
+          relativePath: '解析.pdf',
+          lineStart: 0,
+          linePageMap: [1]
+        }
+      ]
+    })
+
+  it('assetIndex 全部命中 → available（回填后重新加载仍存在）', async () => {
+    const { finalizeSourceEvidenceStatus } = await import('../src/main/services/source-evidence')
+    const evidence = makeEvidence()
+    const a1 = evidenceAssetId('s1', 1)
+    const a2 = evidenceAssetId('s2', 1)
+    for (const reference of evidence.references)
+      for (const page of reference.pages) {
+        const id = evidenceAssetId(reference.sourceId, page.pageNumber)
+        if (id === a1 || id === a2) page.evidenceAssetId = id
+      }
+    finalizeSourceEvidenceStatus(evidence)
+    expect(evidence.status).toBe('available')
+    // 回填后 assetId 仍在（模拟落盘往返后读取）
+    expect(evidence.references[0]!.pages[0]!.evidenceAssetId).toBe(a1)
+    expect(evidence.references[1]!.pages[0]!.evidenceAssetId).toBe(a2)
+  })
+
+  it('部分命中 → partial；未命中页的陈旧 assetId 被清除', async () => {
+    const { finalizeSourceEvidenceStatus } = await import('../src/main/services/source-evidence')
+    const evidence = makeEvidence()
+    // 先全部写入（模拟上一批残留）
+    for (const reference of evidence.references)
+      for (const page of reference.pages)
+        page.evidenceAssetId = evidenceAssetId(reference.sourceId, page.pageNumber)
+    // 本次渲染只有 s1 成功：s2 清除
+    for (const reference of evidence.references)
+      for (const page of reference.pages) {
+        const id = evidenceAssetId(reference.sourceId, page.pageNumber)
+        if (reference.sourceId === 's2') delete page.evidenceAssetId
+        else page.evidenceAssetId = id
+      }
+    finalizeSourceEvidenceStatus(evidence)
+    expect(evidence.status).toBe('partial')
+    expect(evidence.references[1]!.pages[0]!.evidenceAssetId).toBeUndefined()
+  })
+
+  it('全部未命中 → unavailable；页码与 mapping 字段不被改写', async () => {
+    const { finalizeSourceEvidenceStatus } = await import('../src/main/services/source-evidence')
+    const evidence = makeEvidence()
+    for (const reference of evidence.references)
+      for (const page of reference.pages) delete page.evidenceAssetId
+    finalizeSourceEvidenceStatus(evidence)
+    expect(evidence.status).toBe('unavailable')
+    // 页码映射保留
+    expect(evidence.references[0]!.pages[0]!.pageNumber).toBe(1)
+    expect(evidence.references[0]!.pages[0]!.mapping).toBe('exact')
+    expect(evidence.references[1]!.pages[0]!.mapping).toBe('exact')
+  })
+
+  it('status（资产可用性）与 mapping（页码来源）独立：estimated 页有图也可 available', async () => {
+    const { finalizeSourceEvidenceStatus } = await import('../src/main/services/source-evidence')
+    const evidence = buildSourceEvidence({
+      references: [
+        { role: 'question', sourceId: 's', relativePath: 'a', lineStart: 0, linePageMap: [3] }
+      ]
+    })
+    // 手动改为 estimated（管线外模拟）
+    evidence.references[0]!.pages[0]!.mapping = 'estimated'
+    evidence.references[0]!.pages[0]!.evidenceAssetId = evidenceAssetId('s', 3)
+    finalizeSourceEvidenceStatus(evidence)
+    expect(evidence.status).toBe('available')
+    expect(evidence.references[0]!.pages[0]!.mapping).toBe('estimated')
+  })
+})

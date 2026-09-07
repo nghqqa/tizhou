@@ -2087,3 +2087,8 @@ a {
   max-width: none;
   max-height: min(52vh, 640px);
 }
+/* 条目容器由 button 改为 div[role=button]（消除按钮嵌套），补焦点可见性 */
+.builder-artifact:focus-visible {
+  outline: 2px solid var(--tz-vermillion);
+  outline-offset: -2px;
+}

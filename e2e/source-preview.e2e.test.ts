@@ -1,4 +1,6 @@
-// UI E2E：来源页预览（动态生成双页文字层 PDF → 导入 → 审核页 → 来源入口 → 预览）
+// UI E2E（模拟证据·组件行为验证）：验证预览 Dialog 组件行为（IPC 取图/翻页/缩放/错误态）。
+// 注意：证据资产由测试注入（模拟渲染完成状态），非正式 renderJobEvidence 产物——
+// 真实 PDF 正式管线验证见 source-pdf-pipeline.e2e.test.ts。
 // 不使用真实用户 PDF、不依赖外部网络与已安装 OCR 模型（文字层 PDF 走 markitdown 直转管线；
 // 证据图片由测试内直接写入 job evidence/ 目录模拟渲染完成状态）。
 import { afterAll, beforeAll, describe, expect, it, onTestFailed } from 'vitest'
@@ -20,7 +22,7 @@ async function dump(name: string, page: Page | undefined): Promise<void> {
   }
 }
 
-describe('来源页预览 UI E2E（动态 PDF）', () => {
+describe('来源页预览 UI E2E（模拟证据·组件行为）', () => {
   beforeAll(async () => {
     // 动态生成夹具（.md 直转与 PDF 文字层管线一致；证据图片由测试注入模拟渲染完成）
     const fixtureDir = join('C:/Users/ngh/AppData/Local/Temp', 'tizhou-e2e-preview-src')

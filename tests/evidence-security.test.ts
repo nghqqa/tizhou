@@ -178,28 +178,45 @@ describe('readEvidenceAsset 真实 job 目录（通过完整任务构造）', ()
     writeFileSync(join(evidenceDir, 'index.json'), '{broken', 'utf8')
     expect(() => svc.readEvidenceAsset(job.id, assetId)).toThrow(/索引不存在或已损坏/)
 
-    // 符号链接证据被拒（Windows junction 也会被 lstat 捕获）
+    // 符号链接证据被拒：创建与断言分离——创建失败仅在权限限制时跳过，
+    // 创建成功后断言必须在 try/catch 外执行（不得吞掉安全断言失败）
     writeFileSync(
       join(evidenceDir, 'index.json'),
       JSON.stringify({ [assetId]: 'd1/link.jpg' }),
       'utf8'
     )
+    let symlinkCreated = false
     try {
       symlinkSync(
         join(evidenceDir, 'd1', 'evidence-p1.jpg'),
         join(evidenceDir, 'd1', 'link.jpg'),
         'file'
       )
-      expect(() => svc.readEvidenceAsset(job.id, assetId)).toThrow(/符号链接/)
+      symlinkCreated = true
     } catch (error) {
-      // 无符号链接权限的环境跳过（Windows 开发者模式限制）
-      if (!(error instanceof Error && error.message.includes('符号链接'))) {
-        console.error(
-          '[evsec] symlink 环境不可用，跳过该项：',
-          (error as Error).message.slice(0, 80)
-        )
-      }
+      const message = error instanceof Error ? error.message : ''
+      // 仅在明确的权限/平台限制时跳过（Windows 非开发者模式无 symlink 权限）
+      if (!/权限|privilege|EPERM|EACCES/i.test(message)) throw error
+      console.error('[evsec] symlink 创建受权限限制，跳过该项')
     }
+    if (symlinkCreated) {
+      // 安全断言：必须失败测试不得被吞
+      expect(() => svc.readEvidenceAsset(job.id, assetId)).toThrow(/符号链接/)
+    }
+
+    // 目录目标被拒（目录不是普通文件）
+    mkdirSync(join(evidenceDir, 'd1', 'adir'), { recursive: true })
+    writeFileSync(join(evidenceDir, 'index.json'), JSON.stringify({ [assetId]: 'd1/adir' }), 'utf8')
+    expect(() => svc.readEvidenceAsset(job.id, assetId)).toThrow(/不是普通文件/)
+
+    // 超大文件被拒（> 2MB）
+    writeFileSync(join(evidenceDir, 'd1', 'big.jpg'), Buffer.alloc(3 * 1024 * 1024))
+    writeFileSync(
+      join(evidenceDir, 'index.json'),
+      JSON.stringify({ [assetId]: 'd1/big.jpg' }),
+      'utf8'
+    )
+    expect(() => svc.readEvidenceAsset(job.id, assetId)).toThrow(/大小上限/)
 
     // 缓存清理后证据仍可读：清空 conversion-cache 不影响 job evidence
     writeFileSync(
