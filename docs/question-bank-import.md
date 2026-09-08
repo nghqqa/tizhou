@@ -27,6 +27,16 @@
 # OpenExam sqlite 种子库 → 知识库 md(含题图 assets 拷贝)
 node tools/direct-import.mjs build openexam <seed.db> <输出目录> <题图目录>
 
+# OpenExam 整卷 JSON 目录(每卷一份 *-paper_.json) → 知识库 md。
+# JSON 不含资料分析的材料文本：给 --material-db 指向 OpenExam 种子库(data/openexam.seed.db.gz 解压)按题 id 接回材料，
+# --assets-dir 提供种子库 data/question-assets 解出的图片；两者缺省时资料题自动跳过
+node tools/direct-import.mjs build openexam-json <jsonDir> <输出目录> [主库目录] [--material-db <seed.db>] [--assets-dir <图片目录>] [--backfill-papers]
+
+# 考公题库快照(kaogong-bank sqlite) → 知识库 md。默认只转行测真题，--all 加模考题海；
+# 附时政/申论真题/申论素材。给主库目录时做三级跨库去重(严格签名→宽松签名→资料分析题干包含)，
+# --backfill-papers 把命中题的快照真题卷归属回填主库原题的 papers
+node tools/direct-import.mjs build kaogong <db> <输出目录> <题图目录> [主库目录] [--all] [--backfill-papers]
+
 # OCR 后的题本+解析目录 → 知识库 md(套号题号配对)
 node tools/direct-import.mjs build pianduan600 <OCR目录> <输出目录>
 

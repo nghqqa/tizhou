@@ -12,7 +12,7 @@ import {
   rmSync,
   writeFileSync
 } from 'node:fs'
-import { join } from 'node:path'
+import { join, basename, dirname } from 'node:path'
 import { argv, exit } from 'node:process'
 import { createHash } from 'node:crypto'
 import { DatabaseSync } from 'node:sqlite'
@@ -510,6 +510,647 @@ function buildOpenExam(dbPath, outDir, assetsSourceDir) {
   }
 }
 
+// ---- kaogong 题库快照导入（kaogong-bank-YYYYMMDD/sqlite 快照 → 知识库 md）----
+
+// 宽松口径：只保留 Unicode 字母/数字（含中文），去空白与全部标点。
+// 注意 JS 的 \w 不含中文（[\s\W_] 会把整句汉字删光），必须用 \p{L}\p{N}。
+const stripPunct = (value) => String(value ?? '').replace(/[^\p{L}\p{N}]+/gu, '')
+
+// 宽松签名：去掉空白与全部标点（全/半角），抓“只差标点写法”的跨源重复
+function looseSignature(stem, material, firstOption) {
+  return stripPunct(stem) + stripPunct(material) + stripPunct(firstOption)
+}
+
+// 主库签名索引：官方签名(一级)、宽松签名(二级)、资料分析题干样本(三级包含匹配)。
+// 级别越高口径越松，用于“主库为准、快照只补增量”的跨库去重。
+function loadPrimaryIndex(primaryDir) {
+  const strict = new Map()
+  const loose = new Map()
+  const ziliaoStems = new Map()
+  for (const name of readdirSync(primaryDir).filter((item) => item.endsWith('.md'))) {
+    const data = matter(readFileSync(join(primaryDir, name), 'utf8')).data
+    const options = Array.isArray(data.options) ? data.options : []
+    strict.set(questionSignature(data.stem, options, data.material), name)
+    loose.set(looseSignature(data.stem, data.material, options[0]?.text), name)
+    if (String(data.category ?? '').startsWith('资料分析')) {
+      const stemKey = stripPunct(data.stem)
+      if (stemKey.length >= 20) ziliaoStems.set(stemKey, name) // 过短题干是模板句，包含匹配会误杀异库题
+    }
+  }
+  return { strict, loose, ziliaoStems }
+}
+
+// 把快照卷库的真题归属并入主库原题的 papers（只追加，不改动其他内容）
+function backfillPapersTo(filePath, memberships) {
+  const raw = readFileSync(filePath, 'utf8')
+  const current = matter(raw).data.papers
+  if (!Array.isArray(current)) return 0
+  const key = (item) => `${item.paper}@${item.order}`
+  const have = new Set(current.map(key))
+  const additions = memberships.filter((item) => !have.has(key(item)))
+  if (additions.length === 0) return 0
+  const updated = raw.replace(
+    /^papers: .*$/m,
+    `papers: ${JSON.stringify([...current, ...additions])}`
+  )
+  if (updated === raw) return 0
+  writeFileSync(filePath, updated, 'utf8')
+  return additions.length
+}
+
+function kaogongOptions(raw) {
+  try {
+    const parsed = JSON.parse(raw ?? '{}')
+    return Object.keys(parsed)
+      .sort()
+      .map((key) => ({ key: key.toUpperCase(), text: String(parsed[key] ?? '').trim() }))
+      .filter((option) => option.text)
+  } catch {
+    return []
+  }
+}
+
+function kaogongExplanation(row) {
+  const parts = [
+    row.explanation && `【标准解析】\n${row.explanation}`,
+    row.hs_explanation && `【花生十三讲解】\n${row.hs_explanation}`,
+    row.xp_explanation && `【小P排除法】\n${row.xp_explanation}`
+  ].filter(Boolean)
+  return parts.join('\n\n') || '该题暂未提供解析。'
+}
+
+// 申论材料定位：快照把整套给定资料塞进每题的 material，而题干通常只引用“材料N”。
+// 按题干引用抽取对应段落；引用缺失/超范围/材料头前有前言时回退全文，宁多勿缺。
+function referencedMaterialOnly(material, question) {
+  const headerPattern = /^材料(\d+)\s*$/gm
+  const headers = [...material.matchAll(headerPattern)]
+  if (headers.length === 0 || !material.startsWith('材料')) return material
+  const refs = new Set()
+  for (const match of question.matchAll(/(?:给定)?资料(\d+)|材料(\d+)/g)) {
+    const num = Number(match[1] || match[2])
+    if (Number.isFinite(num)) refs.add(num)
+  }
+  if (refs.size === 0) return material
+  const numbers = headers.map((header) => Number(header[1]))
+  for (const ref of refs) if (!numbers.includes(ref)) return material
+  const segments = material.split(/^材料(\d+)\s*$/gm)
+  const blocks = new Map()
+  for (let i = 1; i < segments.length; i += 2)
+    blocks.set(Number(segments[i]), (segments[i + 1] ?? '').trim())
+  return [...refs]
+    .sort((a, b) => a - b)
+    .map((ref) => `材料${ref}\n\n${blocks.get(ref)}`)
+    .join('\n\n')
+}
+
+// 考公题库快照 → 知识库 md。默认只转行测真题（--all 加模考题海），附时政/申论真题/申论素材。
+// 给 primaryDir 时做三级跨库去重（主库为准）；--backfill-papers 把命中题的快照真题卷归属回填主库原题。
+function buildKaogong(dbPath, outDir, qimgDir, primaryDir) {
+  const includeAll = argv.includes('--all')
+  const backfillEnabled = argv.includes('--backfill-papers')
+  const primary = primaryDir ? loadPrimaryIndex(primaryDir) : null
+  const db = new DatabaseSync(dbPath, { readOnly: true })
+  const source = `本地资料/${basename(dirname(dbPath))}`
+
+  const tag3Names = new Map()
+  const taxonomyPath = join(dirname(dbPath), 'taxonomy.json')
+  if (existsSync(taxonomyPath)) {
+    const taxonomy = JSON.parse(readFileSync(taxonomyPath, 'utf8'))
+    for (const mod of taxonomy.modules ?? [])
+      for (const group of mod.groups ?? [])
+        for (const topic of group.topics ?? [])
+          if (topic.code) tag3Names.set(topic.code, [mod.name, group.name, topic.name].join('-'))
+  }
+
+  // 卷库：question_ids 顺序即卷面题序，只取真题卷供「真题原卷模考」重组
+  const papersByQuestion = new Map()
+  for (const paper of db.prepare('SELECT title, kind, question_ids FROM exam_papers').all()) {
+    if (paper.kind !== 'zhenti') continue
+    let ids = []
+    try {
+      ids = JSON.parse(paper.question_ids ?? '[]')
+    } catch {
+      ids = []
+    }
+    ids.forEach((qid, index) => {
+      const list = papersByQuestion.get(String(qid)) ?? []
+      list.push({ paper: paper.title, order: index + 1 })
+      papersByQuestion.set(String(qid), list)
+    })
+  }
+
+  mkdirSync(outDir, { recursive: true })
+  const stats = new Map()
+  const entry = (module) => {
+    const item = stats.get(module) ?? { imported: 0, skipped: 0 }
+    stats.set(module, item)
+    return item
+  }
+  const seen = new Map()
+  const assetSink = new Set()
+  const backfillLedger = []
+  const counters = {
+    primary: 0,
+    primaryStrict: 0,
+    primaryLoose: 0,
+    primaryZiliao: 0,
+    duplicate: 0,
+    incomplete: 0,
+    backfilledFiles: 0,
+    backfilledPapers: 0,
+    noPaperReal: 0
+  }
+  const pending = []
+
+  const select = db.prepare(
+    `SELECT id, module, submodule, tag3, question, options, answer, explanation, hs_explanation, xp_explanation, is_real, exam_year, exam_region, source, image FROM questions${includeAll ? '' : ' WHERE is_real=1'}`
+  )
+  for (const row of select.all()) {
+    const category = CATEGORIES[row.module]
+    if (!category) {
+      counters.incomplete += 1
+      continue
+    }
+    const stat = entry(row.module)
+    const options = kaogongOptions(row.options)
+    let stem = String(row.question ?? '').trim()
+    const image = String(row.image ?? '').trim()
+    if (image) {
+      const file = basename(image)
+      assetSink.add(file)
+      stem = `${stem}\n\n![](assets/${file})`
+    }
+    const answer = String(row.answer ?? '')
+      .toUpperCase()
+      .replace(/[^A-Z]/g, '')
+      .split('')
+    if (!stem || stem.length < 8 || options.length < 2 || answer.length === 0) {
+      counters.incomplete += 1
+      stat.skipped += 1
+      continue
+    }
+    const memberships = papersByQuestion.get(String(row.id)) ?? []
+    if (row.is_real === 1 && memberships.length === 0) counters.noPaperReal += 1
+
+    if (primary) {
+      const strictSig = questionSignature(stem, options, '')
+      const looseSig = looseSignature(stem, '', options[0]?.text)
+      let primaryFile = primary.strict.get(strictSig)
+      let tier = '严格'
+      if (!primaryFile) {
+        primaryFile = primary.loose.get(looseSig)
+        tier = '宽松'
+      }
+      if (!primaryFile && row.module === 'ziliao') {
+        const haystack = stripPunct(row.question)
+        for (const [needle, file] of primary.ziliaoStems) {
+          if (haystack.includes(needle)) {
+            primaryFile = file
+            tier = '资料包含'
+            break
+          }
+        }
+      }
+      if (primaryFile) {
+        counters.primary += 1
+        if (tier === '严格') counters.primaryStrict += 1
+        else if (tier === '宽松') counters.primaryLoose += 1
+        else counters.primaryZiliao += 1
+        stat.skipped += 1
+        if (backfillEnabled && memberships.length) {
+          const added = backfillPapersTo(join(primaryDir, primaryFile), memberships)
+          if (added > 0) {
+            counters.backfilledFiles += 1
+            counters.backfilledPapers += added
+            backfillLedger.push({
+              at: new Date().toISOString(),
+              file: primaryFile,
+              tier,
+              sourceQuestion: `kg-${row.id}`,
+              addedPapers: added,
+              papers: memberships
+            })
+          }
+        }
+        continue
+      }
+    }
+
+    const signature = questionSignature(stem, options, '')
+    const existing = seen.get(signature)
+    if (existing) {
+      for (const membership of memberships)
+        if (!existing.papers.some((item) => item.paper === membership.paper))
+          existing.papers.push(membership)
+      counters.duplicate += 1
+      stat.skipped += 1
+      continue
+    }
+    const tags = [tag3Names.get(row.tag3) ?? row.tag3 ?? '', row.submodule ?? '']
+      .map((value) => String(value).trim())
+      .filter(Boolean)
+    const question = {
+      id: `kg-${String(row.id).replace(/[^a-zA-Z0-9_-]/g, '-')}`,
+      subject: 'xingce',
+      category,
+      tags: [...new Set(tags)],
+      source,
+      sourceFile: String(row.source ?? '').trim() || 'kaogong-bank',
+      year: Number(row.exam_year) || undefined,
+      region: String(row.exam_region ?? '').trim() || undefined,
+      questionType: answer.length > 1 ? 'multiple' : 'single',
+      difficulty: 2,
+      stem,
+      options,
+      answer,
+      explanation: kaogongExplanation(row),
+      papers: memberships
+    }
+    seen.set(signature, question)
+    pending.push(question)
+    stat.imported += 1
+  }
+
+  // 时政单选题：题量小，整表直转
+  let shizhengCount = 0
+  for (const row of db
+    .prepare(
+      'SELECT id, date, question, options, answer, explanation, source_note FROM shizheng_questions'
+    )
+    .all()) {
+    const options = kaogongOptions(row.options)
+    const answer = String(row.answer ?? '')
+      .toUpperCase()
+      .replace(/[^A-Z]/g, '')
+      .split('')
+    if (!row.question || options.length < 2 || answer.length === 0) {
+      counters.incomplete += 1
+      continue
+    }
+    const question = {
+      id: `kg-sz-${String(row.id).replace(/[^a-zA-Z0-9_-]/g, '-')}`,
+      subject: 'xingce',
+      category: '常识判断-时政',
+      tags: ['时政', String(row.date ?? '').trim()].filter(Boolean),
+      source,
+      sourceFile: String(row.source_note ?? '').trim() || '时政题库',
+      year: Number(String(row.date ?? '').slice(0, 4)) || undefined,
+      questionType: answer.length > 1 ? 'multiple' : 'single',
+      difficulty: 2,
+      stem: String(row.question ?? '').trim(),
+      options,
+      answer,
+      explanation: String(row.explanation ?? '').trim() || '该题暂未提供解析。',
+      papers: []
+    }
+    pending.push(question)
+    shizhengCount += 1
+  }
+
+  // 申论真题：材料/题干/参考要点齐全，走 essay 题型进「申论作答」
+  let shenlunCount = 0
+  for (const row of db
+    .prepare(
+      'SELECT id, exam_year, exam_region, paper, qtype, material, question, reference, notes FROM shenlun_questions'
+    )
+    .all()) {
+    if (!row.question || !row.material) {
+      counters.incomplete += 1
+      continue
+    }
+    const explanation = [
+      row.reference && `【参考要点】\n${row.reference}`,
+      row.notes && `【要点说明】\n${row.notes}`
+    ]
+      .filter(Boolean)
+      .join('\n\n')
+    const question = {
+      id: `kg-sl-${String(row.id).replace(/[^a-zA-Z0-9_-]/g, '-')}`,
+      subject: 'shenlun',
+      category: `申论-${row.qtype || '综合'}`,
+      tags: ['申论', row.qtype, row.paper].filter(Boolean),
+      source,
+      sourceFile:
+        String(row.paper ?? '').trim() ||
+        [row.exam_year, row.exam_region].filter(Boolean).join('') ||
+        '申论真题',
+      year: Number(row.exam_year) || undefined,
+      region: String(row.exam_region ?? '').trim() || undefined,
+      questionType: 'essay',
+      difficulty: 2,
+      material: referencedMaterialOnly(
+        String(row.material ?? '').trim(),
+        String(row.question ?? '')
+      ),
+      stem: String(row.question ?? '').trim(),
+      options: [],
+      answer: [],
+      explanation: explanation || '暂无参考要点；可在「申论作答」页配合 AI 批改练习。',
+      papers: []
+    }
+    pending.push(question)
+    shenlunCount += 1
+  }
+
+  for (const question of pending)
+    writeFileSync(join(outDir, `${question.id}.md`), questionMarkdown(question), 'utf8')
+
+  // 申论素材 → 知识文档（非题目）
+  const titleSeen = new Map()
+  let materialDocs = 0
+  for (const row of db.prepare('SELECT id, type, topic, content FROM shenlun_materials').all()) {
+    const content = String(row.content ?? '').trim()
+    if (content.length < 50) {
+      counters.incomplete += 1
+      continue
+    }
+    const baseTitle = `${row.topic || row.type || '申论素材'}`
+    const occurrence = (titleSeen.get(baseTitle) ?? 0) + 1
+    titleSeen.set(baseTitle, occurrence)
+    const title = occurrence > 1 ? `${baseTitle}（${occurrence}）` : baseTitle
+    const id = `kg-sc-${String(row.id).replace(/[^a-zA-Z0-9_-]/g, '-')}`
+    const doc = [
+      '---',
+      `id: ${yamlQuote(id)}`,
+      'subject: "shenlun"',
+      'kind: "knowledge"',
+      `title: ${yamlQuote(title)}`,
+      `summary: ${yamlQuote(content.replace(/[#>*_`\[\]\n]/g, '').slice(0, 120))}`,
+      `tags: ${JSON.stringify(['申论素材', row.type, row.topic].filter(Boolean))}`,
+      `source: ${yamlQuote(source)}`,
+      'reviewStatus: "approved"',
+      'generatedBy: "direct-import"',
+      '---',
+      '',
+      `# ${title}`,
+      '',
+      content,
+      ''
+    ].join('\n')
+    writeFileSync(join(outDir, `${id}.md`), doc, 'utf8')
+    materialDocs += 1
+  }
+
+  let copiedAssets = 0
+  if (qimgDir && assetSink.size > 0) {
+    const assetDir = join(outDir, 'assets')
+    mkdirSync(assetDir, { recursive: true })
+    for (const file of assetSink) {
+      const img = join(qimgDir, file)
+      if (existsSync(img)) {
+        copyFileSync(img, join(assetDir, file))
+        copiedAssets += 1
+      }
+    }
+  }
+
+  const written = pending.length
+  console.log(
+    `共写入 ${written} 题（行测真题 ${written - shizhengCount - shenlunCount} + 时政 ${shizhengCount} + 申论 ${shenlunCount}）＋ 素材文档 ${materialDocs} 篇；` +
+      `主库重复 ${counters.primary}（严格 ${counters.primaryStrict} / 宽松 ${counters.primaryLoose} / 资料包含 ${counters.primaryZiliao}）；` +
+      `卷间重复 ${counters.duplicate}；字段不全 ${counters.incomplete}；` +
+      `题图 ${copiedAssets}/${assetSink.size}；无真题卷归属的真题 ${counters.noPaperReal}`
+  )
+  if (primary) {
+    console.log(
+      backfillEnabled
+        ? `回填主库 papers：${counters.backfilledFiles} 个文件新增 ${counters.backfilledPapers} 条真题卷归属`
+        : '未开 --backfill-papers：命中主库重复的题未回填真题卷归属'
+    )
+    if (backfillEnabled && backfillLedger.length) {
+      const ledgerPath = join(outDir, 'papers-backfill-ledger.jsonl')
+      writeFileSync(
+        ledgerPath,
+        backfillLedger.map((entry) => JSON.stringify(entry)).join('\n') + '\n',
+        'utf8'
+      )
+      console.log(`回填台账已写入 ${ledgerPath}（${backfillLedger.length} 条，可回溯可撤销）`)
+    }
+  }
+  for (const [key, item] of [...stats].sort()) {
+    console.log(`  ${key}: 入库 ${item.imported} / 跳过 ${item.skipped}`)
+  }
+}
+
+// ---- OpenExam 整卷 JSON 目录导入（每卷一份 *-paper_.json，含三级去重与 papers 回填）----
+
+// 整卷 JSON 的资料分析题不带材料文本（OpenExam 导出时材料留在 sqlite 列里）。
+// 给 --material-db 指向 OpenExam 种子库时可按题 id 接回材料；否则无材料的资料题跳过。
+function flagValue(name) {
+  const index = argv.indexOf(`--${name}`)
+  return index >= 0 && argv[index + 1] ? argv[index + 1] : undefined
+}
+
+// OpenExam 整卷 JSON → 知识库 md。给主库目录时做三级跨库去重（主库为准）；
+// --material-db 接 OpenExam 种子库补资料题材料，--assets-dir 提供材料图片源目录；
+// --backfill-papers 把重叠题的这些新卷归属回填主库原题，让老题补进新卷的模考。
+function buildOpenExamJson(jsonDir, outDir, primaryDir) {
+  const backfillEnabled = argv.includes('--backfill-papers')
+  const primary = primaryDir ? loadPrimaryIndex(primaryDir) : null
+  const materialDbPath = flagValue('material-db')
+  const assetsDir = flagValue('assets-dir')
+  const materialDb = materialDbPath ? new DatabaseSync(materialDbPath, { readOnly: true }) : null
+  const materialStmt = materialDb?.prepare('SELECT material_html FROM questions WHERE id = ?')
+  const assetSink = new Set()
+  const files = readdirSync(jsonDir).filter((name) => name.endsWith('.json'))
+  if (files.length === 0) {
+    console.error(`目录中没有 JSON 试卷：${jsonDir}`)
+    exit(1)
+  }
+
+  mkdirSync(outDir, { recursive: true })
+  const seen = new Map()
+  const pending = []
+  const backfillLedger = []
+  const counters = {
+    primary: 0,
+    duplicate: 0,
+    incomplete: 0,
+    noMaterial: 0,
+    materialJoined: 0,
+    backfilledFiles: 0,
+    backfilledPapers: 0
+  }
+  const stats = new Map()
+  const entry = (module) => {
+    const item = stats.get(module) ?? { imported: 0, skipped: 0 }
+    stats.set(module, item)
+    return item
+  }
+
+  for (const name of files) {
+    let paperData
+    try {
+      paperData = JSON.parse(readFileSync(join(jsonDir, name), 'utf8'))
+    } catch (error) {
+      console.error(`跳过无法解析的卷：${name}（${error.message}）`)
+      continue
+    }
+    const paper = paperData.paper ?? {}
+    const paperTitle = String(paper.title ?? name.replace(/-paper_\.json$/, ''))
+    const regionMatch = paperTitle.match(/^(\d{4})年(.+?)公务员录用考试/)
+    const region = regionMatch && regionMatch[2] !== '国家' ? regionMatch[2] : undefined
+
+    for (const row of paperData.questions ?? []) {
+      const categoryKey = CATEGORIES[row.category] ? row.category : null
+      if (!categoryKey) {
+        counters.incomplete += 1
+        continue
+      }
+      const stat = entry(categoryKey)
+      let material
+      if (categoryKey === 'ziliao') {
+        const materialHtml = materialStmt
+          ? materialStmt.get(String(row.id ?? ''))?.material_html
+          : null
+        material = materialHtml ? htmlToMarkdown(materialHtml, assetSink).trim() : ''
+        if (material) counters.materialJoined += 1
+        else {
+          counters.noMaterial += 1
+          stat.skipped += 1
+          continue
+        }
+      }
+      const options = (row.options ?? [])
+        .map((option) => ({
+          key: String(option.key ?? '').toUpperCase(),
+          text: htmlToMarkdown(option.text ?? option.html ?? '').trim()
+        }))
+        .filter((option) => option.text && /^[A-Z]$/.test(option.key))
+      const contentHtml = String(row.contentHtml ?? '')
+      const sourceContent =
+        contentHtml.includes('openexam-asset') || !String(row.content ?? '').trim()
+          ? contentHtml
+          : String(row.content ?? '')
+      const stem = htmlToMarkdown(sourceContent).trim()
+      const answer = String(row.answer ?? '')
+        .toUpperCase()
+        .replace(/[^A-Z]/g, '')
+        .split('')
+      const explanation =
+        htmlToMarkdown(row.analysis ?? '') || htmlToMarkdown(row.analysisHtml ?? '')
+      if (!stem || stem.length < 8 || options.length < 2 || answer.length === 0) {
+        counters.incomplete += 1
+        stat.skipped += 1
+        continue
+      }
+      const order = Number(row.orderNum) || 0
+      const membership = { paper: paperTitle, order }
+
+      if (primary) {
+        const strictSig = questionSignature(stem, options, '')
+        const looseSig = looseSignature(stem, '', options[0]?.text)
+        let primaryFile = primary.strict.get(strictSig)
+        if (!primaryFile) primaryFile = primary.loose.get(looseSig)
+        if (!primaryFile && categoryKey === 'ziliao') {
+          // JSON 资料题无独立材料列，与主库“材料拆分存”的资料题签名天然对不上，用题干包含兜底
+          const haystack = stripPunct(stem)
+          for (const [needle, file] of primary.ziliaoStems) {
+            if (needle && haystack.includes(needle)) {
+              primaryFile = file
+              break
+            }
+          }
+        }
+        if (primaryFile) {
+          counters.primary += 1
+          stat.skipped += 1
+          if (backfillEnabled) {
+            const added = backfillPapersTo(join(primaryDir, primaryFile), [membership])
+            if (added > 0) {
+              counters.backfilledFiles += 1
+              counters.backfilledPapers += added
+              backfillLedger.push({
+                at: new Date().toISOString(),
+                file: primaryFile,
+                source: 'openexam-json',
+                paper: paperTitle,
+                order
+              })
+            }
+          }
+          continue
+        }
+      }
+
+      const signature = questionSignature(stem, options, '')
+      const existing = seen.get(signature)
+      if (existing) {
+        if (!existing.papers.some((item) => item.paper === paperTitle))
+          existing.papers.push(membership)
+        counters.duplicate += 1
+        stat.skipped += 1
+        continue
+      }
+      const subCategory = SUB_CATEGORIES[row.subCategory] ?? ''
+      const question = {
+        id: `oej-${String(row.id ?? '').replace(/[^a-zA-Z0-9_-]/g, '-')}`,
+        subject: 'xingce',
+        category: subCategory
+          ? `${CATEGORIES[categoryKey]}-${subCategory}`
+          : CATEGORIES[categoryKey],
+        tags: [CATEGORIES[categoryKey], subCategory, paperTitle].filter(Boolean),
+        source: `本地资料/${basename(jsonDir)}`,
+        sourceFile: paperTitle,
+        year: Number(paper.year) || Number(row.year) || undefined,
+        region: region || undefined,
+        questionType: answer.length > 1 ? 'multiple' : 'single',
+        difficulty: Math.max(1, Math.min(5, Number(row.difficulty) || 2)),
+        material: material || undefined,
+        stem,
+        options,
+        answer,
+        explanation: explanation || '该题暂未提供解析。',
+        papers: [membership]
+      }
+      seen.set(signature, question)
+      pending.push(question)
+      stat.imported += 1
+    }
+  }
+
+  for (const question of pending)
+    writeFileSync(join(outDir, `${question.id}.md`), questionMarkdown(question), 'utf8')
+
+  let copiedAssets = 0
+  if (assetsDir && assetSink.size > 0) {
+    const assetDir = join(outDir, 'assets')
+    mkdirSync(assetDir, { recursive: true })
+    for (const file of assetSink) {
+      const source = join(assetsDir, file)
+      if (existsSync(source)) {
+        copyFileSync(source, join(assetDir, file))
+        copiedAssets += 1
+      }
+    }
+  }
+
+  console.log(
+    `共写入 ${pending.length} 题；主库重复 ${counters.primary}；卷内/联考重复 ${counters.duplicate}；` +
+      `字段不全 ${counters.incomplete}；资料题接回材料 ${counters.materialJoined} / 缺材料跳过 ${counters.noMaterial}；` +
+      `材料图片 ${assetsDir ? `${copiedAssets}/${assetSink.size}` : `0/${assetSink.size}（未给 --assets-dir）`}`
+  )
+  if (primary) {
+    console.log(
+      backfillEnabled
+        ? `回填主库 papers：${counters.backfilledFiles} 个文件新增 ${counters.backfilledPapers} 条卷归属`
+        : '未开 --backfill-papers：重叠题未回填新卷归属'
+    )
+    if (backfillEnabled && backfillLedger.length) {
+      const ledgerPath = join(outDir, 'papers-backfill-ledger-oej.jsonl')
+      writeFileSync(
+        ledgerPath,
+        backfillLedger.map((entryLine) => JSON.stringify(entryLine)).join('\n') + '\n',
+        'utf8'
+      )
+      console.log(`回填台账已写入 ${ledgerPath}（${backfillLedger.length} 条）`)
+    }
+  }
+  for (const [key, item] of [...stats].sort()) {
+    console.log(`  ${key}: 入库 ${item.imported} / 跳过 ${item.skipped}`)
+  }
+}
+
 // 申论训练书 → 知识文档：按【训练N】切分；无训练标记的书按“资料N”块切分
 function buildShenlun(ocrFile, bookTitle, outDir) {
   const raw = readFileSync(ocrFile, 'utf8')
@@ -697,6 +1338,10 @@ if (command === 'build' && argv[3] === 'pianduan600') {
   buildPianduan600(argv[4], argv[5])
 } else if (command === 'build' && argv[3] === 'openexam') {
   buildOpenExam(argv[4], argv[5], argv[6])
+} else if (command === 'build' && argv[3] === 'openexam-json') {
+  buildOpenExamJson(argv[4], argv[5], argv[6])
+} else if (command === 'build' && argv[3] === 'kaogong') {
+  buildKaogong(argv[4], argv[5], argv[6], argv[7])
 } else if (command === 'build' && argv[3] === 'shenlun') {
   buildShenlun(argv[4], argv[5], argv[6])
 } else if (command === 'build' && argv[3] === 'shenlun-essay') {
@@ -740,7 +1385,7 @@ if (command === 'build' && argv[3] === 'pianduan600') {
     console.log(`  第${set}套: ${count} 条${count !== 20 ? ' ←异常' : ''}`)
 } else {
   console.error(
-    '用法: node tools/direct-import.mjs build pianduan600 <ocrDir> <outDir> | build openexam <db> <outDir> | verify <outDir> | debug-parse <tiben.md> | debug-solutions <jiexi.md>'
+    '用法: node tools/direct-import.mjs build pianduan600 <ocrDir> <outDir> | build openexam <db> <outDir> <题图目录> | build openexam-json <jsonDir> <outDir> [主库目录] [--material-db <seed.db>] [--assets-dir <图片目录>] [--backfill-papers] | build kaogong <db> <outDir> <题图目录> [主库目录] [--all] [--backfill-papers] | verify <outDir> | debug-parse <tiben.md> | debug-solutions <jiexi.md>'
   )
   exit(1)
 }
