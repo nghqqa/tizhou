@@ -183,7 +183,7 @@ export function ShenlunSolutionPage(): React.JSX.Element {
               <div className="answer-panel">
                 <h3>参考要点</h3>
                 <p>{current?.answer.join('；')}</p>
-                <p>{current?.explanation}</p>
+                <MarkdownContent content={current?.explanation ?? ''} />
               </div>
             )}
           </div>

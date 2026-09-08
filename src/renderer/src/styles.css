@@ -953,6 +953,11 @@ a {
   line-height: 1.7;
   white-space: pre-wrap;
 }
+/* 助手消息走 MarkdownContent 渲染：HTML 已有排版，pre-wrap 会造成多余空行 */
+.chat-message.assistant {
+  white-space: normal;
+  max-width: 88%;
+}
 .chat-message.user {
   margin-left: auto;
   border-color: var(--tz-vermillion-border);

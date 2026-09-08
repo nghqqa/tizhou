@@ -19,6 +19,7 @@ import type {
 } from '@shared/contracts'
 import { FEATURE_PROMPTS, taskDataEnvelope } from '@shared/prompts'
 import { useNavigate } from 'react-router-dom'
+import { MarkdownContent } from '../components/MarkdownContent'
 import { formatFullDate, invoke } from '../api'
 import {
   EmptyState,
@@ -117,7 +118,11 @@ export function AiPage(): React.JSX.Element {
               )}
               {messages.map((message, index) => (
                 <div className={`chat-message ${message.role}`} key={`${message.role}-${index}`}>
-                  {message.content}
+                  {message.role === 'assistant' ? (
+                    <MarkdownContent content={message.content} />
+                  ) : (
+                    message.content
+                  )}
                 </div>
               ))}
               {busy && (
@@ -365,7 +370,7 @@ export function AiTrainingPage(): React.JSX.Element {
                       {record.correct ? '回答正确' : '回答错误'}
                     </h3>
                     <p>参考答案：{record.answer.join('、')}</p>
-                    <p>{record.explanation}</p>
+                    <MarkdownContent content={record.explanation} />
                   </div>
                 )}
                 <div className="question-footer">
