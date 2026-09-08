@@ -1,6 +1,6 @@
 {
   "name": "tizhou",
-  "version": "1.0.12",
+  "version": "1.0.13",
   "private": true,
   "license": "MIT",
   "author": "nghqqa",
@@ -22,6 +22,8 @@
     "package": "npm run build && electron-builder --win nsis",
     "test": "vitest run",
     "test:watch": "vitest",
+    "eval:ai": "vitest run tests/ai-eval.test.ts",
+    "dedup:scan": "node tools/dedup-simhash.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "smoke:packaged": "node tools/smoke-packaged.mjs",
     "format": "prettier --write .",
