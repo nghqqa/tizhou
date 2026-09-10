@@ -271,6 +271,9 @@ async function initialize(): Promise<void> {
   )
   const diagnostics = new DiagnosticService(database, ai, integrations, app.getVersion())
   vaults.ensureBuiltinVault()
+  // 烟雾测试会立即退出，不必挂磁盘监听
+  if (!isSmokeTest) vaults.startWatching()
+  app.once('before-quit', () => vaults.stopWatching())
 
   const settings = database.getAppSettings()
   if (settings.autoBackup) {
@@ -301,21 +304,33 @@ async function initialize(): Promise<void> {
         })
         return selected.canceled ? undefined : selected.filePaths[0]
       }
-      case 'vault.connect':
-        return vaults.connect(request.params.path)
+      case 'vault.connect': {
+        const connected = vaults.connect(request.params.path)
+        vaults.startWatching()
+        return connected
+      }
       case 'vault.reindex':
         return vaults.reindex()
       case 'vault.list':
         return database!.listVaults()
-      case 'vault.switch':
-        return database!.switchVault(request.params.id)
+      case 'vault.active':
+        // 渲染层在窗口重新获得焦点时拉取，反映磁盘监听触发的自动重索引结果
+        return database!.getActiveVault()
+      case 'vault.switch': {
+        const switched = database!.switchVault(request.params.id)
+        vaults.startWatching()
+        return switched
+      }
       case 'vault.clearWarnings':
         database!.clearActiveVaultWarnings()
         return database!.getActiveVault()
       case 'vault.snapshots':
         return database!.listVaultSnapshots(request.params.vaultId)
-      case 'vault.rollback':
-        return database!.rollbackVaultSnapshot(request.params.snapshotId)
+      case 'vault.rollback': {
+        const rolledBack = database!.rollbackVaultSnapshot(request.params.snapshotId)
+        vaults.startWatching()
+        return rolledBack
+      }
       case 'vault.search':
         return database!.listQuestions(request.params)
       case 'vault.categories':

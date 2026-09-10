@@ -76,6 +76,8 @@ export interface VaultIndexResult {
   updated: number
   removed: number
   skipped: number
+  /** 内容未变、直接复用库中记录而未重新解析的文件数（增量索引） */
+  reused?: number
   warnings: string[]
 }
 
@@ -659,6 +661,7 @@ export type WorkbenchRequest =
   | { method: 'vault.connect'; params: { path: string } }
   | { method: 'vault.reindex'; params?: undefined }
   | { method: 'vault.list'; params?: undefined }
+  | { method: 'vault.active'; params?: undefined }
   | { method: 'vault.switch'; params: { id: string } }
   | { method: 'vault.clearWarnings'; params?: undefined }
   | { method: 'vault.snapshots'; params: { vaultId: string } }

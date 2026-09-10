@@ -144,7 +144,8 @@ const groups: Array<{ label: string; items: NavItem[] }> = [
 ]
 
 function AppShell(): React.JSX.Element {
-  const { data, loading, error, initialize, clearError, updateSettings } = useAppStore()
+  const { data, loading, error, initialize, refreshVault, clearError, updateSettings } =
+    useAppStore()
   const location = useLocation()
   const navigate = useNavigate()
   const isDark =
@@ -215,6 +216,12 @@ function AppShell(): React.JSX.Element {
   useEffect(() => {
     void initialize()
   }, [initialize])
+  // 外部编辑器改题/导入脚本落盘后主进程会自动增量重索引；用户切回窗口时对齐侧栏计数
+  useEffect(() => {
+    const onFocus = (): void => void refreshVault()
+    window.addEventListener('focus', onFocus)
+    return () => window.removeEventListener('focus', onFocus)
+  }, [refreshVault])
   useEffect(() => {
     document.querySelector('main')?.scrollTo({ top: 0 })
   }, [location.pathname])

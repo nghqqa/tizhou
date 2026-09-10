@@ -431,9 +431,15 @@ export class DatabaseService {
     captureSnapshot = true
   ): { added: number; updated: number; removed: number } {
     const previousRows = this.db
-      .prepare('SELECT id, content_hash FROM questions WHERE vault_id = ?')
+      .prepare('SELECT id, content_hash, file_path FROM questions WHERE vault_id = ?')
       .all(vault.id) as Row[]
     const previous = new Map(previousRows.map((row) => [String(row.id), String(row.content_hash)]))
+    const previousPaths = new Map(
+      previousRows.map((row) => [
+        String(row.id),
+        row.file_path == null ? '' : String(row.file_path)
+      ])
+    )
     let added = 0
     let updated = 0
     for (const question of questions) {
@@ -457,7 +463,8 @@ export class DatabaseService {
         const payload = gzipSync(
           JSON.stringify({
             vault: this.getVaultById(vault.id) ?? vault,
-            questions: previousRows.map((row) => this.getQuestion(String(row.id))).filter(Boolean),
+            // 整库一次查询取快照，逐题 getQuestion 在 2 万题级别会把重索引拖慢数十秒
+            questions: this.listVaultQuestions(vault.id),
             documents: previousDocuments.map((row) => this.mapDocument(row))
           })
         )
@@ -492,6 +499,13 @@ export class DatabaseService {
         group_id=excluded.group_id, group_order=excluded.group_order,
         indexed_at=excluded.indexed_at`)
       for (const question of questions) {
+        // 内容哈希与路径都未变的题不重写：全量 upsert 在大库上是重索引的主要开销之一；
+        // 路径也参与比较，文件被移动时哈希虽同仍需更新 file_path（题图按文件位置定位）
+        if (
+          previous.get(question.id) === question.contentHash &&
+          previousPaths.get(question.id) === (question.filePath ?? '')
+        )
+          continue
         upsertQuestion.run(
           question.id,
           vault.id,
@@ -613,6 +627,14 @@ export class DatabaseService {
   getQuestion(id: string): Question | undefined {
     const row = this.db.prepare('SELECT * FROM questions WHERE id = ?').get(id) as Row | undefined
     return row ? this.mapQuestion(row) : undefined
+  }
+
+  /** 整库题目一次取出（供快照与增量索引复用未变文件的记录） */
+  listVaultQuestions(vaultId: string): Question[] {
+    const rows = this.db
+      .prepare('SELECT * FROM questions WHERE vault_id = ? ORDER BY id')
+      .all(vaultId) as Row[]
+    return rows.map((row) => this.mapQuestion(row))
   }
 
   private mapQuestion(row: Row): Question {

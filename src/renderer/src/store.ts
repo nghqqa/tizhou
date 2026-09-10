@@ -8,6 +8,7 @@ interface AppState {
   error?: string
   initialize: () => Promise<void>
   refreshDashboard: () => Promise<void>
+  refreshVault: () => Promise<void>
   updateSettings: (patch: Partial<AppSettings>) => Promise<void>
   clearError: () => void
 }
@@ -31,6 +32,18 @@ export const useAppStore = create<AppState>((set, get) => ({
       set({ data: { ...current, dashboard } })
     } catch (error) {
       set({ error: error instanceof Error ? error.message : '刷新失败' })
+    }
+  },
+  // 磁盘监听在主进程自动重索引后不推送事件，窗口重新获得焦点时拉一次活动库状态即可对齐计数
+  async refreshVault() {
+    const current = get().data
+    if (!current) return
+    try {
+      const vault = await invoke<BootstrapData['vault'] | undefined>({ method: 'vault.active' })
+      if (vault && vault.lastIndexedAt !== current.vault.lastIndexedAt)
+        set({ data: { ...current, vault } })
+    } catch {
+      // 焦点刷新失败不打扰用户，下次焦点再试
     }
   },
   async updateSettings(patch) {

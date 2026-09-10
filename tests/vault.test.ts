@@ -46,6 +46,7 @@ describe('VaultService', () => {
   })
 
   afterEach(() => {
+    vaults.stopWatching()
     database.close()
     rmSync(directory, { recursive: true, force: true })
   })
@@ -198,6 +199,7 @@ describe('图形题选项（图片选项）', () => {
   })
 
   afterEach(() => {
+    vaults.stopWatching()
     database.close()
     rmSync(directory, { recursive: true, force: true })
   })
@@ -231,4 +233,114 @@ describe('图形题选项（图片选项）', () => {
     expect(question.options[2]).toEqual({ key: 'C', text: '普通文本选项' })
     expect(question.stem).toContain('images/stem.png')
   })
+
+  it('增量索引：内容未变的题目文件复用库中记录，知识文档不计入复用', () => {
+    for (let index = 0; index < 5; index += 1)
+      writeFileSync(
+        join(vaultDirectory, `q${index}.md`),
+        QUESTION.replace('小王不是乙', `小王${index}不是乙`),
+        'utf8'
+      )
+    writeFileSync(
+      join(vaultDirectory, 'method.md'),
+      '---\nkind: method\nsubject: xingce\ntags: [复盘]\n---\n# 检查步骤\n\n先检查题干限定词。',
+      'utf8'
+    )
+    const first = vaults.connect(vaultDirectory)
+    expect(first.reused).toBe(0)
+    expect(first.added).toBe(5)
+    const second = vaults.connect(vaultDirectory)
+    expect(second.reused).toBe(5)
+    expect(second.added).toBe(0)
+    expect(second.updated).toBe(0)
+    expect(second.removed).toBe(0)
+    expect(second.vault.questionCount).toBe(5)
+    expect(second.vault.documentCount).toBe(1)
+  })
+
+  it('增量索引：只有改动的文件被重新解析，其余复用', () => {
+    const paths = [0, 1, 2].map((index) => join(vaultDirectory, `q${index}.md`))
+    paths.forEach((path, index) =>
+      writeFileSync(path, QUESTION.replace('小王不是乙', `小王${index}不是乙`), 'utf8')
+    )
+    vaults.connect(vaultDirectory)
+    writeFileSync(
+      paths[1],
+      QUESTION.replace('小王不是乙', '小王1不是乙').replace('根据逆否命题', '根据逆否命题（修订）'),
+      'utf8'
+    )
+    const result = vaults.connect(vaultDirectory)
+    expect(result.reused).toBe(2)
+    expect(result.updated).toBe(1)
+    expect(result.added).toBe(0)
+    const revised = database.listQuestions().find((item) => item.stem.includes('小王1'))
+    expect(revised?.explanation).toContain('修订')
+  })
+
+  it('增量索引：移动的文件重新解析并更新路径，删除的文件记录被移除', () => {
+    const first = join(vaultDirectory, 'a.md')
+    const second = join(vaultDirectory, 'b.md')
+    writeFileSync(first, QUESTION, 'utf8')
+    writeFileSync(second, QUESTION.replace('小王不是乙', '小李不是乙'), 'utf8')
+    vaults.connect(vaultDirectory)
+    const moved = join(vaultDirectory, 'moved.md')
+    renameSync(first, moved)
+    rmSync(second)
+    const result = vaults.connect(vaultDirectory)
+    expect(result.removed).toBe(1)
+    expect(result.added).toBe(0)
+    expect(result.reused).toBe(0)
+    const remaining = database.listQuestions()
+    expect(remaining).toHaveLength(1)
+    expect(remaining[0]?.filePath?.endsWith('moved.md')).toBe(true)
+  })
+
+  it('磁盘监听：活动库目录新增题目文件后自动增量重索引', async () => {
+    writeFileSync(join(vaultDirectory, 'seed.md'), QUESTION, 'utf8')
+    const connected = vaults.connect(vaultDirectory)
+    database.switchVault(connected.vault.id)
+    vaults.startWatching(150)
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    writeFileSync(
+      join(vaultDirectory, 'late.md'),
+      QUESTION.replace('小王不是乙', '小赵不是乙'),
+      'utf8'
+    )
+    const deadline = Date.now() + 8000
+    while (Date.now() < deadline && database.listQuestions().length < 2)
+      await new Promise((resolve) => setTimeout(resolve, 100))
+    expect(database.listQuestions()).toHaveLength(2)
+    expect(vaults.lastAutoIndex?.added).toBe(1)
+    expect(vaults.lastAutoIndex?.reused).toBe(1)
+  }, 15_000)
+})
+
+// 真实大库基准：VAULT_BENCH_DIR=<知识库目录> npx vitest run tests/vault.test.ts
+describe.skipIf(!process.env.VAULT_BENCH_DIR)('增量索引基准（VAULT_BENCH_DIR）', () => {
+  it('第二次索引全量复用且显著快于首次', () => {
+    const target = process.env.VAULT_BENCH_DIR!
+    const directory = mkdtempSync(join(tmpdir(), 'tizhou-bench-'))
+    const database = new DatabaseService(
+      join(directory, 'workbench.sqlite'),
+      directory,
+      join(directory, 'backups')
+    )
+    const vaults = new VaultService(database)
+    try {
+      const start = performance.now()
+      const first = vaults.connect(target)
+      const middle = performance.now()
+      const second = vaults.connect(target)
+      const end = performance.now()
+      console.log(
+        `首次 ${Math.round(middle - start)} ms（解析 ${first.vault.questionCount} 题 · ${first.vault.documentCount} 文档）；` +
+          `二次 ${Math.round(end - middle)} ms（复用 ${second.reused}）`
+      )
+      expect(second.reused).toBe(first.vault.questionCount)
+      expect(end - middle).toBeLessThan(middle - start)
+    } finally {
+      database.close()
+      rmSync(directory, { recursive: true, force: true })
+    }
+  }, 600_000)
 })

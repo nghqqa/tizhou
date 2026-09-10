@@ -1,5 +1,14 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs'
+import {
+  existsSync,
+  lstatSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  statSync,
+  watch,
+  type FSWatcher
+} from 'node:fs'
 import { basename, dirname, extname, isAbsolute, relative, resolve } from 'node:path'
 import matter from 'gray-matter'
 import type {
@@ -23,6 +32,8 @@ const IGNORED_DIRECTORIES = new Set([
 ])
 const MAX_FILE_BYTES = 5 * 1024 * 1024
 const MAX_FILES = 50_000
+// 磁盘变更防抖：批量写入（导入脚本落几千个文件）期间事件连续到达，静默到最后一次事件后再重索引一次
+const AUTO_REINDEX_DEBOUNCE_MS = 3000
 
 function timestamp(): string {
   return new Date().toISOString()
@@ -306,7 +317,65 @@ const BUILTIN_DOCUMENTS: KnowledgeDocument[] = [
 ]
 
 export class VaultService {
+  private watcher?: FSWatcher
+  private watchedPath?: string
+  private watchTimer?: ReturnType<typeof setTimeout>
+  private watchDebounceMs = AUTO_REINDEX_DEBOUNCE_MS
+  /** 最近一次由磁盘变更触发的自动重索引结果，供设置页展示与诊断 */
+  lastAutoIndex?: VaultIndexResult
+
   constructor(private readonly database: DatabaseService) {}
+
+  /**
+   * 监听活动知识库目录：Markdown 文件变动后防抖自动做一次增量重索引，
+   * 用户在外部编辑器改题或导入脚本落盘后无需手动点「重新索引」。
+   * 活动库未变时重复调用是空操作；递归监听不可用的平台静默降级为手动重索引。
+   */
+  startWatching(debounceMs = AUTO_REINDEX_DEBOUNCE_MS): void {
+    const vault = this.database.getActiveVault()
+    const target =
+      vault && !vault.isBuiltin && existsSync(vault.path) ? realpathSync(vault.path) : undefined
+    this.watchDebounceMs = debounceMs
+    if (this.watcher && this.watchedPath === target) return
+    this.stopWatching()
+    if (!target) return
+    try {
+      const watcher = watch(target, { recursive: true }, (_event, filename) => {
+        const name = filename == null ? '' : String(filename)
+        // 只关心 Markdown；filename 为空是目录级事件（部分平台），同样触发
+        if (name && !name.toLowerCase().endsWith('.md')) return
+        this.scheduleAutoReindex()
+      })
+      watcher.on('error', () => this.stopWatching())
+      this.watcher = watcher
+      this.watchedPath = target
+    } catch {
+      this.watcher = undefined
+      this.watchedPath = undefined
+    }
+  }
+
+  stopWatching(): void {
+    if (this.watchTimer) clearTimeout(this.watchTimer)
+    this.watchTimer = undefined
+    this.watcher?.close()
+    this.watcher = undefined
+    this.watchedPath = undefined
+  }
+
+  private scheduleAutoReindex(): void {
+    if (this.watchTimer) clearTimeout(this.watchTimer)
+    this.watchTimer = setTimeout(() => {
+      this.watchTimer = undefined
+      try {
+        this.lastAutoIndex = this.reindex()
+      } catch {
+        // 写入进行中（半写文件、目录暂空）会解析失败，等下一次变更事件再试
+      }
+      // 索引期间活动库可能被切换，重新对准监听目标
+      this.startWatching(this.watchDebounceMs)
+    }, this.watchDebounceMs)
+  }
 
   ensureBuiltinVault(): VaultInfo {
     const active = this.database.getActiveVault()
@@ -340,18 +409,32 @@ export class VaultService {
     const warnings: string[] = []
     const paths = this.walkMarkdown(realRoot, warnings)
     if (paths.length === 0) throw new Error('目录中没有找到 Markdown 文件')
+    // 增量索引：文件内容哈希与上次一致时直接复用库中记录，跳过 frontmatter 解析。
+    // 知识文档表不存哈希且数量很少，始终重新解析。
+    const previousByPath = new Map<string, Question>()
+    for (const question of this.database.listVaultQuestions(vaultId))
+      if (question.filePath) previousByPath.set(question.filePath, question)
     const questions: Question[] = []
     const documents: KnowledgeDocument[] = []
     const seenIds = new Set<string>()
     let skipped = 0
+    let reused = 0
     for (const path of paths) {
       try {
-        const parsed = this.parseFile(realRoot, path)
+        const raw = readFileSync(path, 'utf8')
+        const cached = previousByPath.get(path)
+        let parsed: Question | KnowledgeDocument | undefined
+        if (cached && cached.contentHash === hash(raw)) {
+          parsed = cached
+          reused += 1
+        } else {
+          parsed = this.parseFile(realRoot, path, raw)
+          if (parsed) parsed.id = `${vaultId}:${parsed.id}`
+        }
         if (!parsed) {
           skipped += 1
           continue
         }
-        parsed.id = `${vaultId}:${parsed.id}`
         if (seenIds.has(parsed.id)) {
           warnings.push(`${relative(realRoot, path)}：ID ${parsed.id} 重复，已跳过`)
           skipped += 1
@@ -385,7 +468,7 @@ export class VaultService {
       isBuiltin: false
     }
     const changes = this.database.replaceVaultContent(vault, questions, documents)
-    return { vault, ...changes, skipped, warnings: vault.warnings }
+    return { vault, ...changes, skipped, reused, warnings: vault.warnings }
   }
 
   /** 目标目录对应知识库的既有题目去重签名集合（目录未注册时为空集） */
@@ -481,8 +564,11 @@ export class VaultService {
     )
   }
 
-  private parseFile(root: string, filePath: string): Question | KnowledgeDocument | undefined {
-    const raw = readFileSync(filePath, 'utf8')
+  private parseFile(
+    root: string,
+    filePath: string,
+    raw: string = readFileSync(filePath, 'utf8')
+  ): Question | KnowledgeDocument | undefined {
     const parsed = matter(raw)
     const data = parsed.data as Record<string, unknown>
     const relativePath = relative(root, filePath).replace(/\\/g, '/')

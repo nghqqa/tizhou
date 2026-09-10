@@ -487,7 +487,10 @@ export function SettingsPage(): React.JSX.Element {
       const result = await invoke<VaultIndexResult>({ method: 'vault.reindex' })
       await initialize()
       await refreshVaultState(result.vault.id)
-      setMessage(`索引完成：新增 ${result.added}，更新 ${result.updated}，移除 ${result.removed}。`)
+      setMessage(
+        `索引完成：新增 ${result.added}，更新 ${result.updated}，移除 ${result.removed}` +
+          `${result.reused ? `，未变复用 ${result.reused}` : ''}。`
+      )
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '重新索引失败')
     } finally {
