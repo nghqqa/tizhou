@@ -308,18 +308,28 @@ def run_structured(source: Path, output: Path) -> int:
     except Exception:
         pass
     total_pages = 0
+    text_layer_pages = 0
     try:
         import pypdfium2 as pdfium_mod
-        total_pages = len(pdfium_mod.PdfDocument(str(source)))
+        pdf = pdfium_mod.PdfDocument(str(source))
+        total_pages = len(pdf)
+        # RapidDoc 的 auto 模式对带文字层的页直接取内嵌文本、只对位图 OCR；
+        # 此处按页统计文字层覆盖，让"文字层 N 页 / OCR N 页"的质量指标如实反映
+        for page_index in range(total_pages):
+            if len(extract_text_layer(pdf[page_index])) >= 50:
+                text_layer_pages += 1
     except Exception:
         pass
+    ocr_pages = max(0, total_pages - text_layer_pages)
     report({'done': True, 'structured': True, 'characters': len(markdown),
             'totalPages': total_pages,
-            'textLayerPages': 0, 'ocrPages': total_pages, 'emptyPages': 0, 'ocrLineCount': 0,
+            'textLayerPages': text_layer_pages, 'ocrPages': ocr_pages, 'emptyPages': 0,
+            'ocrLineCount': 0,
             'averageConfidence': None, 'lowConfidenceLines': 0, 'removedPageNumbers': 0,
             'tableRegions': table_regions, 'figureRegions': image_regions,
             'discardedRegions': discarded_regions, 'removedNoiseLines': removed_noise,
             'warnings': ['结构解析模式：表格已还原为 Markdown 表格，图片保真存至 images/ 目录'
+                         + (f'，文字层 {text_layer_pages} 页直接采用、位图 OCR {ocr_pages} 页' if total_pages else '')
                          + (f'，已剥离页眉/水印噪声 {removed_noise} 处' if removed_noise else '')]})
     return 0
 

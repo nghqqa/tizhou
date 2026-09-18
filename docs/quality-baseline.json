@@ -3,7 +3,7 @@
   "totalPages": 36,
   "ocrPages": 36,
   "characters": 46688,
-  "questions": 111,
+  "questions": 112,
   "questionGroups": 6,
   "tableRegions": 13,
   "raggedTables": 4,
@@ -12,7 +12,7 @@
   "removedNoiseLines": 0,
   "structuralNoiseRemoved": 0,
   "quanPianAnswerResidual": 0,
-  "stemOptionComplete": 110,
+  "stemOptionComplete": 111,
   "solutionAnswers": 160,
   "pairedWithAnswer": 18,
   "pairingRate": 0.16

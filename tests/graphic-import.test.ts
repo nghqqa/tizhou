@@ -1,11 +1,13 @@
 // 图形推理图片优先通道：版面聚类 + 选项绑定 + 置信度 + 门禁
 import { describe, expect, it } from 'vitest'
 import {
+  bindGraphicOptionsByGeometry,
   extractGraphicQuestions,
   isGraphicCandidate,
   mergeGraphicQuestions
 } from '../src/main/services/graphic-import'
 import type { RegionBlock, StructuredRegions } from '../src/main/services/import-quality'
+import type { ParsedQuestion } from '../src/main/services/question-import'
 
 function text(page: number, y: number, content: string): RegionBlock {
   return { type: 'text', page, bbox: [20, y, 869, y + 46], imgPath: '', text: content }
@@ -163,5 +165,84 @@ describe('mergeGraphicQuestions', () => {
     expect(result.itemWarnings[1]?.some((w) => w.includes('未配到参考答案'))).toBe(true)
     expect(result.itemWarnings[0]?.some((w) => w.includes('整图版式'))).toBe(true)
     expect(result.items[0]!.tags).toContain('图形推理')
+  })
+})
+
+describe('bindGraphicOptionsByGeometry（混合卷图推小题几何绑定）', () => {
+  function paperRegions(withLabels = true): StructuredRegions {
+    const blocks: RegionBlock[] = [
+      text(0, 100, '77.从所给的四个选项中，选择最合适的一个填入问号处，使之呈现一定的规律性：'),
+      // 题干图形序列（一行 5 张小图）
+      ...[0, 1, 2, 3, 4].map((i) => image(0, 60 + i * 150, 170, 120, 100, `images/stem-${i}.png`)),
+      // 2×2 选项网格，标签印在图下方
+      image(0, 100, 300, 150, 150, 'images/opt-a.png'),
+      image(0, 400, 300, 150, 150, 'images/opt-b.png'),
+      image(0, 100, 520, 150, 150, 'images/opt-c.png'),
+      image(0, 400, 520, 150, 150, 'images/opt-d.png'),
+      text(0, 760, '78.下列关于货币的说法正确的是：'),
+      text(0, 810, 'A.货币是一般等价物')
+    ]
+    if (withLabels) {
+      blocks.push(
+        { type: 'text', page: 0, bbox: [165, 460, 185, 480], imgPath: '', text: 'A' },
+        { type: 'text', page: 0, bbox: [465, 460, 485, 480], imgPath: '', text: 'B' },
+        { type: 'text', page: 0, bbox: [165, 680, 185, 700], imgPath: '', text: 'C' },
+        { type: 'text', page: 0, bbox: [465, 680, 485, 700], imgPath: '', text: 'D' }
+      )
+    }
+    return { pages: 1, regions: blocks }
+  }
+
+  function questions(): ParsedQuestion[] {
+    return [
+      {
+        set: 1,
+        num: 77,
+        stem: '从所给的四个选项中，选择最合适的一个填入问号处，使之呈现一定的规律性：\n![](images/stem-0.png)',
+        options: [
+          { key: 'A', text: 'A' },
+          { key: 'B', text: 'B' }
+        ]
+      },
+      {
+        set: 1,
+        num: 78,
+        stem: '下列关于货币的说法正确的是：',
+        options: [{ key: 'A', text: '货币是一般等价物' }]
+      }
+    ]
+  }
+
+  it('按标签正上方最近的图片块绑定 A-D，题干图重排、非图推题不动', () => {
+    const list = questions()
+    const summary = bindGraphicOptionsByGeometry(list, paperRegions())
+    expect(summary.bound).toBe(1)
+    expect(summary.skipped).toBe(0)
+    expect(list[0]!.options.map((option) => option.image)).toEqual([
+      'images/opt-a.png',
+      'images/opt-b.png',
+      'images/opt-c.png',
+      'images/opt-d.png'
+    ])
+    expect(list[0]!.options.every((option) => option.text === '')).toBe(true)
+    expect(list[0]!.stem.match(/images\/stem-\d\.png/g)).toHaveLength(5)
+    expect(list[0]!.stem).not.toContain('opt-')
+    expect(summary.notes.get(77)?.[0]).toContain('几何匹配')
+    expect(list[1]!.options).toEqual([{ key: 'A', text: '货币是一般等价物' }])
+  })
+
+  it('无标签块时按顺序取末 4 张尺寸相近的图作选项并降低置信度', () => {
+    const list = questions()
+    const summary = bindGraphicOptionsByGeometry(list, paperRegions(false))
+    expect(summary.partial).toBe(1)
+    expect(list[0]!.options).toHaveLength(4)
+    expect(summary.notes.get(77)?.[0]).toContain('置信度较低')
+  })
+
+  it('题号在版面块中找不到时跳过并留提示', () => {
+    const list = questions()
+    const summary = bindGraphicOptionsByGeometry(list, { pages: 1, regions: [] })
+    expect(summary.skipped).toBe(1)
+    expect(list[0]!.options).toHaveLength(2)
   })
 })

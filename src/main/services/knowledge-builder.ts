@@ -69,6 +69,7 @@ import {
   type ReferenceBuildInput
 } from './source-evidence'
 import {
+  bindGraphicOptionsByGeometry,
   buildGraphicPreservation,
   extractGraphicQuestions,
   GRAPHIC_AUTO_STRUCTURE,
@@ -103,6 +104,10 @@ import {
 import { VaultService } from './vault'
 
 const execFileAsync = promisify(execFile)
+
+// 文字通道切出的可用题少于此数时，"题号+图片页充足"的文件才按纯图推题本走保留通道；
+// 行测整卷有大量图表页但文字题健康，不能因此整文件放弃结构化
+const GRAPHIC_ONLY_MAX_TEXT_QUESTIONS = 5
 
 const SUPPORTED_EXTENSIONS = [
   '.pdf',
@@ -1232,6 +1237,8 @@ export class KnowledgeBuilderService {
         }
         /** 书级质量警告（数字异常/表格残缺/噪声剥离），随产物落审核页 */
         qualityWarnings?: string[]
+        /** 混合卷里图推小题的选项图几何绑定提示（按题号），绑定题一律进人工核对 */
+        graphicNotes?: Map<number, string[]>
         /** 能力边界分类（题本通道） */
         capability?: ImportCapability
         /** 题本行 → 页映射（与 parseQuestionBook 消费的行数组平行；来源页证据） */
@@ -1483,7 +1490,10 @@ export class KnowledgeBuilderService {
                   ? extractGraphicQuestions(regions!)
                   : undefined
               const textUsable = questions.filter((question) => question.options.length >= 2).length
-              if (graphicCandidate && !GRAPHIC_AUTO_STRUCTURE.enabled) {
+              // 混合试卷（行测整卷）同样满足"题号+图片页充足"，但文字通道健康时不能整文件
+              // 送进图推保留通道——只有文字通道近乎失灵才按纯图推题本处理
+              const graphicOnly = graphicCandidate && textUsable < GRAPHIC_ONLY_MAX_TEXT_QUESTIONS
+              if (graphicOnly && !GRAPHIC_AUTO_STRUCTURE.enabled) {
                 // 能力边界收敛：图形推理默认不做自动结构化（实验性绑定默认关闭）——
                 // 逐页保留原始页面图片与 OCR 文字，进人工审核；资料不丢失、能力边界诚实可见
                 const pages = buildGraphicPreservation(regions!, file.relativePath)
@@ -1599,17 +1609,27 @@ export class KnowledgeBuilderService {
                   figureImages: 0,
                   solutionMarks
                 })
+                // 混合卷里的图推小题：按版面坐标把选项图绑上（结构解析产物才有坐标）
+                const binding = regions
+                  ? bindGraphicOptionsByGeometry(questions, regions)
+                  : undefined
                 directBooks.push({
                   sourceId: file.sourceId,
                   relativePath: file.relativePath,
                   questions,
                   groups: parseAnswerGroups(directLines),
                   qualityWarnings,
+                  graphicNotes: binding?.notes,
                   capability,
                   linePageMap: fileLinePageMap
                 })
+                const bindingNote =
+                  binding &&
+                  binding.bound + binding.partial + binding.stemOnly + binding.skipped > 0
+                    ? `，图推 ${binding.bound + binding.partial + binding.stemOnly} 题已附图（待核对 ${binding.skipped} 题）`
+                    : ''
                 file.state = 'ready'
-                file.message = `${CAPABILITY_LABELS[capability]} · 切出 ${questions.length} 题，批次结束后自动合并发布`
+                file.message = `${CAPABILITY_LABELS[capability]} · 切出 ${questions.length} 题${bindingNote}，批次结束后自动合并发布`
               }
             }
           } else if (job.options.mode === 'convert-only') {
@@ -1825,6 +1845,9 @@ export class KnowledgeBuilderService {
             const markdown = directQuestionMarkdown(item)
             const groupFirst = !item.groupId || !materialWarnedGroups.has(item.groupId)
             if (item.groupId) materialWarnedGroups.add(item.groupId)
+            // 几何绑定了选项图的图推题：带绑定提示，按能力边界进人工核对（不自动发布）
+            const graphicNotes = book.graphicNotes?.get(item.num) ?? []
+            const imageOptions = item.options.some((option) => option.image)
             const artifact: StoredArtifact = {
               id: item.id,
               jobId: job.id,
@@ -1844,9 +1867,10 @@ export class KnowledgeBuilderService {
                   ? ['配对待确认：题本与解析未通过相似度校验，答案需人工核对']
                   : []),
                 ...(offsetAdjusted ? ['答案已通过相似度校正，建议抽查'] : []),
-                ...(item.cleanupWarnings ?? [])
+                ...(item.cleanupWarnings ?? []),
+                ...graphicNotes
               ],
-              capability: book.capability,
+              capability: imageOptions ? 'graphic-review' : book.capability,
               preview: item.stem.slice(0, 180),
               markdown,
               evidenceExcerpt: item.stem.slice(0, 80),
