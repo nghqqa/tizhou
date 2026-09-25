@@ -13,6 +13,7 @@ import {
   parseAnswerGroups,
   parseEssayBook,
   parseQuestionBook,
+  repairDriftedQuestionNumbers,
   parseSolutionBook,
   toLines
 } from '../src/main/services/question-import'
@@ -1686,4 +1687,71 @@ describe('直导批次质量分层与汇总（管线级）', () => {
     const evidence = detail?.sourceEvidence
     if (evidence) expect(['unavailable', 'available']).toContain(evidence.status)
   }, 35_000)
+})
+
+describe('repairDriftedQuestionNumbers（悬挂缩进题号漂移修复）', () => {
+  it('题干中间的期望题号提到行首，行数不变', () => {
+    const lines = [
+      '习近平总书记指出，我们要始终坚持以人民为中1.心，及时回应群众关切。下列说法正确的是：',
+      'A.第一项',
+      'B.第二项',
+      '2024年11月，首届论坛举行，国家主席向2.论坛致贺信。下列说法错误的是：',
+      'A.第一项',
+      'B.第二项'
+    ]
+    const repaired = repairDriftedQuestionNumbers(lines)
+    expect(repaired).toHaveLength(lines.length)
+    expect(repaired[0]).toBe(
+      '1.习近平总书记指出，我们要始终坚持以人民为中心，及时回应群众关切。下列说法正确的是：'
+    )
+    expect(repaired[3]).toBe(
+      '2. 2024年11月，首届论坛举行，国家主席向论坛致贺信。下列说法错误的是：'
+    )
+    const parsed = parseQuestionBook(repaired)
+    expect(parsed.map((question) => question.num)).toEqual([1, 2])
+  })
+
+  it('挂在上一段末尾的题号移交给下一行开头', () => {
+    const lines = [
+      '1.第一题题干？',
+      'A.甲',
+      'B.乙',
+      '前一题的尾巴文字，然后 2.',
+      '第二题的题干在这里？',
+      'A.丙',
+      'B.丁'
+    ]
+    const repaired = repairDriftedQuestionNumbers(lines)
+    expect(repaired[3]).toBe('前一题的尾巴文字，然后')
+    expect(repaired[4]).toBe('2.第二题的题干在这里？')
+  })
+
+  it('年份/小数不会被当成题号，选项行不动，套号标题重置期望', () => {
+    const lines = [
+      '1.第一题？',
+      'A.收入 2025.',
+      'B.增长 2.5 倍',
+      '练习题 2 套',
+      '1.新一套第一题？',
+      'A.甲'
+    ]
+    const repaired = repairDriftedQuestionNumbers(lines)
+    expect(repaired).toEqual(lines)
+  })
+
+  it('容忍一个题号缺失：期望 3 缺席时接受漂移的 4', () => {
+    const lines = [
+      '1.第一题？',
+      'A.甲',
+      'B.乙',
+      '2.第二题？',
+      'A.甲',
+      'B.乙',
+      '第四题的前半句 4.后半句？',
+      'A.甲',
+      'B.乙'
+    ]
+    const repaired = repairDriftedQuestionNumbers(lines)
+    expect(repaired[6]).toBe('4.第四题的前半句后半句？')
+  })
 })

@@ -45,3 +45,6 @@ __pycache__/
 fixtures/
 rc-evidence/
 SHA256SUMS.txt
+
+# 师弟的外部项目：轻舟 Markdown 转换器（独立仓库，勿随题舟发布）
+轻舟Markdown转换器/

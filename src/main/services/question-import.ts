@@ -96,6 +96,72 @@ const ORIGIN_MARK = /^[（(]\s*(\d{4})\s*年?\s*([^)）]*?)\s+(\d{1,3})\s*%\s*[)
 const ANSWER_SECTION = /^参考答案$|^答案速查$/
 const ANSWER_RANGE = /^(\d{1,3})\s*[-—~]\s*(\d{1,3})\s*[:：]\s*([A-Da-d]{1,30})/
 const NOISE = /^(四海公考|SIHAIGONGKAO|花生十三|花生\+三|超格学员专用|公众号[：:].*)$/i
+const OPTION_LINE = /^[A-D]\s*[.、．]/
+
+/**
+ * 题号漂移修复。粉笔系试卷 PDF 用悬挂缩进排版（题号独立成一列），其文字流把题号写在
+ * 题干换行文本之后，版面引擎按流合并后题号会拼进题干中间（"坚持以人民为中1.心"）或
+ * 挂在上一段末尾（"…云服务、114."）。按"下一个期望题号"在段落中/行尾找到它并归位：
+ * 行中漂移提到行首，行尾漂移移交给下一行开头。只改行内容、不增删行，
+ * 来源页证据依赖的行号映射不受影响；容忍一个题号缺失（接受期望值 +1）。
+ */
+export function repairDriftedQuestionNumbers(lines: string[]): string[] {
+  const out: string[] = []
+  let expected = 1
+  let carried: number | undefined
+  // 题干以数字开头（"2024年…"）时题号后补空格，否则会被 QUESTION_NO 的防小数规则拒收
+  const prefix = (num: number, rest: string): string =>
+    `${num}.${/^\d/.test(rest) ? ' ' : ''}${rest}`
+  for (const rawLine of lines) {
+    let line = rawLine
+    if (carried !== undefined && line.trim()) {
+      line = prefix(carried, line)
+      carried = undefined
+    }
+    if (SET_TITLE.test(line)) {
+      expected = 1
+      out.push(line)
+      continue
+    }
+    const head = line.match(QUESTION_NO)
+    if (head) {
+      const num = Number(head[1])
+      // 行首出现的合理题号即重同步：引擎整个丢掉几道题的题号时（73/74/75 全无），
+      // 后续真题号不能被死等的期望值卡住
+      if (num === 1) expected = 2
+      else if (num >= expected && num - expected <= 10) expected = num + 1
+      out.push(line)
+      continue
+    }
+    if (OPTION_LINE.test(line) || /^(!\[|\|)/.test(line)) {
+      // 选项行不处理；图片引用/表格行里的十六进制文件名（"…a77.png"）不是题号
+      out.push(line)
+      continue
+    }
+    let repaired: string | undefined
+    for (const candidate of [expected, expected + 1]) {
+      // 题号前一字符不得是数字，防止年份/数值（"2025."）被当成题号
+      const tail = line.match(new RegExp(`^(.*\\S)\\s*(?<!\\d)(${candidate})[.、．]\\s*$`))
+      if (tail) {
+        carried = candidate
+        repaired = tail[1]!
+        expected = candidate + 1
+        break
+      }
+      // 题号后不得紧跟数字或小写字母：排除小数（"2.5"）与文件后缀（"a77.png"）
+      const mid = line.match(
+        new RegExp(`^(.{4,}?)\\s*(?<!\\d)(${candidate})[.、．](?![\\da-z])(.*)$`)
+      )
+      if (mid) {
+        repaired = prefix(candidate, `${mid[1]}${mid[3]}`)
+        expected = candidate + 1
+        break
+      }
+    }
+    out.push(repaired ?? line)
+  }
+  return out
+}
 
 // ---- 申论主观题教材（直导）：单元式「训练 + 资料 + 提问 + 要求」结构 ----
 // 两种实测版式：【训练一】标题（夸夸刷系） / 训练一：标题（酷酷刷系）
@@ -227,7 +293,8 @@ export function parseQuestionBook(inputLines: string[]): ParsedQuestion[] {
   const inputIndexOf: number[] = []
   for (let index = 0; index < inputLines.length; index += 1)
     if (!removedRows.has(index)) inputIndexOf.push(index)
-  const lines = tocLines
+  // 题号漂移修复逐行等长替换，不影响上面的索引映射
+  const lines = repairDriftedQuestionNumbers(tocLines)
   const questions: ParsedQuestion[] = []
   let setNo = 0
   let current: ParsedQuestion | null = null

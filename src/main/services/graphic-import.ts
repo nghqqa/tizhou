@@ -311,3 +311,180 @@ export function buildGraphicPreservation(
   }
   return items
 }
+// ---- 混合试卷中的图形推理小题：按版面坐标把选项图绑到题目上 ----
+// 文字通道切出的图推题只有 "A.A" 占位选项或空选项；RapidDoc 在 2×2 选项网格上的阅读顺序
+// 不可靠（标签与图片交错错位），改用 _regions.json 的坐标做几何绑定：每个选项标签块
+// （"A"/"B"/"C"/"D"）正上方最近且水平对齐的图片块即该选项图。题目常跨页（题号在上页底、
+// 图在下页顶），跨度按全局阅读顺序（页, y）取到下一个题号锚点。绑定结果一律进人工核对。
+
+const GRAPHIC_STEM =
+  /从所给的四个选项中|使之呈现一定的规律性|填入问号处|分为两类|每一类图形|图形的变化规律|所给图形/
+const OPTION_LABEL = /^[A-DＡ-Ｄ]\s*[.、．]?$/
+const QUESTION_ANCHOR = /^\s*(\d{1,3})\s*[.、．]/
+
+export interface GraphicBindingSummary {
+  /** 四个选项图全部绑定的题数 */
+  bound: number
+  /** 无标签、按顺序兜底绑定的题数（置信度较低） */
+  partial: number
+  /** 选项本身是文字（"分为两类"等题型），只把题干图附上的题数 */
+  stemOnly: number
+  /** 识别为图推但未能绑定的题数 */
+  skipped: number
+  /** 按题号记录的审核提示 */
+  notes: Map<number, string[]>
+}
+
+function centerX(block: RegionBlock): number {
+  const [x0 = 0, , x1 = 0] = block.bbox
+  return (x0 + x1) / 2
+}
+
+function widthOf(block: RegionBlock): number {
+  const [x0 = 0, , x1 = 0] = block.bbox
+  return Math.max(1, x1 - x0)
+}
+
+/** 选项文本只是字母占位（"A.A"）或为空：文字通道没拿到真正的选项内容 */
+function placeholderOptions(question: ParsedQuestion): boolean {
+  if (question.options.length === 0) return true
+  return question.options.every((option) => {
+    // 版面引擎常把整行 "A.A B.B C.C D.D" 折给第一个选项、把图片引用附着在选项文字后：
+    // 剥掉图片引用与「字母.字母」残片后不再有实质内容，即视为占位选项
+    const text = option.text
+      .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
+      .replace(/[A-DＡ-Ｄ][.、．][A-DＡ-Ｄ]/g, '')
+      .replace(/\s+/g, '')
+      .normalize('NFKC')
+      .toUpperCase()
+    // 只剩 A-D 字母（含散落标签拼接成的 "AB"/"BD"）即无实质内容
+    return /^[A-D]*$/.test(text)
+  })
+}
+
+// 题干里散落的选项标签行（"A"、"B.B"、"A.A B.B C.C D.D"）不是题干内容
+function isLabelDebris(line: string): boolean {
+  return /^([A-DＡ-Ｄ]([.、．][A-DＡ-Ｄ]?)?)+$/.test(line.replace(/\s+/g, ''))
+}
+
+// 题干里已有的图片引用去重后重排：先文字，再题干图（按版面顺序）
+function withStemImages(stem: string, stemImages: RegionBlock[]): string {
+  const text = stem
+    .split('\n')
+    .filter((line) => !isLabelDebris(line.trim()))
+    .join('\n')
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
+    .replace(/\n{2,}/g, '\n')
+    .trim()
+  return [text, ...stemImages.map((image) => `![](${image.imgPath})`)].filter(Boolean).join('\n')
+}
+
+export function bindGraphicOptionsByGeometry(
+  questions: ParsedQuestion[],
+  regions: StructuredRegions
+): GraphicBindingSummary {
+  const summary: GraphicBindingSummary = {
+    bound: 0,
+    partial: 0,
+    stemOnly: 0,
+    skipped: 0,
+    notes: new Map()
+  }
+  // 全局阅读顺序：先页后纵坐标；题号锚点按该顺序取"下一个锚点"作为跨度终点（允许跨页）
+  const ordered = [...regions.regions].sort(
+    (a, b) => a.page - b.page || (a.bbox[1] ?? 0) - (b.bbox[1] ?? 0)
+  )
+  const anchorIndexByNum = new Map<number, number>()
+  const anchorIndexes: number[] = []
+  ordered.forEach((block, index) => {
+    if (block.type !== 'text') return
+    const match = block.text.match(QUESTION_ANCHOR)
+    if (!match) return
+    const num = Number(match[1])
+    if (!anchorIndexByNum.has(num)) anchorIndexByNum.set(num, index)
+    anchorIndexes.push(index)
+  })
+  const keys = ['A', 'B', 'C', 'D']
+  for (const question of questions) {
+    const placeholder = placeholderOptions(question)
+    if (!GRAPHIC_STEM.test(question.stem) && !placeholder) continue
+    const start = anchorIndexByNum.get(question.num)
+    if (start === undefined) {
+      if (!GRAPHIC_STEM.test(question.stem)) continue
+      summary.skipped += 1
+      summary.notes.set(question.num, [
+        '图形推理：未在版面块中定位到题号，选项图未绑定，请人工核对'
+      ])
+      continue
+    }
+    const end = anchorIndexes.find((index) => index > start) ?? ordered.length
+    const span = ordered.slice(start + 1, end)
+    const images = span.filter((block) => block.type === 'image' && block.imgPath)
+    if (images.length === 0) {
+      if (!GRAPHIC_STEM.test(question.stem)) continue
+      summary.skipped += 1
+      summary.notes.set(question.num, ['图形推理：题目范围内没有图片块，请人工核对原图'])
+      continue
+    }
+    if (!placeholder) {
+      // 选项是真实文字（如"分为两类"的 ①②④，③⑤⑥）：图片全部属于题干
+      question.stem = withStemImages(question.stem, images)
+      summary.stemOnly += 1
+      summary.notes.set(question.num, [
+        `图形推理：${images.length} 张题干图已随题附上，选项为文字，请核对图序`
+      ])
+      continue
+    }
+    const labels = span
+      .filter((block) => block.type === 'text' && OPTION_LABEL.test(block.text.trim()))
+      .map((block) => ({ key: block.text.trim().charAt(0).normalize('NFKC').toUpperCase(), block }))
+      .sort((a, b) => a.key.localeCompare(b.key))
+    const used = new Set<RegionBlock>()
+    const bound = new Map<string, RegionBlock>()
+    for (const label of labels) {
+      if (bound.has(label.key)) continue
+      const [, ly0 = 0, , ly1 = 0] = label.block.bbox
+      let best: { image: RegionBlock; gap: number } | undefined
+      for (const image of images) {
+        if (used.has(image) || image.page !== label.block.page) continue
+        const [, iy0 = 0, , iy1 = 0] = image.bbox
+        const aligned =
+          Math.abs(centerX(image) - centerX(label.block)) <=
+          Math.max(widthOf(image), widthOf(label.block)) * 0.6
+        if (!aligned) continue
+        // 标签通常印在图下方，少数版式印在图上方：两种都接受，取距离最近者
+        const gap =
+          iy1 <= ly0 + 30 ? ly0 - iy1 : iy0 >= ly1 - 30 ? iy0 - ly1 : Number.POSITIVE_INFINITY
+        if (gap > 260) continue
+        if (!best || gap < best.gap) best = { image, gap }
+      }
+      if (best) {
+        used.add(best.image)
+        bound.set(label.key, best.image)
+      }
+    }
+    if (bound.size === 4) {
+      const stemImages = images.filter((image) => !used.has(image))
+      question.options = keys.map((key) => ({ key, text: '', image: bound.get(key)!.imgPath }))
+      question.stem = withStemImages(question.stem, stemImages)
+      summary.bound += 1
+      summary.notes.set(question.num, [
+        '图形推理：4 个选项图已按版面坐标绑定（几何匹配），发布前请人工核对'
+      ])
+    } else if (labels.length === 0 && images.length >= 4 && optionLike(images.slice(-4))) {
+      const tail = images.slice(-4)
+      question.options = keys.map((key, index) => ({ key, text: '', image: tail[index]!.imgPath }))
+      question.stem = withStemImages(question.stem, images.slice(0, -4))
+      summary.partial += 1
+      summary.notes.set(question.num, [
+        '图形推理：未识别到选项标签，末尾 4 张图按顺序作为选项（置信度较低），请人工核对'
+      ])
+    } else {
+      summary.skipped += 1
+      summary.notes.set(question.num, [
+        `图形推理：选项图绑定不完整（标签 ${labels.length}、图片 ${images.length}、已绑 ${bound.size}），请人工核对原图`
+      ])
+    }
+  }
+  return summary
+}
