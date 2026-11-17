@@ -1,0 +1,48 @@
+# 题舟官网 Caddy 配置模板
+# 用法：cp Caddyfile.example /etc/caddy/Caddyfile（或放入站点配置目录）后修改域名与目录
+#
+# 方式 A（推荐）：绑定域名后 Caddy 自动向 Let's Encrypt 申请并续期 HTTPS 证书
+# 方式 B：裸 IP 临时预览（HTTP，仅用于上线前验证，不建议对外宣传）
+
+# ── 方式 A：域名 + 自动 HTTPS ─────────────────────────────
+tizhou.nghqqa.cn {
+    root * /var/www/tizhou-website
+    encode gzip zstd
+
+    # 单页站点回退：所有路径回落到 index.html
+    try_files {path} /index.html
+
+    header {
+        # 基础安全响应头
+        -Server
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        # 带哈希指纹的构建产物强缓存；index.html 由下方规则单独控制
+        /assets/* Cache-Control "public, max-age=31536000, immutable"
+    }
+
+    @index path /index.html
+    header @index Cache-Control "no-cache, must-revalidate"
+
+    # 隐藏文件与敏感后缀一律拒绝
+    @hidden path /.* /.*/* *.env *.pem *.key
+    respond @hidden 404
+
+    file_server
+}
+
+# ── 方式 B：裸 IP 临时预览（验证完成后建议注释掉） ─────────
+# :80 {
+#     root * /var/www/tizhou-website
+#     encode gzip
+#     try_files {path} /index.html
+#     file_server
+# }
+
+# ── 预留：安装包直链镜像（服务器带宽充足时启用） ───────────
+# 在官网 release.ts 中把 selfHosted.enabled 改为 true 后：
+# handle_path /downloads/* {
+#     root * /var/www/tizhou-downloads
+#     file_server
+# }

@@ -1,0 +1,58 @@
+# 题舟官网 Nginx 站点配置模板
+# 用法（Debian/Ubuntu）：
+#   cp nginx.conf.example /etc/nginx/sites-available/tizhou-website
+#   ln -s /etc/nginx/sites-available/tizhou-website /etc/nginx/sites-enabled/
+#   nginx -t && systemctl reload nginx
+# HTTPS：certbot --nginx -d tizhou.nghqqa.cn 会自动改写本文件并配置 80 跳转 443
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name _; # 绑定域名后改为 tizhou.nghqqa.cn
+
+    root /var/www/tizhou-website;
+    index index.html;
+
+    # gzip 压缩
+    gzip on;
+    gzip_comp_level 5;
+    gzip_min_length 512;
+    gzip_types text/plain text/css application/javascript application/json image/svg+xml;
+
+    server_tokens off;
+
+    # 基础安全响应头
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+    # 带哈希指纹的构建产物：强缓存
+    location /assets/ {
+        add_header Cache-Control "public, max-age=31536000, immutable";
+    }
+
+    # 入口文档不缓存，保证发版即生效
+    location = /index.html {
+        add_header Cache-Control "no-cache, must-revalidate";
+    }
+
+    # 禁止暴露隐藏文件与敏感后缀
+    location ~ /\.(?!well-known) {
+        deny all;
+    }
+    location ~* \.(env|pem|key|log)$ {
+        deny all;
+    }
+
+    # 单页站点回退
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # ── 预留：安装包直链镜像（服务器带宽充足时启用） ──
+    # 在官网 release.ts 中把 selfHosted.enabled 改为 true 后取消注释：
+    #location /downloads/ {
+    #    alias /var/www/tizhou-downloads/;
+    #    add_header Cache-Control "public, max-age=86400";
+    #}
+}

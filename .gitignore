@@ -16,6 +16,8 @@ coverage/
 *.sqlite-wal
 .env
 .env.*
+# 官网部署配置模板需要入库；真实值只放 .env.deploy（仍被 .env.* 忽略）
+!.env.deploy.example
 *.pem
 *.pfx
 *.p12
@@ -48,3 +50,7 @@ SHA256SUMS.txt
 
 # 师弟的外部项目：轻舟 Markdown 转换器（独立仓库，勿随题舟发布）
 轻舟Markdown转换器/
+
+# 官网工程（website/）本地产物；.env.deploy 已被上方 .env.* 模式覆盖
+website/node_modules/
+website/dist/
