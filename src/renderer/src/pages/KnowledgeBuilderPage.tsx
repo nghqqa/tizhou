@@ -828,6 +828,7 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
           checked={vlmConfig?.enabled === true}
           onChange={(_, data) => void toggleVlmEnabled(data.checked)}
           label="VLM 按页精校"
+          data-testid="workshop-vlm-switch"
         />
         <small className="muted-copy" style={{ flex: 1, minWidth: 220 }}>
           {vlmConfig?.enabled
@@ -1585,6 +1586,7 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
                           size="small"
                           appearance="subtle"
                           disabled={busy !== ''}
+                          data-testid="edit-markdown-button"
                           onClick={() => {
                             setEditorContent(artifact.markdown)
                             setEditorMode('manual')
