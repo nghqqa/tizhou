@@ -143,6 +143,9 @@ export interface KnowledgeBuildOptions {
   rightsConfirmed: boolean
   /** 忽略转换缓存：本批次全部重新转换（结果照常写回缓存），排查识别问题时使用 */
   ignoreConversionCache?: boolean
+  /** 任务级 VLM 批量预精校（次路径）：仅对表格/数字异常页按页调用视觉模型，
+   *  需工坊 VLM 总开关已开启；硬编码单批页数上限，未确认产物仍走发布门禁 */
+  enableVlmProofread?: boolean
 }
 
 export type KnowledgeBuildFileState =
@@ -564,9 +567,17 @@ export interface AiConfigView extends Omit<AiConfigInput, 'apiKey'> {
   lastError?: string
 }
 
+/** 多模态消息图片载荷：仅 VLM 按页精校等显式开启的功能使用；纯文本调用不传即完全兼容 */
+export interface AiImageInput {
+  mimeType: 'image/jpeg' | 'image/png'
+  /** data URL（data:image/jpeg;base64,...），主进程按协议适配为各服务格式 */
+  dataUrl: string
+}
+
 export interface AiMessage {
   role: 'system' | 'user' | 'assistant'
   content: string
+  images?: AiImageInput[]
 }
 
 export interface AiAskInput {
@@ -579,6 +590,53 @@ export interface AiAskResult {
   provider: string
   model: string
   usage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number }
+}
+
+/** VLM 精校模型来源：reuse-main 直接复用全局 AI 配置；custom 单独配置视觉模型 */
+export type VlmModelMode = 'reuse-main' | 'custom'
+
+export interface VlmConfigInput {
+  /** 总开关：关闭时 100% 本地离线，绝不发送任何图片到外部服务 */
+  enabled: boolean
+  mode: VlmModelMode
+  /** mode='custom' 时的视觉模型配置（复用 AiProvider/AiProtocol 枚举与 SSRF 校验） */
+  provider?: AiProvider
+  protocol?: AiProtocol
+  baseUrl?: string
+  model?: string
+  /** 仅在用户填写时更新；留空保持已保存凭据不变 */
+  apiKey?: string
+}
+
+export interface VlmConfigView {
+  enabled: boolean
+  mode: VlmModelMode
+  provider?: AiProvider
+  protocol?: AiProtocol
+  baseUrl?: string
+  model?: string
+  /** 只暴露是否存在，绝不回传明文密钥 */
+  hasApiKey: boolean
+  verified: boolean
+  lastCheckedAt?: string
+  lastError?: string
+  /** 复用主模型时展示当前全局模型名（提示用户主模型是否适合看图） */
+  mainProvider?: AiProvider
+  mainModel?: string
+}
+
+/** 单产物按页 VLM 精校结果：只含建议，不落盘；由用户对比采纳后经 updateMarkdown 持久化 */
+export interface VlmProofreadSuggestion {
+  jobId: string
+  artifactId: string
+  /** 主进程重组后的完整 Markdown：YAML frontmatter（id/answer/options[].image 等）原样保留 */
+  correctedMarkdown: string
+  /** VLM 报告的变更说明（人工可读） */
+  changes: string[]
+  /** 存疑项（看不清/无法核对处，对应正文中的 [模糊待人工确认] 标记） */
+  uncertainItems: string[]
+  summary: string
+  pages: Array<{ sourceId: string; pageNumber: number }>
 }
 
 export interface AiTrainingRecord {
@@ -697,6 +755,21 @@ export type WorkbenchRequest =
   | { method: 'knowledgeBuilder.job.revert'; params: { id: string } }
   | { method: 'knowledgeBuilder.artifact.get'; params: { jobId: string; artifactId: string } }
   | {
+      method: 'knowledgeBuilder.artifact.updateMarkdown'
+      params: {
+        jobId: string
+        artifactId: string
+        /** 完整 Markdown（frontmatter 必须与原产物一致，主进程校验 id 不被篡改） */
+        markdown: string
+        /** 保存来源：vlm = 采纳 VLM 精校结果（warnings 补充复核提示）；manual = 人工编辑 */
+        origin?: 'vlm' | 'manual'
+      }
+    }
+  | {
+      method: 'knowledgeBuilder.artifact.vlmProofread'
+      params: { jobId: string; artifactId: string }
+    }
+  | {
       method: 'knowledgeBuilder.artifact.review'
       params: {
         jobId: string
@@ -768,6 +841,10 @@ export type WorkbenchRequest =
   | { method: 'ai.config.get'; params?: undefined }
   | { method: 'ai.config.save'; params: AiConfigInput }
   | { method: 'ai.config.clearCredential'; params?: undefined }
+  | { method: 'ai.vlmConfig.get'; params?: undefined }
+  | { method: 'ai.vlmConfig.save'; params: VlmConfigInput }
+  | { method: 'ai.vlmConfig.clearCredential'; params?: undefined }
+  | { method: 'ai.vlmConfig.test'; params?: undefined }
   | { method: 'ai.providers'; params?: undefined }
   | { method: 'ai.models.discover'; params?: undefined }
   | { method: 'ai.test'; params?: undefined }

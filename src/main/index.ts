@@ -384,6 +384,18 @@ async function initialize(): Promise<void> {
         return knowledgeBuilder.revertImport(request.params.id)
       case 'knowledgeBuilder.artifact.get':
         return knowledgeBuilder.getArtifact(request.params.jobId, request.params.artifactId)
+      case 'knowledgeBuilder.artifact.updateMarkdown':
+        return knowledgeBuilder.updateArtifactMarkdown(
+          request.params.jobId,
+          request.params.artifactId,
+          request.params.markdown,
+          request.params.origin
+        )
+      case 'knowledgeBuilder.artifact.vlmProofread':
+        return knowledgeBuilder.vlmProofreadArtifact(
+          request.params.jobId,
+          request.params.artifactId
+        )
       case 'knowledgeBuilder.artifact.review':
         return knowledgeBuilder.reviewArtifact(
           request.params.jobId,
@@ -592,6 +604,14 @@ async function initialize(): Promise<void> {
         return ai.saveConfig(request.params)
       case 'ai.config.clearCredential':
         return ai.clearCredential()
+      case 'ai.vlmConfig.get':
+        return ai.getVlmConfig()
+      case 'ai.vlmConfig.save':
+        return ai.saveVlmConfig(request.params)
+      case 'ai.vlmConfig.clearCredential':
+        return ai.clearVlmCredential()
+      case 'ai.vlmConfig.test':
+        return ai.testVlm()
       case 'ai.providers':
         return ai.providers()
       case 'ai.models.discover':

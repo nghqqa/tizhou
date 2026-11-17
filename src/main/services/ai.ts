@@ -6,22 +6,98 @@ import type {
   AiAskResult,
   AiConfigInput,
   AiConfigView,
+  AiImageInput,
   AiMessage,
   AiProtocol,
   AiProvider,
-  AiProviderInfo
+  AiProviderInfo,
+  VlmConfigInput,
+  VlmConfigView,
+  VlmModelMode
 } from '../../shared/contracts'
 import { DEFAULT_AI_CONFIG } from '../../shared/defaults'
 import { basePromptForPurpose, FEATURE_PROMPTS } from '../../shared/prompts'
 import { DatabaseService } from './database'
 
-interface StoredAiConfig {
+/** 已存模型配置（不含密钥）：导出供单测构造多模态请求体 */
+export interface StoredAiConfig {
   provider: AiProvider
   protocol: AiProtocol
   baseUrl: string
   model: string
   temperature: number
   maxTokens: number
+}
+
+/** vlm_config.payload_json：开关与（custom 模式的）视觉模型元数据；密钥单独加密存列 */
+interface StoredVlmMeta {
+  enabled: boolean
+  mode: VlmModelMode
+  provider?: AiProvider
+  protocol?: AiProtocol
+  baseUrl?: string
+  model?: string
+}
+
+/** 模型返回明确的不支持图像/多模态错误时，统一转化为可操作的中文引导 */
+const VISION_UNSUPPORTED_MESSAGE = '当前模型不支持图片输入，请切换或单独配置支持视觉的模型'
+
+/** VLM 探活用 1x1 PNG（合法最小图片，只为验证服务端接受图像载荷） */
+const VISION_PROBE_IMAGE: AiImageInput = {
+  mimeType: 'image/png',
+  dataUrl:
+    'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
+}
+
+// 视觉请求防爆上限：单次最多 3 页图（与按页精校页数上限一致），
+// 单张 data URL 上限 600 万字符（约 4.5 MB 原始字节，2000px JPEG 页图远低于此）
+export const MAX_VISION_IMAGES_PER_REQUEST = 3
+export const MAX_VISION_IMAGE_DATAURL_CHARS = 6_000_000
+
+function hasImages(messages: AiMessage[]): boolean {
+  return messages.some((message) => (message.images?.length ?? 0) > 0)
+}
+
+function rawBase64Of(dataUrl: string): string {
+  const comma = dataUrl.indexOf(',')
+  return comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl
+}
+
+function validateVisionMessages(messages: AiMessage[]): void {
+  let count = 0
+  for (const message of messages) {
+    for (const image of message.images ?? []) {
+      count += 1
+      if (count > MAX_VISION_IMAGES_PER_REQUEST)
+        throw new Error(`单次视觉请求最多携带 ${MAX_VISION_IMAGES_PER_REQUEST} 张页面图片`)
+      if (typeof image.dataUrl !== 'string' || !image.dataUrl.startsWith('data:image/'))
+        throw new Error('图片载荷必须是 data:image 开头的 data URL')
+      if (image.dataUrl.length > MAX_VISION_IMAGE_DATAURL_CHARS)
+        throw new Error('单张页面图片超过大小上限，请降低渲染分辨率后重试')
+    }
+  }
+}
+
+/** openai-chat 消息内容：无图保持原字符串；有图转 text + image_url 内容数组。
+ *  detail: 'high' 只加在官方 DeepSeek/OpenAI 端点（统计表小字更清晰），
+ *  其余 OpenAI 兼容端点不强加未知扩展字段，避免个别实现直接报 400 */
+function openAiVisionContent(
+  message: AiMessage,
+  useHighDetail: boolean
+): string | Array<Record<string, unknown>> {
+  const images = message.images ?? []
+  if (!images.length) return message.content
+  return [
+    { type: 'text', text: message.content },
+    ...images.map((image) => ({
+      type: 'image_url',
+      image_url: { url: image.dataUrl, ...(useHighDetail ? { detail: 'high' } : {}) }
+    }))
+  ]
+}
+
+function isVisionUnsupportedError(detail: string): boolean {
+  return /image|multimodal|vision|modalit|视觉|图片|图像|多模态/i.test(detail)
 }
 
 interface RequestSpec {
@@ -268,7 +344,12 @@ function systemText(messages: AiMessage[]): string {
     .join('\n\n')
 }
 
-function requestSpec(config: StoredAiConfig, messages: AiMessage[], apiKey: string): RequestSpec {
+/** 构造各协议的请求体（导出供单测断言多模态/纯文本两种形态） */
+export function requestSpec(
+  config: StoredAiConfig,
+  messages: AiMessage[],
+  apiKey: string
+): RequestSpec {
   const commonHeaders = { 'Content-Type': 'application/json' }
   switch (config.protocol) {
     case 'openai-responses':
@@ -277,7 +358,21 @@ function requestSpec(config: StoredAiConfig, messages: AiMessage[], apiKey: stri
         headers: { ...commonHeaders, Authorization: `Bearer ${apiKey}` },
         body: {
           model: config.model,
-          input: messages,
+          // 含图消息转 input_text/input_image 内容块；无图保持原 messages 结构不变
+          input: hasImages(messages)
+            ? messages.map((message) => ({
+                role: message.role,
+                content: message.images?.length
+                  ? [
+                      { type: 'input_text', text: message.content },
+                      ...message.images.map((image) => ({
+                        type: 'input_image',
+                        image_url: image.dataUrl
+                      }))
+                    ]
+                  : message.content
+              }))
+            : messages,
           temperature: config.temperature,
           max_output_tokens: config.maxTokens
         }
@@ -291,7 +386,22 @@ function requestSpec(config: StoredAiConfig, messages: AiMessage[], apiKey: stri
           system: systemText(messages) || undefined,
           messages: messages
             .filter((message) => message.role !== 'system')
-            .map((message) => ({ role: message.role, content: message.content })),
+            .map((message) => ({
+              role: message.role,
+              content: message.images?.length
+                ? [
+                    ...message.images.map((image) => ({
+                      type: 'image',
+                      source: {
+                        type: 'base64',
+                        media_type: image.mimeType,
+                        data: rawBase64Of(image.dataUrl)
+                      }
+                    })),
+                    { type: 'text', text: message.content }
+                  ]
+                : message.content
+            })),
           temperature: config.temperature,
           max_tokens: config.maxTokens
         }
@@ -308,19 +418,31 @@ function requestSpec(config: StoredAiConfig, messages: AiMessage[], apiKey: stri
             .filter((message) => message.role !== 'system')
             .map((message) => ({
               role: message.role === 'assistant' ? 'model' : 'user',
-              parts: [{ text: message.content }]
+              parts: [
+                ...(message.images ?? []).map((image) => ({
+                  inlineData: { mimeType: image.mimeType, data: rawBase64Of(image.dataUrl) }
+                })),
+                { text: message.content }
+              ]
             })),
           generationConfig: { temperature: config.temperature, maxOutputTokens: config.maxTokens }
         }
       }
     case 'ollama-openai':
-    case 'openai-chat':
+    case 'openai-chat': {
+      const useHighDetail = isDeepSeekEndpoint(config.baseUrl) || config.provider === 'openai'
       return {
         endpoint: openAiChatEndpoint(config),
         headers: { ...commonHeaders, ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}) },
         body: {
           model: config.model,
-          messages,
+          // 无图消息保持原数组引用与字符串 content（一字节不变）；有图才转内容数组
+          messages: hasImages(messages)
+            ? messages.map((message) => ({
+                role: message.role,
+                content: openAiVisionContent(message, useHighDetail)
+              }))
+            : messages,
           temperature: config.temperature,
           max_tokens: config.maxTokens,
           stream: false,
@@ -328,6 +450,7 @@ function requestSpec(config: StoredAiConfig, messages: AiMessage[], apiKey: stri
           ...(isDeepSeekEndpoint(config.baseUrl) ? { thinking: { type: 'disabled' } } : {})
         }
       }
+    }
   }
 }
 
@@ -476,6 +599,229 @@ export class AiService {
   clearCredential(): AiConfigView {
     this.database.clearAiCredential()
     return this.getConfig()
+  }
+
+  // ---- VLM 按页精校：开关、视觉模型配置与多模态请求 ----
+
+  getVlmConfig(): VlmConfigView {
+    const record = this.database.getVlmRecord()
+    const stored = safeParse<Partial<StoredVlmMeta>>(record?.payload_json ?? '', {})
+    const main = this.getConfig()
+    return {
+      enabled: Boolean(stored.enabled),
+      mode: stored.mode === 'custom' ? 'custom' : 'reuse-main',
+      provider: stored.provider,
+      protocol: stored.protocol,
+      baseUrl: stored.baseUrl,
+      model: stored.model,
+      hasApiKey: Boolean(record?.encrypted_key),
+      verified: Boolean(record?.verified),
+      lastCheckedAt: record?.last_checked_at ? String(record.last_checked_at) : undefined,
+      lastError: record?.last_error ? String(record.last_error) : undefined,
+      mainProvider: main.provider,
+      mainModel: main.model
+    }
+  }
+
+  saveVlmConfig(input: VlmConfigInput): VlmConfigView {
+    const previous = safeParse<Partial<StoredVlmMeta>>(
+      this.database.getVlmRecord()?.payload_json ?? '',
+      {}
+    )
+    const mode: VlmModelMode = input.mode === 'custom' ? 'custom' : 'reuse-main'
+    const meta: StoredVlmMeta = { enabled: Boolean(input.enabled), mode }
+    if (mode === 'custom') {
+      const provider = input.provider ?? previous.provider
+      const protocol = input.protocol ?? previous.protocol
+      const baseUrl = input.baseUrl ?? previous.baseUrl
+      const model = input.model ?? previous.model
+      if (!provider || !protocol || !baseUrl || !baseUrl.trim() || !model || !model.trim())
+        throw new Error('自定义视觉模型需要提供服务类型、协议、地址与模型名称')
+      // 与主模型同一套 SSRF/HTTPS 校验
+      meta.provider = provider
+      meta.protocol = protocol
+      meta.baseUrl = parseBaseUrl(baseUrl, provider).toString().replace(/\/$/, '')
+      meta.model = model.trim()
+    } else if (previous.provider && previous.protocol && previous.baseUrl && previous.model) {
+      // 复用主模型：保留已保存的自定义配置，切回 custom 时无需重填
+      meta.provider = previous.provider
+      meta.protocol = previous.protocol
+      meta.baseUrl = previous.baseUrl
+      meta.model = previous.model
+    }
+    let encryptedKey: string | null = null
+    if (input.apiKey?.trim()) {
+      if (!safeStorage.isEncryptionAvailable())
+        throw new Error('当前系统安全存储不可用，API Key 未保存')
+      encryptedKey = safeStorage.encryptString(input.apiKey.trim()).toString('base64')
+    }
+    this.database.saveVlmRecord(JSON.stringify(meta), encryptedKey, false)
+    return this.getVlmConfig()
+  }
+
+  clearVlmCredential(): VlmConfigView {
+    this.database.clearVlmCredential()
+    return this.getVlmConfig()
+  }
+
+  /** VLM 探活：带一张 1x1 测试图走真实多模态请求；纯文本模型的报错转化为清晰中文引导。
+   *  总开关未开启时也允许提前探活（只校验配置并请求，不静默翻转开关）；
+   *  探活结果只更新 verified/lastError，payload_json 保持用户已保存的开关状态 */
+  async testVlm(timeoutMs = 40_000): Promise<VlmConfigView> {
+    const storedMeta = (): string => {
+      const payload = this.database.getVlmRecord()?.payload_json
+      return typeof payload === 'string' && payload.trim()
+        ? payload
+        : // 表为空时的 fallback 必须保持关闭：探活通过不等于用户同意开启外发
+          JSON.stringify({ enabled: false, mode: 'reuse-main' })
+    }
+    try {
+      const target = this.resolveVisionTarget(false)
+      const result = await this.askVision(
+        {
+          messages: [
+            { role: 'system', content: FEATURE_PROMPTS.connectivity },
+            { role: 'user', content: '执行连接测试，只回复 OK。', images: [VISION_PROBE_IMAGE] }
+          ]
+        },
+        {
+          provider: target.config.provider,
+          protocol: target.config.protocol,
+          baseUrl: target.config.baseUrl,
+          model: target.config.model,
+          temperature: target.config.temperature,
+          maxTokens: target.config.maxTokens,
+          apiKey: target.apiKey || undefined
+        },
+        timeoutMs
+      )
+      if (!result.content.trim())
+        throw new Error('模型已连接，但未返回内容，请确认该模型支持图片输入')
+      this.database.saveVlmRecord(storedMeta(), null, true, now())
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '连接失败'
+      this.database.saveVlmRecord(storedMeta(), null, false, now(), message)
+    }
+    return this.getVlmConfig()
+  }
+
+  /** 多模态请求：完整复用 ask 的 SSRF 校验、协议分发与错误脱敏。
+   *  override 供测试/特殊调用方显式指定模型；生产路径走 VLM 配置解析。 */
+  async askVision(
+    input: { messages: AiMessage[] },
+    override?: AiConfigInput,
+    timeoutMs = 120_000
+  ): Promise<AiAskResult> {
+    if (!input.messages.length) throw new Error('消息不能为空')
+    let config: StoredAiConfig
+    let apiKey: string
+    if (override) {
+      config = {
+        provider: override.provider,
+        protocol: override.protocol,
+        baseUrl: parseBaseUrl(override.baseUrl, override.provider).toString().replace(/\/$/, ''),
+        model: override.model,
+        temperature: Math.max(0, Math.min(2, override.temperature)),
+        maxTokens: Math.max(256, Math.min(32768, Math.round(override.maxTokens)))
+      }
+      apiKey = override.apiKey?.trim() ?? ''
+    } else {
+      const target = this.resolveVisionTarget(true)
+      config = target.config
+      apiKey = target.apiKey
+    }
+    validateVisionMessages(input.messages)
+    if (providerInfo(config.provider).apiKeyRequired && !apiKey)
+      throw new Error('请先在模型设置中保存 API Key')
+    await verifyNetworkTarget(config.baseUrl, config.provider)
+    const request = requestSpec(config, input.messages, apiKey)
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), timeoutMs)
+    try {
+      const response = await fetch(request.endpoint, {
+        method: 'POST',
+        headers: request.headers,
+        body: JSON.stringify(request.body),
+        signal: controller.signal,
+        redirect: 'error'
+      })
+      const raw = await response.text()
+      const payload = safeParse<Record<string, unknown>>(raw, {})
+      if (!response.ok) {
+        const detail = responseError(payload, raw)
+        // 纯文本模型的典型报错（image/multimodal/vision 等）转为可操作引导，不泄漏原始堆栈
+        if (isVisionUnsupportedError(detail)) throw new Error(VISION_UNSUPPORTED_MESSAGE)
+        throw new Error(`模型服务返回 ${response.status}：${detail}`)
+      }
+      const content = textFromResponse(config.protocol, payload)
+      if (!content.trim()) {
+        const choices = Array.isArray(payload.choices)
+          ? (payload.choices as Array<Record<string, unknown>>)
+          : []
+        if (choices[0]?.finish_reason === 'length')
+          throw new Error('模型输出被最大长度截断，请在模型设置中调大最大输出长度')
+        throw new Error('模型返回了空内容')
+      }
+      return {
+        content,
+        provider: config.provider,
+        model: config.model,
+        usage: usageFromResponse(config.protocol, payload)
+      }
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError')
+        throw new Error('模型请求超时，请检查网络或服务地址')
+      throw error
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
+  /** 解析当前生效的视觉模型：reuse-main 直接复用全局配置；custom 读 vlm_config 存储。
+   *  requireEnabled=false 供 testVlm 在开关未开启时提前探活（只校验配置，不要求先打开开关） */
+  private resolveVisionTarget(requireEnabled: boolean): { config: StoredAiConfig; apiKey: string } {
+    const view = this.getVlmConfig()
+    if (requireEnabled && !view.enabled)
+      throw new Error('VLM 按页精校未开启，请先在模型设置中打开该开关')
+    if (view.mode === 'reuse-main') {
+      const main = this.getConfig()
+      const apiKey = this.readApiKey()
+      // reuse-main 探活/精校都复用主模型：主模型密钥必须先就位
+      if (providerInfo(main.provider).apiKeyRequired && !apiKey)
+        throw new Error(
+          requireEnabled
+            ? '请先在模型设置中保存 API Key'
+            : 'reuse-main 模式将复用主模型，请先在模型设置中保存主模型 API Key'
+        )
+      return { config: this.toStored(main), apiKey }
+    }
+    if (!view.provider || !view.protocol || !view.baseUrl || !view.model)
+      throw new Error('视觉模型配置不完整，请在模型设置中补全服务地址与模型名称')
+    const record = this.database.getVlmRecord()
+    const stored = safeParse<Partial<StoredAiConfig>>(record?.payload_json ?? '', {})
+    const config: StoredAiConfig = {
+      provider: view.provider,
+      protocol: view.protocol,
+      baseUrl: view.baseUrl,
+      model: view.model,
+      temperature: typeof stored.temperature === 'number' ? stored.temperature : 0.2,
+      maxTokens: typeof stored.maxTokens === 'number' ? Math.max(1024, stored.maxTokens) : 8192
+    }
+    return { config, apiKey: this.readKeyFromRecord(record, '视觉模型') }
+  }
+
+  private readKeyFromRecord(
+    record: ReturnType<DatabaseService['getVlmRecord']>,
+    label: string
+  ): string {
+    if (!record?.encrypted_key || typeof record.encrypted_key !== 'string') return ''
+    if (!safeStorage.isEncryptionAvailable())
+      throw new Error(`当前系统安全存储不可用，无法读取${label} API Key`)
+    try {
+      return safeStorage.decryptString(Buffer.from(record.encrypted_key, 'base64'))
+    } catch {
+      throw new Error(`${label} API Key 无法解密，请重新保存`)
+    }
   }
 
   async discoverModels(): Promise<string[]> {

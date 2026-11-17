@@ -14,6 +14,7 @@ import {
   ProgressBar,
   Select,
   Spinner,
+  Switch,
   Textarea
 } from '@fluentui/react-components'
 import {
@@ -28,7 +29,8 @@ import {
   StopIcon,
   TrashIcon,
   WrenchIcon,
-  LightningIcon
+  LightningIcon,
+  SparkleIcon
 } from '@phosphor-icons/react'
 import { PIP_MIRROR_OPTIONS, pipMirrorLabel } from '@shared/pip-mirrors'
 import type {
@@ -43,7 +45,9 @@ import type {
   KnowledgeSourceScan,
   OcrQualityReport,
   Subject,
-  VaultIndexResult
+  VaultIndexResult,
+  VlmConfigView,
+  VlmProofreadSuggestion
 } from '@shared/contracts'
 import { formatBytes, invoke } from '../api'
 import { MarkdownContent } from '../components/MarkdownContent'
@@ -164,6 +168,13 @@ function statusAppearance(
       : 'tint'
 }
 
+/** 产物是否具备可精校的来源 PDF 页（材料/题本/保留页；解析册页不参与） */
+function hasProofreadPages(artifact: KnowledgeArtifactSummary): boolean {
+  const evidence = artifact.sourceEvidence
+  if (!evidence || evidence.status === 'unavailable') return false
+  return evidence.references.some((ref) => ref.role !== 'solution' && ref.pages.length > 0)
+}
+
 export function KnowledgeBuilderPage(): React.JSX.Element {
   const initialize = useAppStore((state) => state.initialize)
   const [engine, setEngine] = useState<KnowledgeEngineStatus>()
@@ -179,6 +190,8 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
   const [rightsConfirmed, setRightsConfirmed] = useState(false)
   // 缓存管理：忽略缓存重转的批次选项 + 缓存统计/清空
   const [ignoreCache, setIgnoreCache] = useState(false)
+  // 任务级 VLM 批量预精校（需总开关已开启才可见）
+  const [enableVlmProofread, setEnableVlmProofread] = useState(false)
   const [cacheInfo, setCacheInfo] = useState<{
     entries: Array<{ sourceName: string }>
     totalBytes: number
@@ -212,6 +225,11 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
   const PAGE_SIZE = 50
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
+  // VLM 按页精校（可选，默认关闭）：开关状态 + 精校建议 + 正文编辑器
+  const [vlmConfig, setVlmConfig] = useState<VlmConfigView>()
+  const [vlmSuggestion, setVlmSuggestion] = useState<VlmProofreadSuggestion>()
+  const [editorContent, setEditorContent] = useState('')
+  const [editorMode, setEditorMode] = useState<'closed' | 'manual' | 'vlm'>('closed')
 
   const visibleFiles = useMemo(() => {
     if (!scan) return []
@@ -233,11 +251,13 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
   useEffect(() => {
     void Promise.all([
       invoke<KnowledgeEngineStatus>({ method: 'knowledgeBuilder.engine.status' }),
-      invoke<KnowledgeBuildJob | undefined>({ method: 'knowledgeBuilder.job.latest' })
+      invoke<KnowledgeBuildJob | undefined>({ method: 'knowledgeBuilder.job.latest' }),
+      invoke<VlmConfigView>({ method: 'ai.vlmConfig.get' })
     ])
-      .then(([engineStatus, latest]) => {
+      .then(([engineStatus, latest, vlm]) => {
         setEngine(engineStatus)
         setJob(latest)
+        setVlmConfig(vlm)
       })
       .catch((cause) => setError(cause instanceof Error ? cause.message : '知识库工坊初始化失败'))
   }, [])
@@ -437,7 +457,8 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
               .filter(Boolean),
             instruction,
             rightsConfirmed,
-            ignoreConversionCache: ignoreCache
+            ignoreConversionCache: ignoreCache,
+            enableVlmProofread: enableVlmProofread && vlmConfig?.enabled === true
           }
         }
       })
@@ -531,6 +552,9 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
     setBusy('artifact')
     setError('')
     setHumanConfirmed(false)
+    setVlmSuggestion(undefined)
+    setEditorMode('closed')
+    setEditorContent('')
     try {
       setArtifact(
         await invoke({
@@ -540,6 +564,75 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
       )
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '产物读取失败')
+    } finally {
+      setBusy('')
+    }
+  }
+
+  /** 切换工坊 VLM 总开关：关闭即 100% 本地离线，不发送任何图片 */
+  async function toggleVlmEnabled(checked: boolean): Promise<void> {
+    if (!vlmConfig) return
+    setError('')
+    try {
+      setVlmConfig(
+        await invoke<VlmConfigView>({
+          method: 'ai.vlmConfig.save',
+          params: { enabled: checked, mode: vlmConfig.mode }
+        })
+      )
+      setMessage(
+        checked
+          ? 'VLM 按页精校已开启：仅把触发精校的 PDF 页面图片发送到你配置的模型服务。'
+          : 'VLM 按页精校已关闭：知识工坊保持 100% 本地离线。'
+      )
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : '开关保存失败')
+    }
+  }
+
+  /** 单产物按页精校：调主进程渲染关联来源页高清图并请求视觉模型，返回建议不落盘 */
+  async function runVlmProofread(): Promise<void> {
+    if (!job || !artifact) return
+    setBusy('vlm')
+    setError('')
+    try {
+      const suggestion = await invoke<VlmProofreadSuggestion>({
+        method: 'knowledgeBuilder.artifact.vlmProofread',
+        params: { jobId: job.id, artifactId: artifact.id }
+      })
+      setVlmSuggestion(suggestion)
+      setEditorContent(suggestion.correctedMarkdown)
+      setEditorMode('vlm')
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'VLM 精校失败')
+    } finally {
+      setBusy('')
+    }
+  }
+
+  /** 保存正文（人工编辑或采纳 VLM 建议）：服务端强校验 id/answer/options 不可篡改 */
+  async function saveMarkdown(origin: 'vlm' | 'manual'): Promise<void> {
+    if (!job || !artifact || !editorContent.trim()) return
+    setBusy('save')
+    setError('')
+    try {
+      const updated = await invoke<KnowledgeArtifactDetail>({
+        method: 'knowledgeBuilder.artifact.updateMarkdown',
+        params: { jobId: job.id, artifactId: artifact.id, markdown: editorContent, origin }
+      })
+      setArtifact(updated)
+      const refreshed = await invoke<KnowledgeBuildJob>({
+        method: 'knowledgeBuilder.job.get',
+        params: { id: job.id }
+      })
+      setJob(refreshed)
+      setEditorMode('closed')
+      setVlmSuggestion(undefined)
+      setMessage(
+        origin === 'vlm' ? '已采纳精校结果并保存，仍需人工复核确认后方可发布。' : '正文已保存。'
+      )
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : '正文保存失败')
     } finally {
       setBusy('')
     }
@@ -714,6 +807,41 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
           </p>
         </div>
       )}
+
+      <div
+        className="builder-vlm-row"
+        data-testid="builder-vlm-row"
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 12,
+          flexWrap: 'wrap',
+          padding: '10px 14px',
+          marginBottom: 14,
+          border: '1px solid var(--tz-line, #d1d5d3)',
+          borderRadius: 12,
+          background: 'var(--tz-paper, #fff)'
+        }}
+      >
+        <SparkleIcon size={18} aria-hidden />
+        <Switch
+          checked={vlmConfig?.enabled === true}
+          onChange={(_, data) => void toggleVlmEnabled(data.checked)}
+          label="VLM 按页精校"
+        />
+        <small className="muted-copy" style={{ flex: 1, minWidth: 220 }}>
+          {vlmConfig?.enabled
+            ? `已开启 · ${vlmConfig.mode === 'custom' ? `视觉模型 ${vlmConfig.model ?? '未配置'}` : `复用主模型 ${vlmConfig.mainModel ?? ''}`}。仅把触发精校的 PDF 页面图片发送到你配置的模型服务。`
+            : '默认关闭，知识工坊保持 100% 本地离线。开启后可将表格/数字异常页发送给视觉模型辅助核对。'}
+        </small>
+        <Button
+          size="small"
+          appearance="subtle"
+          onClick={() => (window.location.hash = '#/model-settings')}
+        >
+          模型设置
+        </Button>
+      </div>
 
       <Section
         title="转换环境"
@@ -1025,6 +1153,14 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
             onChange={(_, data) => setIgnoreCache(data.checked === true)}
             label="忽略转换缓存，本批次全部重新转换（排查识别问题时使用；结果会覆盖旧缓存）"
           />
+          {mode === 'direct' && vlmConfig?.enabled && (
+            <Checkbox
+              data-testid="vlm-preproofread-checkbox"
+              checked={enableVlmProofread}
+              onChange={(_, data) => setEnableVlmProofread(data.checked === true)}
+              label="对表格/数字异常页做 VLM 预精校（单批最多 10 页；按页去重，共享材料只调一次；结果仍需人工复核）"
+            />
+          )}
           <div className="builder-start-row">
             <div className="builder-start-main">
               <Button
@@ -1424,6 +1560,126 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
                         {artifact.warnings.map((warning) => (
                           <span key={warning}>{warning}</span>
                         ))}
+                      </div>
+                    )}
+                    {artifact.status !== 'published' && (
+                      <div
+                        className="button-row"
+                        style={{ alignItems: 'center', margin: '10px 0' }}
+                        data-testid="artifact-actions-row"
+                      >
+                        {vlmConfig?.enabled && hasProofreadPages(artifact) && (
+                          <Button
+                            size="small"
+                            appearance="secondary"
+                            icon={<SparkleIcon />}
+                            disabled={busy === 'vlm'}
+                            data-testid="vlm-proofread-button"
+                            title="按来源页调用视觉模型核对表格数字与材料文本，返回建议供你对比采纳"
+                            onClick={() => void runVlmProofread()}
+                          >
+                            {busy === 'vlm' ? '精校中…' : 'VLM 按页精校'}
+                          </Button>
+                        )}
+                        <Button
+                          size="small"
+                          appearance="subtle"
+                          disabled={busy !== ''}
+                          onClick={() => {
+                            setEditorContent(artifact.markdown)
+                            setEditorMode('manual')
+                            setVlmSuggestion(undefined)
+                          }}
+                        >
+                          编辑正文
+                        </Button>
+                        {!vlmConfig?.enabled && hasProofreadPages(artifact) && (
+                          <small className="muted-copy">
+                            开启顶部「VLM 按页精校」开关后，可对来源页调用视觉模型辅助核对。
+                          </small>
+                        )}
+                      </div>
+                    )}
+                    {editorMode === 'vlm' && vlmSuggestion && (
+                      <div
+                        className="builder-warning-list"
+                        data-testid="vlm-suggestion-panel"
+                        style={{ gap: 6 }}
+                      >
+                        <strong>精校建议（未落盘，对比后采纳）</strong>
+                        {vlmSuggestion.summary && <span>{vlmSuggestion.summary}</span>}
+                        {vlmSuggestion.changes.length > 0 && (
+                          <span>变更：{vlmSuggestion.changes.slice(0, 8).join('；')}</span>
+                        )}
+                        {vlmSuggestion.uncertainItems.length > 0 && (
+                          <span className="warning">
+                            存疑：{vlmSuggestion.uncertainItems.slice(0, 8).join('；')}
+                          </span>
+                        )}
+                        <span className="muted-copy">
+                          精校页：
+                          {vlmSuggestion.pages.map((page) => `第${page.pageNumber}页`).join('、')}
+                          ；frontmatter（id、参考答案、选项图片绑定）由应用原样保留，视觉模型无法改动。
+                        </span>
+                        <Textarea
+                          data-testid="vlm-suggestion-editor"
+                          value={editorContent}
+                          resize="vertical"
+                          rows={14}
+                          onChange={(_, data) => setEditorContent(data.value)}
+                        />
+                        <div className="button-row">
+                          <Button
+                            size="small"
+                            appearance="primary"
+                            disabled={busy === 'save' || !editorContent.trim()}
+                            onClick={() => void saveMarkdown('vlm')}
+                          >
+                            {busy === 'save' ? '保存中…' : '采纳并保存'}
+                          </Button>
+                          <Button
+                            size="small"
+                            onClick={() => {
+                              setEditorMode('closed')
+                              setVlmSuggestion(undefined)
+                            }}
+                          >
+                            放弃建议
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                    {editorMode === 'manual' && (
+                      <div
+                        className="builder-warning-list"
+                        data-testid="manual-editor-panel"
+                        style={{ gap: 6 }}
+                      >
+                        <strong>编辑正文</strong>
+                        <span className="muted-copy">
+                          可直接修正错别字与错数字；frontmatter 中的
+                          id、参考答案与选项图片绑定会被服务端强校验，改动会被拒绝。
+                        </span>
+                        <Textarea
+                          data-testid="manual-editor"
+                          value={editorContent}
+                          resize="vertical"
+                          rows={14}
+                          onChange={(_, data) => setEditorContent(data.value)}
+                        />
+                        <div className="button-row">
+                          <Button
+                            size="small"
+                            appearance="primary"
+                            disabled={busy === 'save' || !editorContent.trim()}
+                            onClick={() => void saveMarkdown('manual')}
+                          >
+                            {busy === 'save' ? '保存中…' : '保存正文'}
+                          </Button>
+                          <Button size="small" onClick={() => setEditorMode('closed')}>
+                            取消编辑
+                          </Button>
+                        </div>
                       </div>
                     )}
                     <MarkdownContent

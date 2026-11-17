@@ -333,11 +333,12 @@ def run_structured(source: Path, output: Path) -> int:
                          + (f'，已剥离页眉/水印噪声 {removed_noise} 处' if removed_noise else '')]})
     return 0
 
-def render_evidence_pages(source: Path, out_dir: Path, pages_arg: str) -> int:
-    """按需渲染来源页低分辨率预览（复用 pypdfium2，不引入新引擎）。
+def render_evidence_pages(source: Path, out_dir: Path, pages_arg: str, max_side: int = 1280) -> int:
+    """按需渲染来源页预览（复用 pypdfium2，不引入新引擎）。
 
-    pages_arg：逗号分隔的 1-based 页码。输出 evidence-p{N}.jpg（长边 ≤1280、质量 80），
+    pages_arg：逗号分隔的 1-based 页码。输出 evidence-p{N}.jpg（长边 ≤max_side、质量 80），
     确定性文件名；页码越界直接跳过。原 PDF 只读。
+    max_side：默认 1280 兼容现有 evidence/ 来源预览；VLM 按页精校传 2000 提高统计表小字清晰度。
     """
     import pypdfium2 as pdfium
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -361,7 +362,7 @@ def render_evidence_pages(source: Path, out_dir: Path, pages_arg: str) -> int:
             if n > total:
                 continue
             page = document[n - 1]
-            scale = 1280.0 / max(1.0, max(page.get_size()))
+            scale = float(max_side) / max(1.0, max(page.get_size()))
             bitmap = page.render(scale=scale)
             pil = bitmap.to_pil().convert('RGB')
             pil.save(out_dir / f'evidence-p{n}.jpg', 'JPEG', quality=80)
@@ -376,11 +377,18 @@ def main() -> int:
         out_dir = Path(sys.argv[2]).resolve()
         if not source.is_file():
             raise ValueError('input must be a local regular file')
-        return render_evidence_pages(source, out_dir, sys.argv[4])
+        max_side = 1280
+        if len(sys.argv) >= 7 and sys.argv[5] == '--max-side':
+            try:
+                max_side = int(sys.argv[6])
+            except ValueError:
+                max_side = 1280
+            max_side = max(640, min(2400, max_side))
+        return render_evidence_pages(source, out_dir, sys.argv[4], max_side)
     if len(sys.argv) not in (3, 4):
         raise ValueError(
             'usage: ocr-worker.py <local-input> <markdown-output> [--structured] '
-            '| ocr-worker.py <pdf> <out-dir> --render-evidence <pages-csv>')
+            '| ocr-worker.py <pdf> <out-dir> --render-evidence <pages-csv> [--max-side 640-2400]')
 
     source = Path(sys.argv[1]).resolve(strict=True)
     output = Path(sys.argv[2]).resolve()

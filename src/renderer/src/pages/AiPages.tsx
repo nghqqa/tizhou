@@ -1,5 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
-import { Button, Field, Input, Select, Slider, Spinner, Textarea } from '@fluentui/react-components'
+import {
+  Button,
+  Field,
+  Input,
+  Select,
+  Slider,
+  Spinner,
+  Switch,
+  Textarea
+} from '@fluentui/react-components'
 import {
   ArrowRightIcon,
   CheckCircleIcon,
@@ -15,7 +24,9 @@ import type {
   AiProviderInfo,
   AiTrainingRecord,
   Question,
-  QuestionOption
+  QuestionOption,
+  VlmConfigInput,
+  VlmConfigView
 } from '@shared/contracts'
 import { FEATURE_PROMPTS, taskDataEnvelope } from '@shared/prompts'
 import { useNavigate } from 'react-router-dom'
@@ -430,11 +441,35 @@ export function ModelSettingsPage(): React.JSX.Element {
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
+  // VLM 按页精校配置（默认关闭；reuse-main 复用主模型，custom 单独配置视觉模型）
+  const [vlm, setVlm] = useState<VlmConfigView>()
+  const [vlmMode, setVlmMode] = useState<VlmConfigView['mode']>('reuse-main')
+  const [vlmProvider, setVlmProvider] = useState('qwen')
+  const [vlmProtocol, setVlmProtocol] = useState('openai-chat')
+  const [vlmBaseUrl, setVlmBaseUrl] = useState('')
+  const [vlmModel, setVlmModel] = useState('')
+  const [vlmApiKey, setVlmApiKey] = useState('')
+  const [vlmBusy, setVlmBusy] = useState(false)
 
   useEffect(() => {
     void invoke<AiProviderInfo[]>({ method: 'ai.providers' })
       .then(setProviders)
       .catch((cause) => setError(cause instanceof Error ? cause.message : '提供商列表加载失败'))
+  }, [])
+
+  useEffect(() => {
+    void invoke<VlmConfigView>({ method: 'ai.vlmConfig.get' })
+      .then((view) => {
+        setVlm(view)
+        setVlmMode(view.mode)
+        if (view.mode === 'custom') {
+          setVlmProvider(view.provider ?? 'qwen')
+          setVlmProtocol(view.protocol ?? 'openai-chat')
+          setVlmBaseUrl(view.baseUrl ?? '')
+          setVlmModel(view.model ?? '')
+        }
+      })
+      .catch(() => undefined)
   }, [])
 
   const selectedProvider = providers.find((provider) => provider.id === config.provider)
@@ -520,6 +555,90 @@ export function ModelSettingsPage(): React.JSX.Element {
       setError(cause instanceof Error ? cause.message : '凭据删除失败')
     } finally {
       setBusy(false)
+    }
+  }
+
+  function buildVlmParams(): VlmConfigInput {
+    return {
+      enabled: vlm?.enabled ?? false,
+      mode: vlmMode,
+      provider: vlmMode === 'custom' ? (vlmProvider as VlmConfigInput['provider']) : undefined,
+      protocol: vlmMode === 'custom' ? (vlmProtocol as VlmConfigInput['protocol']) : undefined,
+      baseUrl: vlmMode === 'custom' ? vlmBaseUrl : undefined,
+      model: vlmMode === 'custom' ? vlmModel : undefined,
+      apiKey: vlmApiKey || undefined
+    }
+  }
+
+  async function saveVlmConfig(): Promise<void> {
+    setVlmBusy(true)
+    setError('')
+    setMessage('')
+    try {
+      const view = await invoke<VlmConfigView>({
+        method: 'ai.vlmConfig.save',
+        params: buildVlmParams()
+      })
+      setVlm(view)
+      setVlmApiKey('')
+      setMessage('VLM 精校配置已保存。请点「测试视觉模型」验证图片输入可用。')
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'VLM 配置保存失败')
+    } finally {
+      setVlmBusy(false)
+    }
+  }
+
+  async function testVlm(): Promise<void> {
+    setVlmBusy(true)
+    setError('')
+    setMessage('')
+    try {
+      const view = await invoke<VlmConfigView>({ method: 'ai.vlmConfig.test' })
+      setVlm(view)
+      view.verified
+        ? setMessage('视觉模型探活通过：图片输入可用。')
+        : setError(view.lastError ?? '探活失败')
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : '探活失败')
+    } finally {
+      setVlmBusy(false)
+    }
+  }
+
+  async function toggleVlmEnabled(checked: boolean): Promise<void> {
+    setVlmBusy(true)
+    setError('')
+    setMessage('')
+    try {
+      const view = await invoke<VlmConfigView>({
+        method: 'ai.vlmConfig.save',
+        // 用当前下拉选中的模式保存，避免开关操作把用户刚切换、尚未保存的模式回退成旧值
+        params: { enabled: checked, mode: vlmMode }
+      })
+      setVlm(view)
+      setVlmMode(view.mode)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : '开关保存失败')
+    } finally {
+      setVlmBusy(false)
+    }
+  }
+
+  async function clearVlmCredential(): Promise<void> {
+    if (!window.confirm('确认删除视觉模型的加密凭据？')) return
+    setVlmBusy(true)
+    setError('')
+    setMessage('')
+    try {
+      const view = await invoke<VlmConfigView>({ method: 'ai.vlmConfig.clearCredential' })
+      setVlm(view)
+      setVlmApiKey('')
+      setMessage('已删除视觉模型的加密凭据。')
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : '凭据删除失败')
+    } finally {
+      setVlmBusy(false)
     }
   }
 
@@ -724,6 +843,149 @@ export function ModelSettingsPage(): React.JSX.Element {
           </Button>
         </Section>
       </div>
+      <Section
+        title="VLM 按页精校（知识工坊可选）"
+        description="默认关闭，知识工坊保持 100% 本地离线。开启后仅把触发精校的当前 PDF 页面图片发送至你配置的模型服务，用于核对资料分析表格与数字，结果仍需人工复核。"
+      >
+        <div className="data-row">
+          <div>
+            <strong>启用 VLM 按页精校</strong>
+            <span>关闭即绝不发送任何图片到外部；审核页的精校按钮随之隐藏</span>
+          </div>
+          <Switch
+            data-testid="vlm-enable-switch"
+            checked={vlm?.enabled === true}
+            disabled={vlmBusy}
+            onChange={(_, data) => void toggleVlmEnabled(data.checked)}
+          />
+        </div>
+        <div className="form-grid" style={{ marginTop: 14 }}>
+          <Field label="模型来源">
+            <Select
+              value={vlmMode}
+              onChange={(_, data) => {
+                const nextMode = data.value as VlmConfigView['mode']
+                setVlmMode(nextMode)
+                // 切到 custom 且地址/模型为空（也无已保存的 custom 配置）时，
+                // 按当前选中 provider 预填默认协议/地址/模型，避免空表单直接保存报错
+                if (
+                  nextMode === 'custom' &&
+                  !vlm?.baseUrl &&
+                  !vlmBaseUrl.trim() &&
+                  !vlmModel.trim()
+                ) {
+                  const provider = providers.find((item) => item.id === vlmProvider)
+                  if (provider) {
+                    setVlmProtocol(provider.protocol)
+                    setVlmBaseUrl(provider.defaultBaseUrl)
+                    setVlmModel(provider.defaultModel)
+                  }
+                }
+              }}
+            >
+              <option value="reuse-main">复用主模型（{vlm?.mainModel ?? '未配置'}）</option>
+              <option value="custom">单独配置视觉模型（主模型为纯文本时使用）</option>
+            </Select>
+          </Field>
+          {vlmMode === 'custom' && (
+            <>
+              <Field label="视觉模型服务">
+                <Select
+                  value={vlmProvider}
+                  onChange={(_, data) => {
+                    setVlmProvider(data.value)
+                    const provider = providers.find((item) => item.id === data.value)
+                    if (provider) {
+                      setVlmProtocol(provider.protocol)
+                      setVlmBaseUrl(provider.defaultBaseUrl)
+                      setVlmModel(provider.defaultModel)
+                    }
+                  }}
+                >
+                  {providers.map((provider) => (
+                    <option key={provider.id} value={provider.id}>
+                      {provider.name}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <Field label="接口协议">
+                <Select value={vlmProtocol} onChange={(_, data) => setVlmProtocol(data.value)}>
+                  <option value="openai-chat">OpenAI Chat Completions</option>
+                  <option value="openai-responses">OpenAI Responses</option>
+                  <option value="anthropic-messages">Anthropic Messages</option>
+                  <option value="google-generate-content">Google generateContent</option>
+                  <option value="ollama-openai">Ollama OpenAI</option>
+                </Select>
+              </Field>
+              <Field className="full" label="服务地址">
+                <Input value={vlmBaseUrl} onChange={(_, data) => setVlmBaseUrl(data.value)} />
+              </Field>
+              <Field label="模型名称">
+                <Input value={vlmModel} onChange={(_, data) => setVlmModel(data.value)} />
+              </Field>
+              <Field
+                className="full"
+                label={vlm?.hasApiKey ? 'API Key（已保存，留空保持不变）' : 'API Key'}
+              >
+                <Input
+                  type="password"
+                  value={vlmApiKey}
+                  autoComplete="off"
+                  onChange={(_, data) => setVlmApiKey(data.value)}
+                />
+              </Field>
+            </>
+          )}
+        </div>
+        <div className="button-row" style={{ marginTop: 14 }}>
+          {/* 两种模式都允许保存：reuse-main 下保存 = 持久化模式切换（不丢已存 custom 配置） */}
+          <Button disabled={vlmBusy} onClick={() => void saveVlmConfig()}>
+            {vlmMode === 'custom' ? '保存视觉模型配置' : '保存为复用主模型'}
+          </Button>
+          <Button disabled={vlmBusy} onClick={() => void testVlm()}>
+            测试视觉模型
+          </Button>
+          {vlm?.hasApiKey && vlmMode === 'custom' && (
+            <Button disabled={vlmBusy} onClick={() => void clearVlmCredential()}>
+              删除视觉凭据
+            </Button>
+          )}
+        </div>
+        <ul className="data-list" style={{ marginTop: 14 }}>
+          <li className="data-row">
+            <div>
+              <strong>视觉凭据</strong>
+              <span>只显示是否存在，不回传明文密钥</span>
+            </div>
+            <span>
+              {vlm?.hasApiKey
+                ? vlmMode === 'custom'
+                  ? '已保存'
+                  : '复用主模型凭据'
+                : vlmMode === 'reuse-main'
+                  ? '复用主模型凭据'
+                  : '未配置'}
+            </span>
+          </li>
+          <li className="data-row">
+            <div>
+              <strong>最近探活</strong>
+              <span>{vlm?.lastCheckedAt ? formatFullDate(vlm.lastCheckedAt) : '尚未测试'}</span>
+            </div>
+            <span>
+              <StatusDot status={vlm?.verified ? 'ok' : 'warning'} />{' '}
+              {vlm?.verified ? '图片输入可用' : '待验证'}
+            </span>
+          </li>
+        </ul>
+        {vlm?.lastError && (
+          <div className="answer-panel">
+            <WarningCircleIcon className="warning" />
+            <p>{vlm.lastError}</p>
+          </div>
+        )}
+      </Section>
     </div>
   )
 }

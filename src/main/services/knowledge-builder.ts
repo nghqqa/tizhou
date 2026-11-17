@@ -16,7 +16,10 @@ import {
 } from 'node:fs'
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 'node:path'
 import { promisify } from 'node:util'
+import matter from 'gray-matter'
 import type {
+  AiImageInput,
+  AiMessage,
   BatchReviewResult,
   ImportCapability,
   KnowledgeArtifactDetail,
@@ -30,8 +33,10 @@ import type {
   OcrQualityReport,
   KnowledgeSourceScan,
   SourceEvidence,
+  SourceReference,
   Subject,
-  VaultIndexResult
+  VaultIndexResult,
+  VlmProofreadSuggestion
 } from '../../shared/contracts'
 import { parseOcrWorkerLine } from '../../shared/ocr-payload'
 import { FEATURE_PROMPTS, sourceEnvelope, taskDataEnvelope } from '../../shared/prompts'
@@ -63,6 +68,7 @@ import {
   finalizeSourceEvidenceStatus,
   manifestFromRegions,
   computeTraceCoverage,
+  pageKey,
   parsePageManifest,
   traceCoverageMessage,
   type PageManifest,
@@ -306,6 +312,262 @@ function yaml(value: string): string {
 function isPdfFile(path: string): boolean {
   return /\.pdf$/i.test(path)
 }
+
+// ---- VLM 按页精校（可选，默认关闭）：常量与纯文本辅助 ----
+
+/** 任务级批量预精校的硬编码页数上限：超出部分跳过并如实提示，可在审核页单页补校 */
+export const MAX_AUTO_VLM_PAGES = 10
+
+/** 单产物按页精校最多取 3 个关联来源页（question/material/preserved-page，解析册页不参与） */
+export const VLM_PROOFREAD_MAX_PAGES = 3
+
+/** VLM 精校页面渲染长边：1280px 下资料分析表格小字发虚，精校用 2000px 高清页图 */
+export const VLM_RENDER_MAX_SIDE = 2000
+
+/** 采纳 VLM 精校结果后的固定复核提示（进 warnings，不解除发布门禁） */
+export const VLM_REVIEW_WARNING = '已完成 VLM 按页精校，仍需人工复核确认'
+
+/** 人工编辑/采纳精校后的正文大小上限（与产物常规体量同量级，防异常大文本） */
+const MAX_MARKDOWN_EDIT_BYTES = 2 * 1024 * 1024
+
+/** 来源页角色优先级：材料页是资料分析精校的主依据，解析册页码不参与精校正页 */
+const PROOFREAD_ROLE_ORDER: Record<SourceReference['role'], number> = {
+  material: 0,
+  question: 1,
+  'preserved-page': 2,
+  solution: 3
+}
+
+/** 收集产物可精校的来源页：材料/题本/保留页去重后按角色优先排序，解析册页不参与 */
+function collectProofreadPages(
+  evidence: SourceEvidence | undefined
+): Array<{ sourceId: string; pageNumber: number }> {
+  if (!evidence || evidence.status === 'unavailable') return []
+  const pages: Array<{ sourceId: string; pageNumber: number }> = []
+  const seen = new Set<string>()
+  for (const reference of [...evidence.references].sort(
+    (a, b) => PROOFREAD_ROLE_ORDER[a.role] - PROOFREAD_ROLE_ORDER[b.role]
+  )) {
+    if (reference.role === 'solution') continue
+    for (const page of [...reference.pages].sort((a, b) => a.pageNumber - b.pageNumber)) {
+      const key = pageKey(reference.sourceId, page.pageNumber)
+      if (seen.has(key)) continue
+      seen.add(key)
+      pages.push({ sourceId: reference.sourceId, pageNumber: page.pageNumber })
+    }
+  }
+  return pages.slice(0, VLM_PROOFREAD_MAX_PAGES)
+}
+
+/** 拆分 YAML frontmatter：产物契约要求首行 --- 到闭合 ---；缺失返回 undefined */
+function splitFrontmatter(markdown: string): { frontmatter: string; body: string } | undefined {
+  const match = markdown.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/)
+  if (!match) return undefined
+  return {
+    frontmatter: match[1] ?? '',
+    body: markdown.slice(match[0].length).replace(/^\r?\n/, '')
+  }
+}
+
+// ---- frontmatter 校验与同步（gray-matter 统一收口，支持多行 YAML）----
+// 发布入库（VaultService.parseFile）优先读 frontmatter 的 material/stem/options/explanation，
+// 精校或人工编辑只改正文会导致题库仍显示旧文本：保存时必须把正文修订同步回这些字段。
+
+/** 精校/人工编辑的红线字段：任何改动一律拒绝（答案与题目身份绝不经过模型或编辑器） */
+const PROTECTED_FRONTMATTER_FIELDS = [
+  'id',
+  'subject',
+  'kind',
+  'questionType',
+  'answer',
+  'groupId',
+  'groupOrder',
+  'papers',
+  'source',
+  'sourceFile',
+  'year',
+  'region',
+  'paper',
+  'difficulty'
+] as const
+
+function fieldUnchanged(before: unknown, after: unknown): boolean {
+  return JSON.stringify(before ?? null) === JSON.stringify(after ?? null)
+}
+
+/** options 每项的 key 与图片绑定指纹（text 可同步修订，key/image 绑定不可丢失或改变） */
+function optionBindings(options: unknown): string[] {
+  if (!Array.isArray(options)) return []
+  return options.flatMap((item) => {
+    if (!item || typeof item !== 'object') return []
+    const record = item as Record<string, unknown>
+    return [`${String(record.key ?? '')}\u0000${String(record.image ?? '')}`]
+  })
+}
+
+/** 红线字段与选项绑定强校验：违规抛错并指明字段 */
+function assertFrontmatterIntact(
+  original: Record<string, unknown>,
+  revised: Record<string, unknown>
+): void {
+  for (const field of PROTECTED_FRONTMATTER_FIELDS) {
+    if (!fieldUnchanged(original[field], revised[field]))
+      throw new Error(`保存失败：frontmatter 的 ${field} 必须保持不变，请在正文中修正文字内容`)
+  }
+  if (
+    JSON.stringify(optionBindings(original.options)) !==
+    JSON.stringify(optionBindings(revised.options))
+  )
+    throw new Error('保存失败：选项 key 与图片绑定（options[].key/image）必须保持不变')
+}
+
+/** 提取正文中的标题区块（从 startHeading 行后到下一个匹配 stop 标题为止）；缺失返回 undefined */
+function sectionBetween(body: string, startHeading: string, stop: RegExp): string | undefined {
+  const header = body.indexOf(startHeading)
+  if (header < 0) return undefined
+  const lineEnd = body.indexOf('\n', header)
+  if (lineEnd < 0) return undefined
+  const rest = body.slice(lineEnd + 1)
+  const matched = rest.match(stop)
+  return (matched && matched.index !== undefined ? rest.slice(0, matched.index) : rest).trim()
+}
+
+/** 解析「## 选项」区块的选项文字行：剥掉 ![...](...) 图片标记，只留文字 */
+function optionTextsFrom(body: string): Array<{ key: string; text: string }> {
+  const section = sectionBetween(body, '## 选项', /^\s*##\s/m)
+  if (section === undefined) return []
+  return section.split('\n').flatMap((line) => {
+    const matched = line.trim().match(/^([A-HＡ-Ｈ])[.、．:：)]\s*(.+)$/i)
+    if (!matched?.[1] || matched[2] === undefined) return []
+    const text = matched[2].replace(/!\[[^\]]*\]\([^)]*\)/g, '').trim()
+    return [{ key: matched[1].toUpperCase(), text }]
+  })
+}
+
+/** 用修订正文同步 frontmatter 可变字段（material/stem/options[].text/explanation）。
+ *  区块缺失时保留原值（不误删）；options 按 key 匹配，只改 text，key/image 原样保留。 */
+function syncFrontmatterFromBody(
+  data: Record<string, unknown>,
+  body: string
+): Record<string, unknown> {
+  const synced: Record<string, unknown> = { ...data }
+  const material = sectionBetween(body, '## 共享材料', /^\s*#\s/m)
+  if (material) synced.material = material
+  const stem = sectionBetween(body, '# 题目', /^\s*##/m)
+  if (stem) synced.stem = stem
+  const explanation = sectionBetween(body, '## 解析', /^\s*#\s/m)
+  if (explanation) synced.explanation = explanation
+  const texts = optionTextsFrom(body)
+  if (texts.length > 0 && Array.isArray(synced.options)) {
+    synced.options = (synced.options as Array<Record<string, unknown>>).map((option) => {
+      const found = texts.find((item) => item.key === String(option.key ?? '').toUpperCase())
+      return found ? { ...option, text: found.text } : option
+    })
+  }
+  return synced
+}
+
+/** 行式 YAML 序列化：字符串走 yaml()（JSON 带引号），其余 JSON——与直导/模型提炼生成器同风格，
+ *  保证 publish 的 reviewStatus 字符串替换与 vault 的 gray-matter 解析保持兼容 */
+function serializeFrontmatter(data: Record<string, unknown>, body: string): string {
+  const lines = ['---']
+  for (const [key, value] of Object.entries(data)) {
+    if (value === undefined || value === null) continue
+    lines.push(`${key}: ${typeof value === 'string' ? yaml(value) : JSON.stringify(value)}`)
+  }
+  lines.push('---', '', body.trimEnd())
+  return `${lines.join('\n')}\n`
+}
+
+/** 修订正文重组完整 Markdown：红线字段强校验 + 图片引用保底 + material/stem/options[].text/explanation
+ *  从正文同步回 frontmatter（VLM 建议与人工编辑共用同一收口，发布入库读到的就是修订值） */
+function rebuildArtifactMarkdown(originalMarkdown: string, correctedBody: string): string {
+  if (/^\s*---/.test(correctedBody.trimStart()))
+    throw new Error('模型返回的正文包含 YAML frontmatter，已拒绝本次建议（结构只能由应用重组）')
+  const original = matter(originalMarkdown)
+  const originalData = original.data as Record<string, unknown>
+  if (!originalData || Object.keys(originalData).length === 0)
+    throw new Error('产物缺少 YAML frontmatter，无法安全重组精校结果')
+  // 图片引用保底：原正文的所有 images/ 引用必须在修订正文中保留（防 VLM 删图）
+  const originalImages = [
+    ...new Set([...original.content.matchAll(/images\/[^\s)\]]+/g)].map((m) => m[0]))
+  ]
+  const missingImages = originalImages.filter((reference) => !correctedBody.includes(reference))
+  if (missingImages.length > 0)
+    throw new Error(`修订正文丢失了图片引用（${missingImages.join('、')}），已拒绝本次建议`)
+  const synced = syncFrontmatterFromBody(originalData, correctedBody)
+  return serializeFrontmatter(synced, correctedBody)
+}
+
+/** VLM 精校提示词组装：任务参数走 taskDataEnvelope，原文走 sourceEnvelope，防注入 */
+function buildVlmProofreadMessages(
+  content: string,
+  pages: Array<{ sourceId: string; pageNumber: number }>,
+  scope: 'body' | 'material',
+  images: AiImageInput[]
+): AiMessage[] {
+  const params = taskDataEnvelope('VLM 按页精校任务参数', {
+    scope,
+    pages: pages.map((page) => `${page.sourceId} 第 ${page.pageNumber} 页`),
+    renderMaxSide: VLM_RENDER_MAX_SIDE,
+    rules: [
+      '只修正识别错误，不改变答案与结论',
+      '看不清写 [模糊待人工确认]',
+      '保留全部 images/ 图片引用'
+    ]
+  })
+  const source = sourceEnvelope(
+    scope === 'material' ? '原始切分 Markdown（共享材料部分）' : '原始切分 Markdown（正文）',
+    content
+  )
+  return [
+    { role: 'system', content: FEATURE_PROMPTS.vlmPageProofread },
+    { role: 'user', content: `${params}\n${source}`, images }
+  ]
+}
+
+/** 共享材料区块定位（directQuestionMarkdown 结构：## 共享材料 空行 材料文本 空行 # 题目） */
+function materialSectionRange(markdown: string): { start: number; end: number } | undefined {
+  const header = markdown.indexOf('## 共享材料')
+  if (header < 0) return undefined
+  const bodyStart = markdown.indexOf('\n\n', header)
+  if (bodyStart < 0) return undefined
+  const nextSection = markdown.indexOf('\n# 题目', bodyStart)
+  if (nextSection < 0) return undefined
+  return { start: bodyStart + 2, end: nextSection }
+}
+
+/** scope=material：只替换共享材料区块，并把修正文本同步回 frontmatter.material */
+function applyCorrectedMaterial(originalMarkdown: string, correctedMaterial: string): string {
+  const parsed = splitFrontmatter(originalMarkdown)
+  if (!parsed) return originalMarkdown
+  const range = materialSectionRange(parsed.body)
+  if (!range) return originalMarkdown
+  const newBody = `${parsed.body.slice(0, range.start)}${correctedMaterial.trim()}${parsed.body.slice(range.end)}`
+  const synced = syncFrontmatterFromBody(matter(originalMarkdown).data, newBody)
+  return serializeFrontmatter(synced, newBody)
+}
+
+/** VLM JSON 契约校验：correctedBody 必须为非空正文，且绝不允许夹带 frontmatter */
+function validateVlmPayload(payload: Record<string, unknown>): {
+  correctedBody: string
+  changes: string[]
+  uncertainItems: string[]
+  summary: string
+} {
+  const correctedBody = normalizeString(payload.correctedBody)
+  if (!correctedBody) throw new Error('模型返回的 correctedBody 为空，无法生成精校建议')
+  if (/^\s*---/.test(correctedBody))
+    throw new Error('模型返回的正文包含 YAML frontmatter，已拒绝本次建议（结构只能由应用重组）')
+  return {
+    correctedBody,
+    changes: stringArray(payload.changes).slice(0, 30),
+    uncertainItems: stringArray(payload.uncertainItems).slice(0, 30),
+    summary: normalizeString(payload.summary)
+  }
+}
+
+// rebuildWithCorrectedBody 已由 rebuildArtifactMarkdown 取代（见 frontmatter 同步收口段）
 
 // 统计申论教材的「训练」式单元标题行数（【训练N】xxx / 训练N：xxx 两种版式），
 // 直导零产出时用于判断这本书是否主观题教材并给出模式建议
@@ -2016,6 +2278,26 @@ export class KnowledgeBuilderService {
         }
         // 来源证据页渲染（job 内去重 + 容量上限；.md 源等失败不阻塞）
         const persistedEvidencePages = await this.renderJobEvidence(job, allArtifacts)
+        // 任务级 VLM 批量预精校（次路径，默认关闭）：仅当新建任务时显式勾选且总开关已开启，
+        // 只处理表格/数字异常页；失败不阻塞批次，结果如实写进任务消息
+        let vlmProofreadNote = ''
+        if (job.options.enableVlmProofread) {
+          try {
+            const stats = await this.autoVlmPreproofread(job, allArtifacts)
+            if (stats.calls > 0 || stats.failedPages > 0)
+              vlmProofreadNote =
+                ` [VLM 预精校] 已精校 ${stats.pages} 个异常页（${stats.applied} 个产物已修订，均需人工复核）` +
+                (stats.uncoveredArtifacts
+                  ? `，同页另有 ${stats.uncoveredArtifacts} 道独立题未覆盖（请在审核页逐题精校）`
+                  : '') +
+                (stats.failedPages
+                  ? `，${stats.failedPages} 页精校失败（可在审核页单页重试）`
+                  : '') +
+                (stats.skippedPages ? `，其余 ${stats.skippedPages} 页可在审核页按需单页精校` : '')
+          } catch (error) {
+            vlmProofreadNote = ` [VLM 预精校失败] ${error instanceof Error ? error.message : '未知错误'}`
+          }
+        }
         // 页数事实统一走 collectPageFacts（唯一规则：有效性 + 空白页钳制）
         const pageFacts = collectPageFacts(job.files)
         const facts: ImportBatchFacts = {
@@ -2057,7 +2339,8 @@ export class KnowledgeBuilderService {
                   ? `直导完成：检测到 ${trainingMarkers} 处训练式标题但未能稳定切分出题目——这本书大概率是主观题教材，请改用「模型提炼」模式导入`
                   : '直导完成：未切出题目（未识别出题目或全部缺少答案）') +
           ` [质量] ${batchFactsMessage(facts)}` +
-          ` [来源] ${traceCoverageMessage(computeTraceCoverage(allArtifacts, persistedEvidencePages))}`
+          ` [来源] ${traceCoverageMessage(computeTraceCoverage(allArtifacts, persistedEvidencePages))}` +
+          vlmProofreadNote
       } else {
         const artifacts = job.artifactIds.map((artifactId) => this.loadArtifact(job, artifactId))
         job.status = artifacts.some((artifact) => artifact.status === 'pending')
@@ -2618,6 +2901,278 @@ export class KnowledgeBuilderService {
     if (realRel === '' || realRel.startsWith('..') || isAbsolute(realRel))
       throw new Error('证据路径逃逸（realpath 校验失败）')
     return `data:image/jpeg;base64,${readFileSync(real).toString('base64')}`
+  }
+
+  // ---- VLM 按页精校（可选能力）：人工编辑保存 / 单产物按页精校 / 任务级批量预精校 ----
+
+  /** 人工编辑或采纳 VLM 精校后保存：gray-matter 解析 frontmatter 做红线强校验
+   *  （id/answer/options[].key·image 等绝不改动），并把正文修订同步回
+   *  material/stem/options[].text/explanation 与 preview——发布入库（VaultService.parseFile
+   *  优先读 frontmatter）与刷题/模考读到的才是修订后的文本 */
+  updateArtifactMarkdown(
+    jobId: string,
+    artifactId: string,
+    markdown: string,
+    origin: 'vlm' | 'manual' = 'manual'
+  ): KnowledgeArtifactDetail {
+    const job = this.loadJob(jobId)
+    if (['queued', 'running', 'cancelling'].includes(job.status))
+      throw new Error('请等待转换任务结束后再编辑正文')
+    if (!job.artifactIds.includes(artifactId)) throw new Error('产物不属于该任务')
+    const artifact = this.loadArtifact(job, artifactId)
+    if (artifact.status === 'published') throw new Error('已发布产物不能修改，请先撤销导入')
+    const content = markdown.replace(/\r\n/g, '\n')
+    if (!content.trim()) throw new Error('正文不能为空')
+    if (Buffer.byteLength(content, 'utf8') > MAX_MARKDOWN_EDIT_BYTES)
+      throw new Error('编辑后的正文超过大小上限')
+    let revised: matter.GrayMatterFile<string>
+    try {
+      revised = matter(content)
+    } catch {
+      throw new Error('保存失败：YAML frontmatter 无法解析，请检查格式')
+    }
+    const revisedData = revised.data as Record<string, unknown>
+    if (!revisedData || Object.keys(revisedData).length === 0 || !revisedData.id)
+      throw new Error('保存失败：Markdown 缺少 YAML frontmatter，无法确认题目身份与答案字段')
+    const originalData = matter(artifact.markdown).data as Record<string, unknown>
+    if (!originalData || Object.keys(originalData).length === 0 || !originalData.id)
+      throw new Error('产物缺少 YAML frontmatter，无法安全保存（数据异常）')
+    // 红线校验：id/answer/options 绑定等任何改动一律拒绝；正文修订随后同步回可变字段
+    assertFrontmatterIntact(originalData, revisedData)
+    const synced = syncFrontmatterFromBody(revisedData, revised.content)
+    artifact.markdown = serializeFrontmatter(synced, revised.content)
+    const syncedStem = normalizeString(synced.stem)
+    if (syncedStem) artifact.preview = syncedStem.slice(0, 180)
+    if (origin === 'vlm' && !artifact.warnings.includes(VLM_REVIEW_WARNING))
+      artifact.warnings = [...artifact.warnings, VLM_REVIEW_WARNING]
+    this.saveArtifact(job, artifact)
+    job.updatedAt = now()
+    this.saveJob(job)
+    return artifact
+  }
+
+  /** 单产物按页 VLM 精校：渲染关联来源页高清图并调用视觉模型，返回建议但不落盘；
+   *  用户对比采纳后经 updateMarkdown 持久化，发布门禁不因此放松 */
+  async vlmProofreadArtifact(jobId: string, artifactId: string): Promise<VlmProofreadSuggestion> {
+    const job = this.loadJob(jobId)
+    if (['queued', 'running', 'cancelling'].includes(job.status))
+      throw new Error('请等待转换任务结束后再精校')
+    if (!job.artifactIds.includes(artifactId)) throw new Error('产物不属于该任务')
+    const artifact = this.loadArtifact(job, artifactId)
+    if (artifact.status === 'published') throw new Error('已发布产物不能修改，无需精校')
+    const vlm = this.ai.getVlmConfig()
+    if (!vlm.enabled) throw new Error('VLM 按页精校未开启：请在工坊顶部或模型设置打开开关后再使用')
+    const pages = collectProofreadPages(artifact.sourceEvidence)
+    if (!pages.length)
+      throw new Error('该产物没有可用的来源 PDF 页（来源证据缺失或不可渲染），无法按页精校')
+    const imageDataUrls = await this.renderVlmPageImages(job, pages)
+    const images: AiImageInput[] = pages.map((page) => ({
+      mimeType: 'image/jpeg' as const,
+      dataUrl: imageDataUrls.get(pageKey(page.sourceId, page.pageNumber)) ?? ''
+    }))
+    if (images.some((image) => !image.dataUrl)) throw new Error('精校页面图片渲染失败，请稍后重试')
+    const response = await this.ai.askVision({
+      messages: buildVlmProofreadMessages(artifact.markdown, pages, 'body', images)
+    })
+    let payload: Record<string, unknown>
+    try {
+      payload = jsonObject(response.content)
+    } catch (error) {
+      throw new Error(`模型返回无法解析：${error instanceof Error ? error.message : 'JSON 无效'}`)
+    }
+    const validated = validateVlmPayload(payload)
+    return {
+      jobId,
+      artifactId,
+      // 建议即最终形态：红线字段保留原值，material/stem/options text/explanation 已从修订正文同步
+      correctedMarkdown: rebuildArtifactMarkdown(artifact.markdown, validated.correctedBody),
+      changes: validated.changes,
+      uncertainItems: validated.uncertainItems,
+      summary: validated.summary,
+      pages
+    }
+  }
+
+  /** 渲染 VLM 精校用高清页图（独立 vlm-pages/ 缓存目录，与 evidence/ 预览资产契约隔离，
+   *  文件名契约同为 evidence-p{N}.jpg；同一任务同一页只渲染一次） */
+  private async renderVlmPageImages(
+    job: StoredJob,
+    pages: Array<{ sourceId: string; pageNumber: number }>
+  ): Promise<Map<string, string>> {
+    const engine = await this.engineStatus()
+    if (!engine.available || !engine.pythonPath)
+      throw new Error('转换引擎不可用，无法渲染精校页面图片')
+    const bySource = new Map<string, number[]>()
+    for (const page of pages) {
+      if (!job.files.some((file) => file.sourceId === page.sourceId))
+        throw new Error('来源文件不属于当前任务')
+      const list = bySource.get(page.sourceId) ?? []
+      if (!list.includes(page.pageNumber)) list.push(page.pageNumber)
+      bySource.set(page.sourceId, list)
+    }
+    const result = new Map<string, string>()
+    const worker = this.ocrWorkerPath()
+    for (const [sourceId, pageNumbers] of bySource) {
+      const file = job.files.find((candidate) => candidate.sourceId === sourceId)
+      if (!file) continue
+      const dir = join(job.outputPath, 'vlm-pages', hash(sourceId).slice(0, 10))
+      mkdirSync(dir, { recursive: true })
+      const missing = pageNumbers.filter((n) => !existsSync(join(dir, `evidence-p${n}.jpg`)))
+      if (missing.length) {
+        const source = this.resolveSourceFile(job, file)
+        await new Promise<void>((resolvePromise, rejectPromise) => {
+          const child = spawn(
+            engine.pythonPath!,
+            [
+              worker,
+              source,
+              dir,
+              '--render-evidence',
+              [...missing].sort((a, b) => a - b).join(','),
+              '--max-side',
+              String(VLM_RENDER_MAX_SIDE)
+            ],
+            { windowsHide: true, shell: false, stdio: ['ignore', 'ignore', 'ignore'] }
+          )
+          child.once('error', rejectPromise)
+          child.once('close', (code) =>
+            code === 0 ? resolvePromise() : rejectPromise(new Error('精校页面渲染失败'))
+          )
+        })
+      }
+      for (const pageNumber of pageNumbers) {
+        const image = join(dir, `evidence-p${pageNumber}.jpg`)
+        if (!existsSync(image)) continue
+        result.set(
+          pageKey(sourceId, pageNumber),
+          `data:image/jpeg;base64,${readFileSync(image).toString('base64')}`
+        )
+      }
+    }
+    return result
+  }
+
+  /** 任务级批量预精校（runJob 直导收尾调用）：只处理表格/数字异常页，绝不跑普通纯文字页；
+   *  按 sourceId#pageNumber 去重（共享材料 5 小题只调一次 VLM），超上限跳过并如实回报。
+   *  单页失败只计入 failedPages 继续下一页，不覆盖已完成页的统计；
+   *  scope=body 时同页多道独立题只修订首题，其余按 uncoveredArtifacts 如实累计 */
+  private async autoVlmPreproofread(
+    job: StoredJob,
+    artifacts: StoredArtifact[]
+  ): Promise<{
+    pages: number
+    calls: number
+    applied: number
+    skippedPages: number
+    failedPages: number
+    uncoveredArtifacts: number
+  }> {
+    const vlm = this.ai.getVlmConfig()
+    if (!vlm.enabled) throw new Error('VLM 按页精校开关未开启，本批未执行预精校')
+    const candidates = artifacts.filter(
+      (artifact) =>
+        artifact.status === 'pending' &&
+        (artifact.capability === 'table-review' ||
+          artifact.warnings.some((warning) => /数字异常|表格列数不一致/.test(warning)))
+    )
+    if (!candidates.length)
+      return {
+        pages: 0,
+        calls: 0,
+        applied: 0,
+        skippedPages: 0,
+        failedPages: 0,
+        uncoveredArtifacts: 0
+      }
+    // 按主来源页分组去重：同页产物共享一次 VLM 调用
+    const groups = new Map<
+      string,
+      { sourceId: string; pageNumber: number; artifacts: StoredArtifact[] }
+    >()
+    for (const artifact of candidates) {
+      const pages = collectProofreadPages(artifact.sourceEvidence)
+      if (!pages.length) continue
+      const primary = pages[0]!
+      const key = pageKey(primary.sourceId, primary.pageNumber)
+      const group = groups.get(key) ?? { ...primary, artifacts: [] }
+      group.artifacts.push(artifact)
+      groups.set(key, group)
+    }
+    const keys = [...groups.keys()]
+    const processedKeys = keys.slice(0, MAX_AUTO_VLM_PAGES)
+    const skippedPages = keys.length - processedKeys.length
+    if (!processedKeys.length)
+      return { pages: 0, calls: 0, applied: 0, skippedPages, failedPages: 0, uncoveredArtifacts: 0 }
+    const imageDataUrls = await this.renderVlmPageImages(
+      job,
+      processedKeys.map((key) => {
+        const group = groups.get(key)!
+        return { sourceId: group.sourceId, pageNumber: group.pageNumber }
+      })
+    )
+    let calls = 0
+    let applied = 0
+    let failedPages = 0
+    let uncoveredArtifacts = 0
+    for (const key of processedKeys) {
+      // 支持任务取消：每组开始前检查，已完成页保留
+      if (this.loadJob(job.id).cancelRequested) break
+      const group = groups.get(key)!
+      const dataUrl = imageDataUrls.get(key)
+      if (!dataUrl) {
+        failedPages += 1
+        continue
+      }
+      const representative = group.artifacts[0]!
+      const parsed = splitFrontmatter(representative.markdown)
+      const materialRange = parsed ? materialSectionRange(parsed.body) : undefined
+      const scope: 'body' | 'material' = materialRange ? 'material' : 'body'
+      try {
+        const content = materialRange
+          ? parsed!.body.slice(materialRange.start, materialRange.end)
+          : representative.markdown
+        const response = await this.ai.askVision({
+          messages: buildVlmProofreadMessages(
+            content,
+            [{ sourceId: group.sourceId, pageNumber: group.pageNumber }],
+            scope,
+            [{ mimeType: 'image/jpeg', dataUrl }]
+          )
+        })
+        calls += 1
+        const validated = validateVlmPayload(jsonObject(response.content))
+        // scope=material：修正的是共享材料，组内全部产物同步；scope=body：正文按题独立，
+        // 同页多道独立题只有首题被修订，其余如实计入未覆盖（不静默）
+        const targets = scope === 'material' ? group.artifacts : [representative]
+        if (scope === 'body' && group.artifacts.length > 1)
+          uncoveredArtifacts += group.artifacts.length - 1
+        for (const artifact of targets) {
+          const corrected =
+            scope === 'material'
+              ? applyCorrectedMaterial(artifact.markdown, validated.correctedBody)
+              : rebuildArtifactMarkdown(artifact.markdown, validated.correctedBody)
+          if (corrected === artifact.markdown) continue
+          artifact.markdown = corrected
+          const syncedStem = normalizeString(matter(corrected).data.stem)
+          if (syncedStem) artifact.preview = syncedStem.slice(0, 180)
+          if (!artifact.warnings.includes(VLM_REVIEW_WARNING))
+            artifact.warnings = [...artifact.warnings, VLM_REVIEW_WARNING]
+          this.saveArtifact(job, artifact)
+          applied += 1
+        }
+      } catch {
+        // 单页失败（超时/解析失败/图片引用丢失）只记账，继续下一页；已完成页统计不受影响
+        failedPages += 1
+      }
+    }
+    return {
+      pages: processedKeys.length,
+      calls,
+      applied,
+      skippedPages,
+      failedPages,
+      uncoveredArtifacts
+    }
   }
 
   /** 渲染证据页并回填 evidenceAssetId：按 sourceId+pageNumber 在 job 内去重，

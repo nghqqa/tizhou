@@ -297,6 +297,15 @@ export class DatabaseService {
         last_error TEXT,
         updated_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS vlm_config (
+        id INTEGER PRIMARY KEY CHECK(id = 1),
+        payload_json TEXT NOT NULL,
+        encrypted_key TEXT,
+        verified INTEGER NOT NULL DEFAULT 0,
+        last_checked_at TEXT,
+        last_error TEXT,
+        updated_at TEXT NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS ai_training_attempts (
         id TEXT PRIMARY KEY,
         source_question_id TEXT NOT NULL,
@@ -1608,6 +1617,43 @@ export class DatabaseService {
     this.db
       .prepare(
         'UPDATE ai_config SET encrypted_key=NULL,verified=0,last_error=NULL,updated_at=? WHERE id=1'
+      )
+      .run(now())
+  }
+
+  getVlmRecord(): Row | undefined {
+    return this.db.prepare('SELECT * FROM vlm_config WHERE id=1').get() as Row | undefined
+  }
+
+  saveVlmRecord(
+    payloadJson: string,
+    encryptedKey: string | null,
+    verified: boolean,
+    lastCheckedAt?: string,
+    lastError?: string
+  ): void {
+    this.db
+      .prepare(
+        `INSERT INTO vlm_config(id,payload_json,encrypted_key,verified,last_checked_at,last_error,updated_at)
+        VALUES(1,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET
+        payload_json=excluded.payload_json,
+        encrypted_key=COALESCE(excluded.encrypted_key,vlm_config.encrypted_key),
+        verified=excluded.verified,last_checked_at=excluded.last_checked_at,last_error=excluded.last_error,updated_at=excluded.updated_at`
+      )
+      .run(
+        payloadJson,
+        encryptedKey,
+        verified ? 1 : 0,
+        lastCheckedAt ?? null,
+        lastError ?? null,
+        now()
+      )
+  }
+
+  clearVlmCredential(): void {
+    this.db
+      .prepare(
+        'UPDATE vlm_config SET encrypted_key=NULL,verified=0,last_error=NULL,updated_at=? WHERE id=1'
       )
       .run(now())
   }
