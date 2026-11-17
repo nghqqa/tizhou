@@ -264,7 +264,7 @@ function ShotFrame({
   )
 }
 
-function FlowTabs(onZoom: (zoom: ZoomState) => void): React.JSX.Element {
+function FlowTabs({ onZoom }: { onZoom: (zoom: ZoomState) => void }): React.JSX.Element {
   const [active, setActive] = useState(FLOWS[0]!.id)
   const flow = FLOWS.find((item) => item.id === active) ?? FLOWS[0]!
   return (
@@ -393,7 +393,7 @@ export function App(): React.JSX.Element {
             <p className="section-desc">
               四个阶段覆盖备考全程：训练、模考、建库、复盘。以下截图均来自真实应用界面，点击可放大查看。
             </p>
-            {FlowTabs(setZoom)}
+            <FlowTabs onZoom={setZoom} />
           </div>
         </section>
 

@@ -1504,6 +1504,11 @@ async function captureShenlun(app: AppHandle): Promise<void> {
     .getByText(/评估结果/)
     .first()
     .waitFor({ timeout: 60_000 })
+  // 视口下移：让「评估结果」下方的三维评分卡完整入镜
+  await page.evaluate(() => {
+    const workspace = document.querySelector('.workspace')
+    if (workspace instanceof HTMLElement) workspace.scrollTop += 120
+  })
   await sleep(900)
   await shot(app, '05-shenlun', page)
 }

@@ -215,14 +215,27 @@ async function checkViewport(
     const flowImg = page.locator('.flow .shot-body img')
     for (let index = 0; index < expectedFlowImages.length; index += 1) {
       await tabs.nth(index).click()
-      const actual = await flowImg.getAttribute('src')
-      if (!actual?.includes(expectedFlowImages[index]!)) {
-        fail(`[desktop] Tab ${index + 1} 切换后截图不符：${actual ?? '(空)'}`)
+      // 等待切换后的图片 src 更新且真实加载完成（切换后开始异步加载，立即断言会有竞态）
+      const switched = await page
+        .waitForFunction(
+          ({ probe, sel }) => {
+            const img = document.querySelector(sel) as HTMLImageElement | null
+            return Boolean(
+              img &&
+              img.getAttribute('src')?.includes(probe) &&
+              img.complete &&
+              img.naturalWidth > 0
+            )
+          },
+          { probe: expectedFlowImages[index]!, sel: '.flow .shot-body img' },
+          { timeout: 10_000 }
+        )
+        .then(() => true)
+        .catch(() => false)
+      if (!switched) {
+        const actual = await flowImg.getAttribute('src')
+        fail(`[desktop] Tab ${index + 1} 截图不符或未加载：${actual ?? '(空)'}`)
       }
-      const loaded = await flowImg.evaluate(
-        (img) => (img as HTMLImageElement).complete && (img as HTMLImageElement).naturalWidth > 0
-      )
-      if (!loaded) fail(`[desktop] Tab ${index + 1} 截图未加载成功`)
     }
 
     // 灯箱：点击截图放大，Esc 关闭
