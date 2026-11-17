@@ -9,25 +9,25 @@ export const release = {
     name: 'tizhou-setup-1.0.15.exe',
     sizeHint: '约 130 MB',
     checksumFile: 'SHA256SUMS.txt',
-    checksumHint:
-      '下载页同目录提供 SHA256SUMS.txt，可用 certutil -hashfile tizhou-setup-1.0.15.exe SHA256 对照校验'
+    checksumCommand: 'certutil -hashfile tizhou-setup-1.0.15.exe SHA256'
+  },
+  // 主按钮直连匿名下载（CNB Releases 附件，已验证匿名 200）；
+  // releasePages 作为「全量文件与校验文件」入口，安装包流量不经过自有 Web 服务器
+  directDownload: {
+    url: 'https://cnb.cool/nghqqa/tizhou/-/releases/download/v1.0.15/tizhou-setup-1.0.15.exe'
+  },
+  releasePages: {
+    cnb: 'https://cnb.cool/nghqqa/tizhou/-/releases',
+    github: 'https://github.com/nghqqa/tizhou/releases/latest'
   },
   channels: [
-    {
-      id: 'cnb',
-      label: '国内高速下载',
-      provider: 'CNB Releases',
-      url: 'https://cnb.cool/nghqqa/tizhou/-/releases',
-      primary: true,
-      note: '国内访问快，推荐'
-    },
     {
       id: 'github',
       label: 'GitHub Releases',
       provider: 'GitHub',
       url: 'https://github.com/nghqqa/tizhou/releases/latest',
       primary: false,
-      note: '无国际网络问题也可用'
+      note: '国际网络适用'
     }
   ],
   selfHosted: {

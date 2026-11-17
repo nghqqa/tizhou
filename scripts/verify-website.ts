@@ -201,23 +201,52 @@ async function checkViewport(
   )
   if (overflow > 1) fail(`[${label}] 存在横向溢出：${overflow}px`)
 
-  // 流程 Tab 切换与 FAQ 展开交互
+  // 流程 Tab 切换：4 个 Tab 逐一点击，断言每张 WebP 截图真实加载
   if (label === 'desktop') {
+    const expectedFlowImages = [
+      '02-practice-graphic',
+      '03-exam-review',
+      '04-knowledge-builder',
+      '05-shenlun'
+    ]
     const tabs = page.locator('.flow-tab')
     const tabCount = await tabs.count()
     if (tabCount !== 4) fail(`[desktop] 流程 Tab 数量异常：${tabCount}`)
-    const firstSrc = await page.locator('.flow-shot img').getAttribute('src')
-    await tabs.nth(2).click()
-    const secondSrc = await page.locator('.flow-shot img').getAttribute('src')
-    if (firstSrc === secondSrc) fail('[desktop] Tab 切换后截图未变化')
+    const flowImg = page.locator('.flow .shot-body img')
+    for (let index = 0; index < expectedFlowImages.length; index += 1) {
+      await tabs.nth(index).click()
+      const actual = await flowImg.getAttribute('src')
+      if (!actual?.includes(expectedFlowImages[index]!)) {
+        fail(`[desktop] Tab ${index + 1} 切换后截图不符：${actual ?? '(空)'}`)
+      }
+      const loaded = await flowImg.evaluate(
+        (img) => (img as HTMLImageElement).complete && (img as HTMLImageElement).naturalWidth > 0
+      )
+      if (!loaded) fail(`[desktop] Tab ${index + 1} 截图未加载成功`)
+    }
+
+    // 灯箱：点击截图放大，Esc 关闭
+    await page.locator('.shot-body').first().click()
+    if (!(await page.locator('.lightbox img').isVisible())) fail('[desktop] 灯箱未打开')
+    const zoomLoaded = await page
+      .locator('.lightbox img')
+      .evaluate((img) => img.complete && img.naturalWidth > 0)
+    if (!zoomLoaded) fail('[desktop] 灯箱大图未加载成功')
+    await page.keyboard.press('Escape')
+    const closed = await page
+      .locator('.lightbox')
+      .waitFor({ state: 'detached', timeout: 5_000 })
+      .then(() => true)
+      .catch(() => false)
+    if (!closed) fail('[desktop] Esc 未关闭灯箱')
+
+    // FAQ 展开交互
     await page.locator('.faq details summary').first().click()
     const opened = await page
       .locator('.faq details')
       .first()
       .evaluate((node) => node.hasAttribute('open'))
     if (!opened) fail('[desktop] FAQ 无法展开')
-    // 回到第 1 个 Tab，保持状态一致
-    await tabs.nth(0).click()
   }
 
   consoleErrors.forEach((error) => fail(`[${label}] console error: ${error.slice(0, 200)}`))

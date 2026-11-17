@@ -1,5 +1,5 @@
 /* 题舟官网：延续应用内宣纸白/墨黑/灼橙的克制学术调性（见 docs/design-audit.md）。
-   可见文案禁止 em-dash 与 en-dash。 */
+   可见文案禁止 em-dash 与 en-dash。标题用衬线字体体现「题舟」纸墨质感。 */
 
 :root {
   --bg: #fbf9f4;
@@ -15,6 +15,7 @@
   --green: #2f4f43;
   --radius: 12px;
   --radius-small: 8px;
+  --font-serif: 'Songti SC', 'STSong', 'Noto Serif SC', 'SimSun', 'STZhongsong', serif;
 }
 
 * {
@@ -43,6 +44,15 @@ body {
 
 img {
   max-width: 100%;
+}
+
+code {
+  font-family: Consolas, 'Courier New', monospace;
+  font-size: 0.92em;
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 1px 8px;
 }
 
 .container {
@@ -78,17 +88,11 @@ img {
   flex: none;
 }
 
-.brand-mark {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+.brand-logo {
   width: 32px;
   height: 32px;
   border-radius: 8px;
-  background: var(--accent);
-  color: #fff;
-  font-size: 17px;
-  font-weight: 700;
+  box-shadow: 0 1px 4px rgba(27, 25, 23, 0.18);
 }
 
 .brand-name {
@@ -151,6 +155,7 @@ img {
 .btn-primary {
   background: var(--accent);
   color: #fff;
+  box-shadow: 0 6px 18px rgba(214, 95, 53, 0.28);
 }
 
 .btn-primary:hover {
@@ -177,7 +182,7 @@ img {
 /* ── Hero 首屏 ────────────────────────────── */
 
 .hero {
-  padding: 72px 0 64px;
+  padding: 64px 0;
 }
 
 .hero-inner {
@@ -197,9 +202,11 @@ img {
 
 .hero h1 {
   margin: 0;
-  font-size: 52px;
+  font-family: var(--font-serif);
+  font-size: 54px;
+  font-weight: 700;
   line-height: 1.15;
-  letter-spacing: 2px;
+  letter-spacing: 3px;
 }
 
 .hero h1 .latin {
@@ -209,15 +216,47 @@ img {
 }
 
 .hero-tag {
-  font-size: 20px;
-  font-weight: 600;
+  font-family: var(--font-serif);
+  font-size: 21px;
+  font-weight: 700;
   margin: 18px 0 10px;
+  letter-spacing: 0.5px;
 }
 
 .hero-desc {
   color: var(--muted);
-  margin: 0 0 26px;
+  margin: 0 0 18px;
   max-width: 460px;
+}
+
+.hero-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  list-style: none;
+  margin: 0 0 24px;
+  padding: 0;
+}
+
+.hero-chips li {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  border-radius: 999px;
+  padding: 5px 14px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--green);
+}
+
+.hero-chips li::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
 }
 
 .dl-buttons {
@@ -232,23 +271,117 @@ img {
   margin: 14px 0 0;
 }
 
+.hero-meta a {
+  color: var(--accent-dark);
+}
+
 .hero-meta.muted {
   margin-top: 6px;
 }
 
-.hero-shot {
-  margin: 0;
-}
+/* ── 截图视窗外框 ─────────────────────────── */
 
-.hero-shot img,
-.flow-shot img {
-  display: block;
-  width: 100%;
+.shot-frame {
+  margin: 0;
   border: 1px solid var(--border);
   border-radius: 14px;
+  background: var(--card);
+  overflow: hidden;
   box-shadow:
     0 24px 48px rgba(27, 25, 23, 0.12),
     0 4px 12px rgba(27, 25, 23, 0.06);
+}
+
+.shot-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 14px;
+  background: var(--bg-alt);
+  border-bottom: 1px solid var(--border);
+}
+
+.shot-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #ddd6c8;
+}
+
+.shot-caption {
+  margin-left: 10px;
+  font-size: 12px;
+  color: var(--muted);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.shot-zoom-hint {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--accent);
+  flex: none;
+}
+
+.shot-body {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: zoom-in;
+}
+
+.shot-body img {
+  display: block;
+  width: 100%;
+}
+
+/* ── 灯箱 ─────────────────────────────────── */
+
+.lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgba(27, 25, 23, 0.78);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  cursor: zoom-out;
+}
+
+.lightbox img {
+  max-width: min(1400px, 96vw);
+  max-height: 92vh;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  box-shadow: 0 32px 80px rgba(0, 0, 0, 0.5);
+  cursor: default;
+}
+
+.lightbox-close {
+  position: absolute;
+  top: 18px;
+  right: 24px;
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  font-size: 24px;
+  cursor: pointer;
+}
+
+.lightbox-close:hover {
+  background: rgba(255, 255, 255, 0.24);
 }
 
 /* ── 区块通用 ─────────────────────────────── */
@@ -264,8 +397,10 @@ img {
 }
 
 .section h2 {
+  font-family: var(--font-serif);
   font-size: 32px;
-  letter-spacing: 1px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
   margin: 0 0 10px;
 }
 
@@ -334,19 +469,10 @@ img {
   align-items: start;
 }
 
-.flow-shot {
-  margin: 0;
-}
-
-.flow-shot figcaption {
-  margin-top: 12px;
-  color: var(--faint);
-  font-size: 13.5px;
-  text-align: center;
-}
-
 .flow-info h3 {
+  font-family: var(--font-serif);
   font-size: 22px;
+  font-weight: 700;
   margin: 4px 0 12px;
 }
 
@@ -392,13 +518,46 @@ img {
 .why-card {
   background: var(--card);
   border: 1px solid var(--border);
+  border-top: 3px solid var(--accent);
   border-radius: var(--radius);
-  padding: 24px 24px 20px;
+  padding: 22px 24px 20px;
+}
+
+.why-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  background: var(--accent-weak);
+  color: var(--accent-dark);
+  margin-bottom: 14px;
+}
+
+.why-icon svg {
+  width: 24px;
+  height: 24px;
 }
 
 .why-card h3 {
+  font-family: var(--font-serif);
   margin: 0 0 8px;
   font-size: 17px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.why-card .kw {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent-dark);
+  background: var(--accent-weak);
+  border-radius: 999px;
+  padding: 2px 10px;
 }
 
 .why-card p {
@@ -450,6 +609,17 @@ img {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 18px;
+  position: relative;
+}
+
+/* 阶段连线：虚线穿过序号圆点 */
+.steps::before {
+  content: '';
+  position: absolute;
+  top: 42px;
+  left: 90px;
+  right: 90px;
+  border-top: 2px dashed #e5b394;
 }
 
 .step {
@@ -464,18 +634,25 @@ img {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 30px;
-  height: 30px;
+  width: 40px;
+  height: 40px;
   border-radius: 50%;
   background: var(--accent);
   color: #fff;
+  font-size: 18px;
   font-weight: 700;
-  margin-bottom: 12px;
+  margin-bottom: 14px;
+  border: 3px solid var(--bg);
+  box-shadow: 0 0 0 2px #e5b394;
+  position: relative;
+  z-index: 1;
 }
 
 .step h3 {
+  font-family: var(--font-serif);
   margin: 0 0 8px;
   font-size: 17px;
+  font-weight: 700;
 }
 
 .step p {
@@ -484,11 +661,64 @@ img {
   font-size: 14.5px;
 }
 
-.start-note {
+.smartbox {
   margin: 22px 0 0;
   padding: 16px 20px;
   background: var(--accent-weak);
   border: 1px solid #ecd5c6;
+  border-radius: var(--radius-small);
+}
+
+.smartbox-badge {
+  display: inline-block;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--accent-dark);
+  background: var(--card);
+  border: 1px solid #ecd5c6;
+  border-radius: 999px;
+  padding: 2px 12px;
+  margin-bottom: 10px;
+}
+
+.smartbox-flow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-size: 14.5px;
+}
+
+.smartbox-arrow {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.smartbox-chip {
+  background: var(--card);
+  border: 1px solid #ecd5c6;
+  border-radius: var(--radius-small);
+  padding: 6px 14px;
+  font-weight: 600;
+}
+
+.smartbox-chip.accent {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.smartbox-note {
+  margin: 10px 0 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.start-note {
+  margin: 22px 0 0;
+  padding: 16px 20px;
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
   border-radius: var(--radius-small);
   color: var(--ink);
   font-size: 14px;
@@ -564,10 +794,9 @@ img {
   align-items: center;
 }
 
-.footer-brand .brand-mark {
+.footer-brand .brand-logo {
   width: 38px;
   height: 38px;
-  font-size: 20px;
 }
 
 .footer-brand strong {
@@ -634,6 +863,10 @@ img {
     font-size: 42px;
   }
 
+  .steps::before {
+    display: none;
+  }
+
   .section {
     padding: 56px 0;
   }
@@ -659,5 +892,9 @@ img {
 
   .header-links .header-link {
     display: none;
+  }
+
+  .shot-caption {
+    max-width: 140px;
   }
 }
