@@ -579,6 +579,10 @@ function countEssayTrainingMarks(lines: string[]): number {
 
 function safeTitle(value: string, fallback: string): string {
   const cleaned = value
+    // 图推等题干常内嵌 Markdown 图片（如 ![](images/xxx.png)），展示标题前先剥离，
+    // 否则列表标题会裸露成「![](images xxxxx)」式的原始语法碎片
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, ' ')
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
     .replace(/[\\/:*?"<>|]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
@@ -2322,7 +2326,6 @@ export class KnowledgeBuilderService {
           inconsistentQualityReports: pageFacts.inconsistentQualityReports
         }
         job.message =
-          `[批次 9/1 00:0x 构建] ` +
           (staged
             ? `已切出 ${staged} 题${
                 stagedEssays

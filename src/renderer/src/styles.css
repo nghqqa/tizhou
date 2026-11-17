@@ -1535,6 +1535,22 @@ a {
   display: flex;
   align-items: center;
   gap: 6px;
+  /* 窄栏下整枚徽章/标签换行，而不是把中文压缩成一列竖排字 */
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.builder-artifact .fui-Badge,
+.builder-artifact > span small {
+  white-space: nowrap;
+}
+.form-grid .grow {
+  min-width: 0;
+}
+.form-grid .grow .fui-Select {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  text-overflow: ellipsis;
 }
 .builder-artifact strong {
   display: block;
