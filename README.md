@@ -1,12 +1,12 @@
 <p align="center">
-  <img src="./assets/readme/hero.svg" width="100%" alt="题舟（Tizhou）—— 本地优先的开源考公学习工作台：从题本 PDF 直导入库，到训练、模考、错题复习与学习报告的完整学习闭环">
+  <img src="./assets/readme/hero.svg" width="100%" alt="题舟（Tizhou）：本地优先的开源考公学习工作台：从题本 PDF 直导入库，到训练、模考、错题复习与学习报告的完整学习闭环">
 </p>
 
 <p align="center">
   <a href="https://github.com/nghqqa/tizhou/releases/latest"><img src="https://img.shields.io/github/v/release/nghqqa/tizhou?label=%E6%9C%80%E6%96%B0%E7%89%88%E6%9C%AC" alt="最新版本"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-2f855a.svg" alt="MIT License"></a>
   <img src="https://img.shields.io/badge/%E5%B9%B3%E5%8F%B0-Windows%2010%2F11-0078D4" alt="Windows 10/11">
-  <img src="https://img.shields.io/badge/%E6%B5%8B%E8%AF%95-335%20%E9%A1%B9%E5%8D%95%E5%85%83%20%2B%2021%20E2E-brightgreen" alt="335 项单元测试与 21 项 E2E">
+  <img src="https://img.shields.io/badge/%E6%B5%8B%E8%AF%95-363%20%E9%A1%B9%E5%8D%95%E5%85%83%20%2B%2024%20E2E-brightgreen" alt="363 项单元测试与 24 项 E2E">
 </p>
 
 **题舟** 是一个**本地优先**的开源考公学习工作台：学习数据存在你自己的电脑上，无广告、无推送、无遥测；题库由你自己导入，扫描版题本 PDF 也能一键转成结构化题库；AI 助教可选接入，不装模型也能完整刷题。
@@ -41,17 +41,18 @@
 
 ## 功能总览
 
-- **题库直导** — 题本/解析/答案册 PDF 一键导入，扫描件本地 OCR（逐页检测文字层，混合 PDF 不漏识别）；配对一致性自动校验，疑似套号错位整书拦截；切题结果先审核再发布，支持按任务撤销
-  - 发布门禁 — 图形推理、图片题、配对待确认等高风险产物必须勾选「我已查看原始页面并确认内容正确」后才能入库，批量批准不会绕过确认；每道题可回跳来源 PDF 页对照核对
-  - 适用性提示 — 文字为主模块（言语 / 判断 / 片段阅读）导入效果最佳；资料分析等**图表密集型材料依赖图表数字还原，OCR 后务必逐项核对材料数字**（识别置信度高不等于数字层级关系正确），或配合「AI 变式训练」生成替代练习
-- **行测训练** — 顺序 / 随机 / 自适应三种模式，即时或汇总解析，断点续练；科目、模块、年份、地区、试卷、难度、关键词多维组合筛选，支持只练错题 / 只练收藏；汇总解析逐题对照你的选择与参考答案
-- **图形推理** — 混合卷图推小题按版面坐标自动绑定选项图，作答区与复盘区直接显示图片选项（纯图、图文混合均可）
-- **真题原卷模考** — 选卷即考，限时作答，交卷后成绩单（得分 / 正确率 / 用时）与**逐题复盘**：你的作答 vs 参考答案、选项对照、模块正确率分布，可筛「仅看错题与未答」；历史模考可随时回看；主观题自动保存，保存失败会阻止交卷并提供重试
-- **错题复习** — 错因记录、分级间隔复习、AI 深度讲解
-- **申论作答** — 给定材料 + 题干 + 草稿自动保存 + AI 评估，支持按关键词检索申论题
-- **学习分析** — 今日工作台、学习报告、能力诊断、学习计划
-- **数据安全** — 每日自动备份、跨机迁移包、旧版本数据目录自动迁移
-- **自动更新** — 应用内检查更新，增量下载后一键安装
+- **题库直导**：题本/解析/答案册 PDF 一键导入，扫描件本地 OCR（逐页检测文字层，混合 PDF 不漏识别）；配对一致性自动校验，疑似套号错位整书拦截；切题结果先审核再发布，支持按任务撤销
+  - 发布门禁：图形推理、图片题、配对待确认等高风险产物必须勾选「我已查看原始页面并确认内容正确」后才能入库，批量批准不会绕过确认；每道题可回跳来源 PDF 页对照核对
+  - 适用性提示：文字为主模块（言语 / 判断 / 片段阅读）导入效果最佳；资料分析等**图表密集型材料依赖图表数字还原，OCR 后务必逐项核对材料数字**（识别置信度高不等于数字层级关系正确），或配合「AI 变式训练」生成替代练习
+- **VLM 按页精校（可选）**：知识工坊审核详情对 OCR 产物调用你配置的视觉模型逐页核对表格数字与材料文本，建议对比采纳；与人工「编辑正文」双向同步，默认关闭，关闭时保持完全离线
+- **行测训练**：顺序 / 随机 / 自适应三种模式，即时或汇总解析，断点续练；科目、模块、年份、地区、试卷、难度、关键词多维组合筛选，支持只练错题 / 只练收藏；汇总解析逐题对照你的选择与参考答案
+- **图形推理**：混合卷图推小题按版面坐标自动绑定选项图，作答区与复盘区直接显示图片选项（纯图、图文混合均可）
+- **真题原卷模考**：选卷即考，限时作答，交卷后成绩单（得分 / 正确率 / 用时）与**逐题复盘**：你的作答 vs 参考答案、选项对照、模块正确率分布，可筛「仅看错题与未答」；历史模考可随时回看；主观题自动保存，保存失败会阻止交卷并提供重试
+- **错题复习**：错因记录、分级间隔复习、AI 深度讲解
+- **申论作答**：给定材料 + 题干 + 草稿自动保存 + AI 评估，支持按关键词检索申论题
+- **学习分析**：今日工作台、学习报告、能力诊断、学习计划
+- **数据安全**：每日自动备份、跨机迁移包、旧版本数据目录自动迁移
+- **自动更新**：应用内检查更新，增量下载后一键安装
 
 ## 下载安装
 
@@ -88,9 +89,9 @@
 4. 开始刷题
 ```
 
-📖 **[完整用户手册](docs/user-guide.md)** — 安装更新、各功能模块用法、数据备份迁移、隐私说明、常见问题
+📖 **[完整用户手册](docs/user-guide.md)**：安装更新、各功能模块用法、数据备份迁移、隐私说明、常见问题
 
-📚 **[题库导入指南](docs/question-bank-import.md)** — 三种导入渠道与题库格式说明
+📚 **[题库导入指南](docs/question-bank-import.md)**：三种导入渠道与题库格式说明
 
 > 题舟不分发任何题目内容（版权原因）：内置的示例题库仅供体验功能，正式题库请使用你自己拥有的资料导入。
 
@@ -135,7 +136,7 @@ docs/                  用户手册、导入指南、UAT 清单、架构文档
 npm install
 npm run dev            # 开发模式
 npm test               # 运行 335 项单元测试
-npm run test:e2e       # 运行 21 项 E2E（真实 Electron 实例）
+npm run test:e2e       # 运行 24 项 E2E（真实 Electron 实例）
 npm run typecheck      # 类型检查
 npm run format:check   # 代码格式检查
 npm run package        # 打包 Windows 安装包
@@ -150,9 +151,9 @@ npm run smoke:packaged # 打包后烟雾测试（输出到 dist-smoke/，不影�
 
 [MIT](LICENSE)
 
-- [RapidAI/RapidOCR](https://github.com/RapidAI/RapidOCR) — 本地 OCR 识别
-- [Microsoft MarkItDown](https://github.com/microsoft/markitdown) — 文档格式转换
-- [Electron](https://www.electronjs.org/) / [React](https://react.dev/) / [Fluent UI](https://github.com/microsoft/fluentui) — 应用框架与界面
+- [RapidAI/RapidOCR](https://github.com/RapidAI/RapidOCR)：本地 OCR 识别
+- [Microsoft MarkItDown](https://github.com/microsoft/markitdown)：文档格式转换
+- [Electron](https://www.electronjs.org/) / [React](https://react.dev/) / [Fluent UI](https://github.com/microsoft/fluentui)：应用框架与界面
 
 ---
 
