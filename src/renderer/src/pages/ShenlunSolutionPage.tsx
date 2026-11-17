@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Button, Field, Select, Spinner, Tab, TabList } from '@fluentui/react-components'
+import { Button, Field, Input, Select, Spinner, Tab, TabList } from '@fluentui/react-components'
 import { FloppyDiskIcon, SparkleIcon } from '@phosphor-icons/react'
 import type { ConstructedDraft, ConstructedEvaluation, Question } from '@shared/contracts'
 import { formatFullDate, invoke } from '../api'
@@ -24,6 +24,7 @@ function stemPreview(stem: string, max = 60): string {
 export function ShenlunSolutionPage(): React.JSX.Element {
   const [prompts, setPrompts] = useState<Question[]>()
   const [promptId, setPromptId] = useState('')
+  const [keyword, setKeyword] = useState('')
   const [content, setContent] = useState('')
   const [evaluation, setEvaluation] = useState<ConstructedEvaluation>()
   const [view, setView] = useState<'write' | 'reference'>('write')
@@ -36,17 +37,28 @@ export function ShenlunSolutionPage(): React.JSX.Element {
     [prompts, promptId]
   )
 
+  // 关键词搜索（防抖）：题目多时不再静默截断在前 200 题，可按关键词定位目标题
   useEffect(() => {
-    void invoke<Question[]>({
-      method: 'vault.search',
-      params: { subject: 'shenlun', type: 'essay', limit: 200 }
-    })
-      .then((items) => {
-        setPrompts(items)
-        setPromptId(items[0]?.id ?? '')
+    const timer = window.setTimeout(() => {
+      void invoke<Question[]>({
+        method: 'vault.search',
+        params: {
+          subject: 'shenlun',
+          type: 'essay',
+          limit: 500,
+          query: keyword.trim() || undefined
+        }
       })
-      .catch((cause) => setError(cause instanceof Error ? cause.message : '申论题目读取失败'))
-  }, [])
+        .then((items) => {
+          setPrompts(items)
+          setPromptId((previous) =>
+            previous && items.some((item) => item.id === previous) ? previous : (items[0]?.id ?? '')
+          )
+        })
+        .catch((cause) => setError(cause instanceof Error ? cause.message : '申论题目读取失败'))
+    }, 300)
+    return () => window.clearTimeout(timer)
+  }, [keyword])
   useEffect(() => {
     if (!promptId) return
     setContent('')
@@ -138,15 +150,24 @@ export function ShenlunSolutionPage(): React.JSX.Element {
       />
       {error && <ErrorState message={error} />}
       <Section>
-        <Field label="选择题目">
-          <Select value={promptId} onChange={(_, data) => setPromptId(data.value)}>
-            {prompts.map((prompt) => (
-              <option value={prompt.id} key={prompt.id}>
-                {prompt.category}：{stemPreview(prompt.stem)}
-              </option>
-            ))}
-          </Select>
-        </Field>
+        <div className="form-grid">
+          <Field className="grow" label="搜索题目">
+            <Input
+              value={keyword}
+              onChange={(_, data) => setKeyword(data.value)}
+              placeholder="按题干关键词过滤"
+            />
+          </Field>
+          <Field className="grow" label="选择题目">
+            <Select value={promptId} onChange={(_, data) => setPromptId(data.value)}>
+              {prompts.map((prompt) => (
+                <option value={prompt.id} key={prompt.id}>
+                  {prompt.category}：{stemPreview(prompt.stem)}
+                </option>
+              ))}
+            </Select>
+          </Field>
+        </div>
         <div className="question-meta" style={{ marginTop: 14 }}>
           <span className="pill">{current?.category}</span>
           <span className="pill">难度 {current?.difficulty}</span>
@@ -160,7 +181,11 @@ export function ShenlunSolutionPage(): React.JSX.Element {
                 <MarkdownContent content={current.material} sourceFilePath={current.filePath} />
               </div>
             )}
-            <p className="question-stem">{current?.stem}</p>
+            <MarkdownContent
+              className="question-stem"
+              content={current?.stem ?? ''}
+              sourceFilePath={current?.filePath}
+            />
           </div>
           <div className="essay-col">
             <TabList
@@ -183,7 +208,10 @@ export function ShenlunSolutionPage(): React.JSX.Element {
               <div className="answer-panel">
                 <h3>参考要点</h3>
                 <p>{current?.answer.join('；')}</p>
-                <MarkdownContent content={current?.explanation ?? ''} />
+                <MarkdownContent
+                  content={current?.explanation ?? ''}
+                  sourceFilePath={current?.filePath}
+                />
               </div>
             )}
           </div>

@@ -809,7 +809,7 @@ function buildOpenExamJson(jsonDir, outDir, primaryDir) {
       const options = (row.options ?? [])
         .map((option) => ({
           key: String(option.key ?? '').toUpperCase(),
-          text: htmlToMarkdown(option.text ?? option.html ?? '').trim()
+          text: htmlToMarkdown(option.text ?? option.html ?? '', assetSink).trim()
         }))
         .filter((option) => option.text && /^[A-Z]$/.test(option.key))
       const contentHtml = String(row.contentHtml ?? '')
@@ -817,13 +817,14 @@ function buildOpenExamJson(jsonDir, outDir, primaryDir) {
         contentHtml.includes('openexam-asset') || !String(row.content ?? '').trim()
           ? contentHtml
           : String(row.content ?? '')
-      const stem = htmlToMarkdown(sourceContent).trim()
+      const stem = htmlToMarkdown(sourceContent, assetSink).trim()
       const answer = String(row.answer ?? '')
         .toUpperCase()
         .replace(/[^A-Z]/g, '')
         .split('')
       const explanation =
-        htmlToMarkdown(row.analysis ?? '') || htmlToMarkdown(row.analysisHtml ?? '')
+        htmlToMarkdown(row.analysis ?? '', assetSink) ||
+        htmlToMarkdown(row.analysisHtml ?? '', assetSink)
       if (!stem || stem.length < 8 || options.length < 2 || answer.length === 0) {
         counters.incomplete += 1
         stat.skipped += 1

@@ -1754,4 +1754,56 @@ describe('repairDriftedQuestionNumbers（悬挂缩进题号漂移修复）', () 
     const repaired = repairDriftedQuestionNumbers(lines)
     expect(repaired[6]).toBe('4.第四题的前半句后半句？')
   })
+
+  it('carried 不拼到套标题/答案区/噪声/选项/图片行前面', () => {
+    const lines = [
+      '1.第一题？',
+      'A.甲',
+      'B.乙',
+      '第一题的尾巴文字，然后 2.',
+      '练习题 3 套',
+      '参考答案',
+      '1-2:BA'
+    ]
+    const repaired = repairDriftedQuestionNumbers(lines)
+    // 套标题必须原样保留（修复前会变成 "2.练习题 3 套" 破坏套识别）
+    expect(repaired[4]).toBe('练习题 3 套')
+    expect(repaired[5]).toBe('参考答案')
+    expect(parseQuestionBook(repaired.slice(0, 4))).toHaveLength(1)
+  })
+
+  it('题干正文的顿号数字枚举（10、11、12）不误判为漂移题号', () => {
+    const lines = [
+      '1.下列属于质数的是？',
+      'A.甲',
+      'B.乙',
+      'C.丙',
+      'D.丁',
+      '老师在课堂上列举了 10、11、12 三个数字让大家判断，其中正确的组合是哪一组？',
+      'A.仅 10',
+      'B.仅 11'
+    ]
+    const repaired = repairDriftedQuestionNumbers(lines)
+    expect(repaired[5]).toBe(
+      '老师在课堂上列举了 10、11、12 三个数字让大家判断，其中正确的组合是哪一组？'
+    )
+    const parsed = parseQuestionBook(repaired)
+    expect(parsed).toHaveLength(1)
+    expect(parsed[0]!.num).toBe(1)
+  })
+
+  it('顿号后接真实漂移题号（顿号前是文字）仍能修复', () => {
+    const lines = [
+      '1.第一题？',
+      'A.甲',
+      'B.乙',
+      '上一题结尾提到云服务、114.5%的增长，然后是2.',
+      '本题题干从这一行开始？',
+      'A.丙',
+      'B.丁'
+    ]
+    const repaired = repairDriftedQuestionNumbers(lines)
+    expect(repaired[3]).toBe('上一题结尾提到云服务、114.5%的增长，然后是')
+    expect(repaired[4]).toBe('2.本题题干从这一行开始？')
+  })
 })

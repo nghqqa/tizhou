@@ -98,7 +98,8 @@ export class StudyService {
     const count = clamp(Math.round(selection.count), 1, 100)
     if (selection.mode === 'review')
       return this.database.getDueReviews(count).map((item) => item.question)
-    const pool = this.database.listQuestions({ ...selection.filter, limit: 5000 })
+    // 抽题池走专用查询：万题级题库全库采样不受列表查询的 5000 截断（旧题也要能抽到）
+    const pool = this.database.listQuestionsForPool({ ...selection.filter })
     if (selection.mode === 'sequence') return pool.slice(0, count)
     if (selection.mode === 'adaptive') {
       const diagnosis = this.getDiagnosis()

@@ -109,6 +109,9 @@ const execFileAsync = promisify(execFile)
 // 行测整卷有大量图表页但文字题健康，不能因此整文件放弃结构化
 const GRAPHIC_ONLY_MAX_TEXT_QUESTIONS = 5
 
+// 随产物入库的图片资产白名单后缀：_regions.json/_pages.json 等 sidecar 不进题库
+const IMAGE_ASSET_PATTERN = /\.(png|jpe?g|gif|webp|bmp|tiff)$/i
+
 const SUPPORTED_EXTENSIONS = [
   '.pdf',
   '.docx',
@@ -1129,7 +1132,9 @@ export class KnowledgeBuilderService {
     const directToUserVault = isDirect && !activeVault.isBuiltin
     const targetRoot = directToUserVault ? activeVault.path : this.managedVaultDirectory
     const staged: Array<{ artifact: StoredArtifact; target: string; content: string }> = []
-    for (const artifact of approved) {
+    // 严格只发布通过门禁的产物：blocked 项保持 approved 不落盘（此前误遍历 approved 会连
+    // 未确认的受限产物一并写入题库，同时统计口径又报告其未发布）
+    for (const artifact of allowed) {
       const directory = isDirect
         ? join(targetRoot, '直导题库')
         : join(
@@ -1146,13 +1151,20 @@ export class KnowledgeBuilderService {
       staged.push({ artifact, target, content })
     }
     for (const item of staged) this.atomicWrite(item.target, item.content)
-    // 结构解析产出的图片资产随 md 入库（材料内相对引用 images/…）
+    // 结构解析产出的图片资产随 md 入库（材料内相对引用 images/…）：
+    // 只拷贝普通图片文件，跳过 _regions.json/_pages.json 等 sidecar 与子目录
     const rawImagesDir = join(job.outputPath, 'raw', 'images')
     if (existsSync(rawImagesDir)) {
       const vaultImagesDir = join(targetRoot, '直导题库', 'images')
       mkdirSync(vaultImagesDir, { recursive: true })
       for (const imageName of readdirSync(rawImagesDir)) {
+        if (!IMAGE_ASSET_PATTERN.test(imageName)) continue
         const from = join(rawImagesDir, imageName)
+        try {
+          if (!statSync(from).isFile()) continue
+        } catch {
+          continue
+        }
         const to = join(vaultImagesDir, imageName)
         if (!existsSync(to)) copyFileSync(from, to)
       }
@@ -1237,8 +1249,8 @@ export class KnowledgeBuilderService {
         }
         /** 书级质量警告（数字异常/表格残缺/噪声剥离），随产物落审核页 */
         qualityWarnings?: string[]
-        /** 混合卷里图推小题的选项图几何绑定提示（按题号），绑定题一律进人工核对 */
-        graphicNotes?: Map<number, string[]>
+        /** 混合卷里图推小题的选项图几何绑定提示（按 `${set}-${num}` 键控），绑定题一律进人工核对 */
+        graphicNotes?: Map<string, string[]>
         /** 能力边界分类（题本通道） */
         capability?: ImportCapability
         /** 题本行 → 页映射（与 parseQuestionBook 消费的行数组平行；来源页证据） */
@@ -1303,17 +1315,22 @@ export class KnowledgeBuilderService {
           // 兜底回退 OCR 时改用 ocr@ 键缓存，structured@ 键留待重试
           let effectiveConverter = converter
           let ocrQuality: OcrQualityReport | undefined
+          // 每文件转换/恢复前只清理上一文件残留的 sidecar（页映射按文件生成，旧文件的
+          // _regions.json/_pages.json 会误导当前文件的行→页映射）；raw/images 目录整体保留，
+          // 同批多文件的图片都要完整留存到 publish()
+          for (const sidecar of ['_regions.json', '_pages.json'])
+            rmSync(join(job.outputPath, 'raw', 'images', sidecar), { force: true })
           // 「忽略缓存重新转换」：跳过缓存读取（结果照常写回），排查识别问题时使用
           const cached = job.options.ignoreConversionCache
             ? undefined
             : await this.conversionCache.fetch(source, converter)
           if (cached) {
             copyFileSync(cached.markdownPath, rawPath)
-            // 结构解析命中：把缓存的图片归档原样恢复到任务 raw/images，否则 markdown 引用悬空
+            // 结构解析命中：把缓存的图片归档恢复到任务 raw/images（同名覆盖，不清空目录），
+            // 否则 markdown 引用悬空
             if (cached.imagesDir) {
               try {
                 const imagesTarget = join(dirname(rawPath), 'images')
-                rmSync(imagesTarget, { recursive: true, force: true })
                 mkdirSync(imagesTarget, { recursive: true })
                 for (const name of readdirSync(cached.imagesDir)) {
                   copyFileSync(join(cached.imagesDir, name), join(imagesTarget, name))
@@ -1738,7 +1755,11 @@ export class KnowledgeBuilderService {
             // 带警告进入待审核，由人工决定是否发布（不静默删除）
             let graphicStaged = 0
             for (const [index, item] of book.graphic.items.entries()) {
-              const signature = directSignature(item.stem, '', item.options[0]?.text ?? '')
+              const signature = directSignature(
+                item.stem,
+                item.material ?? '',
+                item.options[0]?.text ?? ''
+              )
               if (existingSignatures.has(signature) || batchSeen.has(signature)) {
                 skippedDuplicate += 1
                 continue
@@ -1836,7 +1857,12 @@ export class KnowledgeBuilderService {
           const materialWarnedGroups = new Set<string>()
           let bookStaged = 0
           for (const item of merged.items) {
-            const signature = directSignature(item.stem, '', item.options[0]?.text ?? '')
+            // 与 listQuestionSignatures 同口径：共享材料参与去重，资料分析题不因漏传材料而重复入库
+            const signature = directSignature(
+              item.stem,
+              item.material ?? '',
+              item.options[0]?.text ?? ''
+            )
             if (existingSignatures.has(signature) || batchSeen.has(signature)) {
               skippedDuplicate += 1
               continue
@@ -1845,9 +1871,12 @@ export class KnowledgeBuilderService {
             const markdown = directQuestionMarkdown(item)
             const groupFirst = !item.groupId || !materialWarnedGroups.has(item.groupId)
             if (item.groupId) materialWarnedGroups.add(item.groupId)
-            // 几何绑定了选项图的图推题：带绑定提示，按能力边界进人工核对（不自动发布）
-            const graphicNotes = book.graphicNotes?.get(item.num) ?? []
-            const imageOptions = item.options.some((option) => option.image)
+            // 图推题一律按能力边界进人工核对（不自动发布）：凡几何绑定产生提示的题
+            // （含"分为两类"文字选项 stemOnly、兜底 partial、绑定失败 skipped）都需人工核对，
+            // 不得以 text-supported 绕过审核
+            const graphicNotes = book.graphicNotes?.get(`${item.set}-${item.num}`) ?? []
+            const needsGraphicReview =
+              graphicNotes.length > 0 || item.options.some((option) => option.image)
             const artifact: StoredArtifact = {
               id: item.id,
               jobId: job.id,
@@ -1870,7 +1899,7 @@ export class KnowledgeBuilderService {
                 ...(item.cleanupWarnings ?? []),
                 ...graphicNotes
               ],
-              capability: imageOptions ? 'graphic-review' : book.capability,
+              capability: needsGraphicReview ? 'graphic-review' : book.capability,
               preview: item.stem.slice(0, 180),
               markdown,
               evidenceExcerpt: item.stem.slice(0, 80),

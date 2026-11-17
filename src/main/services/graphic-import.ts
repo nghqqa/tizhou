@@ -320,7 +320,8 @@ export function buildGraphicPreservation(
 const GRAPHIC_STEM =
   /从所给的四个选项中|使之呈现一定的规律性|填入问号处|分为两类|每一类图形|图形的变化规律|所给图形/
 const OPTION_LABEL = /^[A-DＡ-Ｄ]\s*[.、．]?$/
-const QUESTION_ANCHOR = /^\s*(\d{1,3})\s*[.、．]/
+// 与 question-import 的 QUESTION_NO 对齐：题号后不得紧跟数字，防止 "1.5亿元" 这类小数被当题号锚点
+const QUESTION_ANCHOR = /^\s*(\d{1,3})\s*[.、．](?!\d)/
 
 export interface GraphicBindingSummary {
   /** 四个选项图全部绑定的题数 */
@@ -331,8 +332,8 @@ export interface GraphicBindingSummary {
   stemOnly: number
   /** 识别为图推但未能绑定的题数 */
   skipped: number
-  /** 按题号记录的审核提示 */
-  notes: Map<number, string[]>
+  /** 审核提示，按 `${set}-${num}` 键控：同文件多套题库时题号会重复，只按 num 会互相覆盖 */
+  notes: Map<string, string[]>
 }
 
 function centerX(block: RegionBlock): number {
@@ -379,6 +380,66 @@ function withStemImages(stem: string, stemImages: RegionBlock[]): string {
   return [text, ...stemImages.map((image) => `![](${image.imgPath})`)].filter(Boolean).join('\n')
 }
 
+/** 同页版面排序：双栏页按「左栏→右栏、栏内按 y」，其余页面按 y。
+ *  无条件按 (page, y) 全局重排会把右栏题号排到左栏题干前面，打乱跨度边界。
+ *  双栏判定要同时满足：两簇块数各 ≥4、两簇都含题号锚点（真实双栏每栏都有题号；
+ *  单栏页的 2×2 选项网格几何上左右分簇，但题号块横跨全宽不落进任何簇）、
+ *  两簇 y 范围重叠过半、每簇高度过页面大半。 */
+function sortRegionsInReadingOrder(regions: RegionBlock[]): RegionBlock[] {
+  const byPage = new Map<number, RegionBlock[]>()
+  for (const block of regions) {
+    const list = byPage.get(block.page)
+    if (list) list.push(block)
+    else byPage.set(block.page, [block])
+  }
+  const byY = (a: RegionBlock, b: RegionBlock): number => (a.bbox[1] ?? 0) - (b.bbox[1] ?? 0)
+  const ordered: RegionBlock[] = []
+  for (const page of [...byPage.keys()].sort((a, b) => a - b)) {
+    const blocks = byPage.get(page)!
+    const pageWidth = Math.max(...blocks.map((block) => block.bbox[2] ?? 0), 1)
+    const mid = pageWidth / 2
+    const leftOnly = blocks.filter((block) => (block.bbox[2] ?? 0) <= mid + 8)
+    const rightOnly = blocks.filter((block) => (block.bbox[0] ?? 0) >= mid - 8)
+    const hasAnchor = (list: RegionBlock[]): boolean =>
+      list.some((block) => block.type === 'text' && QUESTION_ANCHOR.test(block.text))
+    const ySpan = (list: RegionBlock[]): number =>
+      list.length
+        ? Math.max(...list.map((block) => block.bbox[3] ?? 0)) -
+          Math.min(...list.map((block) => block.bbox[1] ?? 0))
+        : 0
+    const wholeSpan = ySpan(blocks)
+    const overlapSpan =
+      leftOnly.length && rightOnly.length && wholeSpan
+        ? Math.max(
+            0,
+            Math.min(
+              Math.max(...leftOnly.map((b) => b.bbox[3] ?? 0)),
+              Math.max(...rightOnly.map((b) => b.bbox[3] ?? 0))
+            ) -
+              Math.max(
+                Math.min(...leftOnly.map((b) => b.bbox[1] ?? 0)),
+                Math.min(...rightOnly.map((b) => b.bbox[1] ?? 0))
+              )
+          ) / wholeSpan
+        : 0
+    const clustered =
+      leftOnly.length >= 4 &&
+      rightOnly.length >= 4 &&
+      hasAnchor(leftOnly) &&
+      hasAnchor(rightOnly) &&
+      ySpan(leftOnly) >= wholeSpan * 0.6 &&
+      ySpan(rightOnly) >= wholeSpan * 0.6 &&
+      overlapSpan >= 0.5
+    if (clustered) {
+      // 栏归属按中心点：跨中线块按中心点归入所在栏，不丢弃
+      const columns: [RegionBlock[], RegionBlock[]] = [[], []]
+      for (const block of blocks) columns[centerX(block) <= mid ? 0 : 1]!.push(block)
+      ordered.push(...columns[0]!.sort(byY), ...columns[1]!.sort(byY))
+    } else ordered.push(...blocks.sort(byY))
+  }
+  return ordered
+}
+
 export function bindGraphicOptionsByGeometry(
   questions: ParsedQuestion[],
   regions: StructuredRegions
@@ -390,29 +451,75 @@ export function bindGraphicOptionsByGeometry(
     skipped: 0,
     notes: new Map()
   }
-  // 全局阅读顺序：先页后纵坐标；题号锚点按该顺序取"下一个锚点"作为跨度终点（允许跨页）
-  const ordered = [...regions.regions].sort(
-    (a, b) => a.page - b.page || (a.bbox[1] ?? 0) - (b.bbox[1] ?? 0)
-  )
-  const anchorIndexByNum = new Map<number, number>()
-  const anchorIndexes: number[] = []
+  // 全局阅读顺序：先页后纵坐标（双栏页分栏）；题号锚点按该顺序取"下一个锚点"作为跨度终点（允许跨页）
+  const ordered = sortRegionsInReadingOrder(regions.regions)
+  const anchors: Array<{ num: number; index: number }> = []
   ordered.forEach((block, index) => {
     if (block.type !== 'text') return
     const match = block.text.match(QUESTION_ANCHOR)
     if (!match) return
-    const num = Number(match[1])
-    if (!anchorIndexByNum.has(num)) anchorIndexByNum.set(num, index)
-    anchorIndexes.push(index)
+    anchors.push({ num: Number(match[1]), index })
   })
+  // 题号锚点按 `${set}-${num}` 键控并与 questions 顺序对齐：同文件多套题库时题号重复，
+  // 只按 num 索引会把第二套全部映射回第一套的版面位置。锚点游标只前进，容忍 OCR 丢锚点；
+  // 行首锚点缺失（题号漂移修复把题号留在行中）时在相邻已定锚点区间内按块内漂移题号或题干前缀兜底，
+  // 兜底块同时作为上一题的终止边界，避免本题图片被吞进上一题
+  const anchorIndexByKey = new Map<string, number>()
+  const driftAnchorIndexes = new Set<number>()
+  let anchorCursor = 0
+  let lastLocated = -1
+  for (const question of questions) {
+    const key = `${question.set}-${question.num}`
+    let start = -1
+    for (let scan = anchorCursor; scan < anchors.length; scan += 1) {
+      if (anchors[scan]!.num === question.num) {
+        start = anchors[scan]!.index
+        anchorCursor = scan + 1
+        break
+      }
+    }
+    if (start < 0) {
+      const lower = lastLocated
+      const upper = anchorCursor < anchors.length ? anchors[anchorCursor]!.index : ordered.length
+      // 块内漂移题号："12." 出现在文本中间（题号被版面引擎挤进行中）：
+      // 前一字符不得是数字，紧邻顿号时顿号前不得是数字（顿号数字枚举不是题号）
+      const drift = new RegExp(
+        `(?<!\\d)(?<![0-9][.、．,，;；])${question.num}[.、．](?![\\da-z])(?![.、．,，;；][0-9])`
+      )
+      const stemPrefix = question.stem
+        .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
+        .replace(/\s+/g, '')
+        .slice(0, 12)
+      for (let index = lower + 1; index < upper; index += 1) {
+        const block = ordered[index]
+        if (!block || block.type !== 'text') continue
+        if (
+          drift.test(block.text) ||
+          (stemPrefix.length >= 6 && block.text.replace(/\s+/g, '').includes(stemPrefix))
+        ) {
+          start = index
+          driftAnchorIndexes.add(index)
+          break
+        }
+      }
+    }
+    if (start >= 0) {
+      anchorIndexByKey.set(key, start)
+      lastLocated = start
+    }
+  }
+  const anchorIndexes = [...anchors.map((anchor) => anchor.index), ...driftAnchorIndexes].sort(
+    (a, b) => a - b
+  )
   const keys = ['A', 'B', 'C', 'D']
   for (const question of questions) {
     const placeholder = placeholderOptions(question)
     if (!GRAPHIC_STEM.test(question.stem) && !placeholder) continue
-    const start = anchorIndexByNum.get(question.num)
+    const start = anchorIndexByKey.get(`${question.set}-${question.num}`)
     if (start === undefined) {
       if (!GRAPHIC_STEM.test(question.stem)) continue
       summary.skipped += 1
-      summary.notes.set(question.num, [
+      summary.notes.set(`${question.set}-${question.num}`, [
         '图形推理：未在版面块中定位到题号，选项图未绑定，请人工核对'
       ])
       continue
@@ -423,14 +530,16 @@ export function bindGraphicOptionsByGeometry(
     if (images.length === 0) {
       if (!GRAPHIC_STEM.test(question.stem)) continue
       summary.skipped += 1
-      summary.notes.set(question.num, ['图形推理：题目范围内没有图片块，请人工核对原图'])
+      summary.notes.set(`${question.set}-${question.num}`, [
+        '图形推理：题目范围内没有图片块，请人工核对原图'
+      ])
       continue
     }
     if (!placeholder) {
       // 选项是真实文字（如"分为两类"的 ①②④，③⑤⑥）：图片全部属于题干
       question.stem = withStemImages(question.stem, images)
       summary.stemOnly += 1
-      summary.notes.set(question.num, [
+      summary.notes.set(`${question.set}-${question.num}`, [
         `图形推理：${images.length} 张题干图已随题附上，选项为文字，请核对图序`
       ])
       continue
@@ -468,7 +577,7 @@ export function bindGraphicOptionsByGeometry(
       question.options = keys.map((key) => ({ key, text: '', image: bound.get(key)!.imgPath }))
       question.stem = withStemImages(question.stem, stemImages)
       summary.bound += 1
-      summary.notes.set(question.num, [
+      summary.notes.set(`${question.set}-${question.num}`, [
         '图形推理：4 个选项图已按版面坐标绑定（几何匹配），发布前请人工核对'
       ])
     } else if (labels.length === 0 && images.length >= 4 && optionLike(images.slice(-4))) {
@@ -476,12 +585,12 @@ export function bindGraphicOptionsByGeometry(
       question.options = keys.map((key, index) => ({ key, text: '', image: tail[index]!.imgPath }))
       question.stem = withStemImages(question.stem, images.slice(0, -4))
       summary.partial += 1
-      summary.notes.set(question.num, [
+      summary.notes.set(`${question.set}-${question.num}`, [
         '图形推理：未识别到选项标签，末尾 4 张图按顺序作为选项（置信度较低），请人工核对'
       ])
     } else {
       summary.skipped += 1
-      summary.notes.set(question.num, [
+      summary.notes.set(`${question.set}-${question.num}`, [
         `图形推理：选项图绑定不完整（标签 ${labels.length}、图片 ${images.length}、已绑 ${bound.size}），请人工核对原图`
       ])
     }

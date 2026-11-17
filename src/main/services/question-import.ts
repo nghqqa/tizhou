@@ -115,8 +115,19 @@ export function repairDriftedQuestionNumbers(lines: string[]): string[] {
   for (const rawLine of lines) {
     let line = rawLine
     if (carried !== undefined && line.trim()) {
-      line = prefix(carried, line)
-      carried = undefined
+      // carried 只拼给普通正文行：套标题/答案区/噪声/选项/图片表格行是结构边界，
+      // 拼接会破坏结构识别（如"12.练习题02套"不再是合法套标题）。此时丢弃 carried——
+      // 该题号本就来自行尾漂移，宁缺不串
+      const structural =
+        SET_TITLE.test(line) ||
+        ANSWER_SECTION.test(line) ||
+        NOISE.test(line) ||
+        OPTION_LINE.test(line) ||
+        /^(!\[|\|)/.test(line)
+      if (!structural) {
+        line = prefix(carried, line)
+        carried = undefined
+      } else carried = undefined
     }
     if (SET_TITLE.test(line)) {
       expected = 1
@@ -140,17 +151,23 @@ export function repairDriftedQuestionNumbers(lines: string[]): string[] {
     }
     let repaired: string | undefined
     for (const candidate of [expected, expected + 1]) {
-      // 题号前一字符不得是数字，防止年份/数值（"2025."）被当成题号
-      const tail = line.match(new RegExp(`^(.*\\S)\\s*(?<!\\d)(${candidate})[.、．]\\s*$`))
+      // 行尾漂移：题号前一字符不得是数字（"2025."），且紧邻顿号时顿号前不得是数字——
+      // "…云服务、114." 是真漂移（顿号前是文字），"…10、11、" 是顿号枚举（顿号前是数字）
+      const tail = line.match(
+        new RegExp(`^(.*\\S)\\s*(?<!\\d)(?<![0-9][.、．,，;；])(${candidate})[.、．]\\s*$`)
+      )
       if (tail) {
         carried = candidate
         repaired = tail[1]!
         expected = candidate + 1
         break
       }
-      // 题号后不得紧跟数字或小写字母：排除小数（"2.5"）与文件后缀（"a77.png"）
+      // 行中漂移：题号后不得紧跟数字或小写字母（排除小数 "2.5" 与文件后缀 "a77.png"），
+      // 也不得处于"数字+顿号"枚举中段（"10、11、12" 的 11：前是顿号且顿号前是数字）
       const mid = line.match(
-        new RegExp(`^(.{4,}?)\\s*(?<!\\d)(${candidate})[.、．](?![\\da-z])(.*)$`)
+        new RegExp(
+          `^(.{4,}?)\\s*(?<!\\d)(?<![0-9][.、．,，;；])(${candidate})[.、．](?![\\da-z])(?![.、．,，;；][0-9])(.*)$`
+        )
       )
       if (mid) {
         repaired = prefix(candidate, `${mid[1]}${mid[3]}`)

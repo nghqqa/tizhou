@@ -1,6 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { Button, Field, Input, ProgressBar, Select, Textarea } from '@fluentui/react-components'
+import {
+  Button,
+  Checkbox,
+  Field,
+  Input,
+  ProgressBar,
+  Select,
+  Textarea
+} from '@fluentui/react-components'
 import {
   BookmarkSimpleIcon,
   CheckIcon,
@@ -15,11 +23,13 @@ import type {
   PracticeSession,
   Question,
   QuestionFacets,
-  ReviewItem
+  ReviewItem,
+  Subject
 } from '@shared/contracts'
 import { FEATURE_PROMPTS, taskDataEnvelope } from '@shared/prompts'
 import { invoke } from '../api'
 import { MarkdownContent } from '../components/MarkdownContent'
+import { OptionContent } from '../components/OptionContent'
 import { EmptyState, ErrorState, LoadingState, PageHeader, Section } from '../components/ui'
 import { useAppStore } from '../store'
 
@@ -31,6 +41,8 @@ interface Category {
 interface SessionResult {
   questionId: string
   result: AttemptResult
+  /** 用户当时的作答（汇总模式结束后复盘对照用） */
+  answer: string[]
 }
 
 interface TrainerInitial {
@@ -38,6 +50,7 @@ interface TrainerInitial {
   count?: number
   category?: string
   feedbackMode?: 'immediate' | 'summary'
+  subject?: '' | Subject
 }
 
 function Trainer({
@@ -51,10 +64,16 @@ function Trainer({
   const ai = useAppStore((state) => state.data!.ai)
   const [categories, setCategories] = useState<Category[]>([])
   const [facets, setFacets] = useState<QuestionFacets>({ years: [], regions: [], papers: [] })
+  const [subject, setSubject] = useState<'' | Subject>(initial?.subject ?? 'xingce')
   const [category, setCategory] = useState(initial?.category ?? '')
   const [year, setYear] = useState('')
   const [region, setRegion] = useState('')
   const [paper, setPaper] = useState('')
+  const [difficulty, setDifficulty] = useState('')
+  const [keyword, setKeyword] = useState('')
+  const [onlyWrong, setOnlyWrong] = useState(false)
+  const [onlyFavorite, setOnlyFavorite] = useState(false)
+  const [favorite, setFavorite] = useState(false)
   const [mode, setMode] = useState<PracticeSelection['mode']>(
     initial?.mode ?? (review ? 'review' : 'adaptive')
   )
@@ -84,15 +103,17 @@ function Trainer({
   const startedAt = useRef(Date.now())
 
   useEffect(() => {
+    // 科目筛选跟随 URL 参数（xingce / shenlun），空值与 common 视为不限科目
+    const subjectFilter = subject === 'xingce' || subject === 'shenlun' ? subject : undefined
     void invoke<Category[]>({
       method: 'vault.categories',
-      params: { subject: review ? undefined : 'xingce' }
+      params: { subject: review ? undefined : subjectFilter }
     })
       .then(setCategories)
       .catch(() => setCategories([]))
     void invoke<QuestionFacets>({
       method: 'vault.facets',
-      params: { subject: review ? undefined : 'xingce' }
+      params: { subject: review ? undefined : subjectFilter }
     })
       .then(setFacets)
       .catch(() => setFacets({ years: [], regions: [], papers: [] }))
@@ -114,7 +135,7 @@ function Trainer({
         if (review) void startSession({ mode: 'review', count: 50, feedbackMode: 'immediate' })
         else setLoading(false)
       })
-  }, [review])
+  }, [review, subject])
 
   const current = questions[index]
 
@@ -123,14 +144,20 @@ function Trainer({
     void invoke<string>({ method: 'note.get', params: { questionId: current.id } })
       .then(setNote)
       .catch(() => setNote(''))
+    void invoke<boolean>({ method: 'favorite.get', params: { questionId: current.id } })
+      .then(setFavorite)
+      .catch(() => setFavorite(false))
   }, [current?.id])
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
+      // 焦点在表单控件上时不抢键盘：Select/Button 上的 Enter 属于控件本身（避免误提交）
       if (
         !current ||
         event.target instanceof HTMLInputElement ||
-        event.target instanceof HTMLTextAreaElement
+        event.target instanceof HTMLTextAreaElement ||
+        event.target instanceof HTMLSelectElement ||
+        event.target instanceof HTMLButtonElement
       )
         return
       const optionIndex = /^[1-8]$/.test(event.key)
@@ -169,11 +196,15 @@ function Trainer({
         count,
         feedbackMode,
         filter: {
-          subject: 'xingce',
+          subject: subject === 'xingce' || subject === 'shenlun' ? subject : undefined,
           category: category || undefined,
           year: year ? Number(year) : undefined,
           region: region || undefined,
-          paper: paper || undefined
+          paper: paper || undefined,
+          difficulty: difficulty ? (Number(difficulty) as 1 | 2 | 3 | 4 | 5) : undefined,
+          query: keyword.trim() || undefined,
+          onlyWrong: onlyWrong || undefined,
+          onlyFavorite: onlyFavorite || undefined
         }
       }
       const created = await invoke<PracticeSession>({
@@ -227,6 +258,17 @@ function Trainer({
     setSession(updated)
   }
 
+  async function toggleFavorite(): Promise<void> {
+    if (!current) return
+    const next = !favorite
+    try {
+      await invoke({ method: 'favorite.set', params: { questionId: current.id, favorite: next } })
+      setFavorite(next)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : '收藏操作失败')
+    }
+  }
+
   async function submit(): Promise<void> {
     if (!current) return
     const answer = current.type === 'essay' ? [essayAnswer.trim()] : selected
@@ -249,7 +291,10 @@ function Trainer({
           reviewFeedback: review ? reviewFeedback : undefined
         }
       })
-      const updatedResults = [...sessionResults, { questionId: current.id, result: response }]
+      const updatedResults = [
+        ...sessionResults,
+        { questionId: current.id, result: response, answer }
+      ]
       setSessionResults(updatedResults)
       void refreshDashboard()
       if (feedbackMode === 'summary') {
@@ -392,8 +437,41 @@ function Trainer({
               <h3 className={item?.result.correct ? 'positive' : 'negative'}>
                 第 {questionIndex + 1} 题：{item?.result.correct ? '正确' : '错误'}
               </h3>
+              {question.material && (
+                <>
+                  <strong>给定材料</strong>
+                  <MarkdownContent content={question.material} sourceFilePath={question.filePath} />
+                </>
+              )}
               <MarkdownContent content={question.stem} sourceFilePath={question.filePath} />
-              <p>参考答案：{question.answer.join('、')}</p>
+              {question.options.length > 0 && (
+                <div className="review-options">
+                  {question.options.map((option) => {
+                    const isAnswer = question.answer.includes(option.key)
+                    const isChosen = (item?.answer ?? []).includes(option.key)
+                    return (
+                      <div
+                        key={option.key}
+                        className={`review-option ${
+                          isAnswer ? 'correct' : isChosen ? 'wrong' : ''
+                        }`.trim()}
+                      >
+                        <span className="option-key">{option.key}</span>
+                        <OptionContent option={option} sourceFilePath={question.filePath} />
+                        <span className="muted">
+                          {isChosen ? '你的选择' : ''}
+                          {isChosen && isAnswer ? ' · ' : ''}
+                          {isAnswer ? '参考答案' : ''}
+                        </span>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+              <p>
+                你的作答：{item?.answer?.length ? item.answer.join('、') : '未作答'} · 参考答案：
+                {question.answer.join('、')}
+              </p>
               <MarkdownContent content={question.explanation} sourceFilePath={question.filePath} />
             </div>
           )
@@ -449,6 +527,13 @@ function Trainer({
               <option value="sequence">顺序训练</option>
             </Select>
           </Field>
+          <Field label="科目">
+            <Select value={subject} onChange={(_, data) => setSubject(data.value as '' | Subject)}>
+              <option value="xingce">行测</option>
+              <option value="shenlun">申论</option>
+              <option value="">全部科目</option>
+            </Select>
+          </Field>
           <Field label="专项模块">
             <Select value={category} onChange={(_, data) => setCategory(data.value)}>
               <option value="">全部模块</option>
@@ -459,6 +544,16 @@ function Trainer({
               ))}
             </Select>
           </Field>
+          <Field label="难度">
+            <Select value={difficulty} onChange={(_, data) => setDifficulty(data.value)}>
+              <option value="">全部难度</option>
+              <option value="1">1 · 很容易</option>
+              <option value="2">2 · 较容易</option>
+              <option value="3">3 · 中等</option>
+              <option value="4">4 · 较难</option>
+              <option value="5">5 · 很难</option>
+            </Select>
+          </Field>
           <Field label="解析方式">
             <Select
               value={feedbackMode}
@@ -467,6 +562,13 @@ function Trainer({
               <option value="immediate">每题立即解析</option>
               <option value="summary">整组汇总解析</option>
             </Select>
+          </Field>
+          <Field label="关键词" className="grow">
+            <Input
+              value={keyword}
+              onChange={(_, data) => setKeyword(data.value)}
+              placeholder="按题干、解析或标签搜索"
+            />
           </Field>
           {facets.years.length > 0 && (
             <Field label="年份">
@@ -513,6 +615,18 @@ function Trainer({
               onChange={(_, data) => setCount(Math.max(1, Math.min(100, Number(data.value) || 1)))}
             />
           </Field>
+          <div className="filter-toggles">
+            <Checkbox
+              label="只练错题"
+              checked={onlyWrong}
+              onChange={(_, data) => setOnlyWrong(Boolean(data.checked))}
+            />
+            <Checkbox
+              label="只练收藏"
+              checked={onlyFavorite}
+              onChange={(_, data) => setOnlyFavorite(Boolean(data.checked))}
+            />
+          </div>
           <div className="button-row full">
             <Button appearance="primary" onClick={() => void startSession()}>
               生成训练
@@ -604,7 +718,7 @@ function Trainer({
                 disabled={Boolean(result)}
               >
                 <span className="option-key">{option.key}</span>
-                <MarkdownContent content={option.text} sourceFilePath={current.filePath} />
+                <OptionContent option={option} sourceFilePath={current.filePath} />
               </button>
             ))}
           </div>
@@ -623,16 +737,11 @@ function Trainer({
         <div className="question-footer">
           <div className="button-row">
             <Button
-              appearance="subtle"
-              icon={<BookmarkSimpleIcon />}
-              onClick={() =>
-                void invoke({
-                  method: 'favorite.set',
-                  params: { questionId: current.id, favorite: true }
-                })
-              }
+              appearance={favorite ? 'secondary' : 'subtle'}
+              icon={<BookmarkSimpleIcon weight={favorite ? 'fill' : undefined} />}
+              onClick={() => void toggleFavorite()}
             >
-              收藏
+              {favorite ? '已收藏，点击取消' : '收藏'}
             </Button>
             <Button
               appearance={uncertain ? 'secondary' : 'subtle'}
@@ -747,9 +856,22 @@ export function PracticePage(): React.JSX.Element {
   const mode = searchParams.get('mode') as PracticeSelection['mode'] | null
   const count = Number(searchParams.get('count')) || undefined
   const category = searchParams.get('category') ?? undefined
+  const subjectParam = searchParams.get('subject')
+  const subject =
+    subjectParam === 'xingce' || subjectParam === 'shenlun' || subjectParam === 'common'
+      ? subjectParam === 'common'
+        ? ''
+        : subjectParam
+      : undefined
   const initial: TrainerInitial | undefined =
-    mode || count || category
-      ? { mode: mode ?? undefined, count, category, feedbackMode: 'immediate' }
+    mode || count || category || subject !== undefined
+      ? {
+          mode: mode ?? undefined,
+          count,
+          category,
+          feedbackMode: 'immediate',
+          subject: subject ?? 'xingce'
+        }
       : undefined
   return (
     <div className="page">

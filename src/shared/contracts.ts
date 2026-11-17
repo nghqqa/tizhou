@@ -731,6 +731,7 @@ export type WorkbenchRequest =
   | { method: 'questions.similar'; params: { id: string; limit?: number } }
   | { method: 'attempt.submit'; params: AttemptInput }
   | { method: 'favorite.set'; params: { questionId: string; favorite: boolean } }
+  | { method: 'favorite.get'; params: { questionId: string } }
   | { method: 'note.save'; params: { questionId: string; content: string } }
   | { method: 'note.get'; params: { questionId: string } }
   | { method: 'review.due'; params?: { limit?: number } }

@@ -58,7 +58,11 @@ function buildCalendar(
   for (let offset = 13; offset >= 0; offset -= 1) {
     const date = new Date(today)
     date.setDate(today.getDate() - offset)
-    const dateStr = date.toISOString().slice(0, 10)
+    // 本地日期键与后端 date(created_at,'localtime') 聚合同口径：toISOString 会取 UTC 日期，
+    // 北京时间 00:00~08:00 间打开首页时"今天"会被标到昨天
+    const dateStr = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(
+      date.getDate()
+    ).padStart(2, '0')}`
     const activity = activityMap.get(dateStr)
     cells.push({
       date: dateStr,

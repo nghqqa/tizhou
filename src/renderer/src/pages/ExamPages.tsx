@@ -17,6 +17,7 @@ import type { ExamSession, Question, QuestionFacets } from '@shared/contracts'
 import { useNavigate } from 'react-router-dom'
 import { formatDate, formatFullDate, invoke } from '../api'
 import { MarkdownContent } from '../components/MarkdownContent'
+import { OptionContent } from '../components/OptionContent'
 import { EmptyState, ErrorState, LoadingState, PageHeader, Section } from '../components/ui'
 import { EssaySaveController, ExamAnswerSaveController } from '../services/exam-essay-save'
 import { useAppStore } from '../store'
@@ -230,10 +231,10 @@ export function ExamHomePage(): React.JSX.Element {
             <Button
               appearance="primary"
               icon={<ExamIcon />}
-              disabled={busy || !paperChoice}
+              disabled={busy || !paperChoice || Boolean(active)}
               onClick={() => void createPaperExam()}
             >
-              开始整卷模考
+              {active ? '请先完成当前模考' : '开始整卷模考'}
             </Button>
           </div>
           {!papers.length && (
@@ -256,6 +257,7 @@ export function ExamHomePage(): React.JSX.Element {
                   <th>进度</th>
                   <th>分数</th>
                   <th>更新时间</th>
+                  <th>操作</th>
                 </tr>
               </thead>
               <tbody>
@@ -270,6 +272,19 @@ export function ExamHomePage(): React.JSX.Element {
                     </td>
                     <td>{exam.score === undefined ? '暂未评分' : `${exam.score} 分`}</td>
                     <td>{formatFullDate(exam.updatedAt)}</td>
+                    <td>
+                      <Button
+                        size="small"
+                        appearance="secondary"
+                        onClick={() =>
+                          navigate(
+                            exam.status === 'finished' ? `/exam/result/${exam.id}` : '/exam/run'
+                          )
+                        }
+                      >
+                        {exam.status === 'finished' ? '查看复盘' : '继续作答'}
+                      </Button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -619,7 +634,7 @@ export function ExamRunPage(): React.JSX.Element {
                   onClick={() => void choose(option.key)}
                 >
                   <span className="option-key">{option.key}</span>
-                  <MarkdownContent content={option.text} sourceFilePath={current.filePath} />
+                  <OptionContent option={option} sourceFilePath={current.filePath} />
                 </button>
               ))}
             </div>

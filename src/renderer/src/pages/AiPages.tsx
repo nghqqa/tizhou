@@ -349,7 +349,7 @@ export function AiTrainingPage(): React.JSX.Element {
                   <span className="pill">AI 变式</span>
                   {source && <span className="pill">源模块：{source.category}</span>}
                 </div>
-                <p className="question-stem">{variant.stem}</p>
+                <MarkdownContent className="question-stem" content={variant.stem} />
                 <div className="options">
                   {variant.options.map((option) => (
                     <button
@@ -360,7 +360,7 @@ export function AiTrainingPage(): React.JSX.Element {
                       onClick={() => setSelected([option.key])}
                     >
                       <span className="option-key">{option.key}</span>
-                      <span>{option.text}</span>
+                      <MarkdownContent content={option.text} />
                     </button>
                   ))}
                 </div>
@@ -387,9 +387,11 @@ export function AiTrainingPage(): React.JSX.Element {
                 </div>
               </Section>
               <Section title="源题对照" description="仅用于核对考点迁移，不显示在新题作答区。">
-                <p className="muted" style={{ lineHeight: 1.7 }}>
-                  {source?.stem}
-                </p>
+                <MarkdownContent
+                  className="question-stem muted"
+                  content={source?.stem ?? ''}
+                  sourceFilePath={source?.filePath}
+                />
               </Section>
             </div>
           )}

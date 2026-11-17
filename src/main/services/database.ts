@@ -37,6 +37,21 @@ import { directSignature } from './question-import'
 type SqlValue = string | number | bigint | Uint8Array | null
 export type Row = Record<string, SqlValue>
 
+/** listQuestions 族共用过滤条件（渲染层 QuestionFilter 的主进程宽松版） */
+interface QuestionListFilter {
+  subject?: string
+  category?: string
+  type?: string
+  difficulty?: number
+  year?: number
+  region?: string
+  paper?: string
+  query?: string
+  onlyWrong?: boolean
+  onlyFavorite?: boolean
+  limit?: number
+}
+
 function now(): string {
   return new Date().toISOString()
 }
@@ -47,6 +62,10 @@ function dateKey(date = new Date()): string {
   const day = String(date.getDate()).padStart(2, '0')
   return `${year}-${month}-${day}`
 }
+
+/** attempts.created_at 存 UTC ISO：按天聚合/匹配必须转本地日期（date(x,'localtime')），
+ *  否则北京时间 00:00~08:00 的作答会被记到前一天（UTC 日期仍是昨天） */
+const LOCAL_DATE = "date(created_at, 'localtime')"
 
 function addDays(days: number): string {
   const date = new Date()
@@ -558,21 +577,52 @@ export class DatabaseService {
     return { added, updated, removed }
   }
 
-  listQuestions(
-    filter: {
-      subject?: string
-      category?: string
-      type?: string
-      difficulty?: number
-      year?: number
-      region?: string
-      paper?: string
-      query?: string
-      onlyWrong?: boolean
-      onlyFavorite?: boolean
-      limit?: number
-    } = {}
-  ): Question[] {
+  listQuestions(filter: QuestionListFilter = {}): Question[] {
+    const { where, values } = this.buildQuestionFilter(filter)
+    const limit = Math.max(1, Math.min(5000, filter.limit ?? 500))
+    const rows = this.db
+      .prepare(
+        `SELECT q.* FROM questions q JOIN vault_registry v ON v.id = q.vault_id
+        WHERE ${where.join(' AND ')} ORDER BY q.year DESC, q.category, q.id LIMIT ?`
+      )
+      .all(...values, limit) as Row[]
+    return rows.map((row) => this.mapQuestion(row))
+  }
+
+  /** 练习抽题池：与 listQuestions 同过滤，但不受列表查询的 5000 上限约束——
+   *  万题级题库全库采样时按 year DESC 截断会让旧题永远抽不到 */
+  listQuestionsForPool(filter: QuestionListFilter = {}): Question[] {
+    const { where, values } = this.buildQuestionFilter(filter)
+    const limit = Math.max(1, Math.min(50_000, filter.limit ?? 50_000))
+    const rows = this.db
+      .prepare(
+        `SELECT q.* FROM questions q JOIN vault_registry v ON v.id = q.vault_id
+        WHERE ${where.join(' AND ')} ORDER BY q.year DESC, q.category, q.id LIMIT ?`
+      )
+      .all(...values, limit) as Row[]
+    return rows.map((row) => this.mapQuestion(row))
+  }
+
+  /** 原卷组卷专用：按 papers 复现记录取整卷题目并按卷内题号排序，
+   *  不经 listQuestions 的 5000 截断（大题库的旧年份真题卷不能被截掉） */
+  listQuestionsByPaper(paper: string): Question[] {
+    const rows = this.db
+      .prepare(
+        `SELECT q.*, json_extract(ref.value, '$.order') AS paper_order
+        FROM questions q
+        JOIN vault_registry v ON v.id = q.vault_id AND v.active = 1
+        JOIN json_each(CASE WHEN q.papers_json IS NULL THEN '[]' ELSE q.papers_json END) ref
+          ON json_extract(ref.value, '$.paper') = ?
+        ORDER BY paper_order, q.id`
+      )
+      .all(paper) as Row[]
+    return rows.map((row) => this.mapQuestion(row))
+  }
+
+  private buildQuestionFilter(filter: QuestionListFilter): {
+    where: string[]
+    values: SqlValue[]
+  } {
     const where = ['v.active = 1']
     const values: SqlValue[] = []
     if (filter.subject) {
@@ -614,14 +664,7 @@ export class DatabaseService {
       )
     if (filter.onlyFavorite)
       where.push('EXISTS (SELECT 1 FROM favorites f WHERE f.question_id = q.id)')
-    const limit = Math.max(1, Math.min(5000, filter.limit ?? 500))
-    const rows = this.db
-      .prepare(
-        `SELECT q.* FROM questions q JOIN vault_registry v ON v.id = q.vault_id
-        WHERE ${where.join(' AND ')} ORDER BY q.year DESC, q.category, q.id LIMIT ?`
-      )
-      .all(...values, limit) as Row[]
-    return rows.map((row) => this.mapQuestion(row))
+    return { where, values }
   }
 
   getQuestion(id: string): Question | undefined {
@@ -663,7 +706,8 @@ export class DatabaseService {
     }
   }
 
-  /** 汇总真题卷列表：每卷在当前活动知识库中的可用题量（联考共用题去重后按复现记录聚合） */
+  /** 汇总真题卷列表：每卷在当前活动知识库中的可用题量（联考共用题去重后按复现记录聚合）。
+   *  题量不足 30 的卷不返回：与 exam.createPaper 的组卷校验及模考页描述保持同一口径 */
   listPapers(): Array<{ paper: string; count: number; year?: number }> {
     const rows = this.db
       .prepare(
@@ -687,6 +731,7 @@ export class DatabaseService {
     }
     return [...papers]
       .map(([paper, info]) => ({ paper, count: info.count, year: info.year }))
+      .filter((entry) => entry.count >= 30)
       .sort((a, b) => (b.year ?? 0) - (a.year ?? 0) || b.count - a.count)
   }
 
@@ -959,6 +1004,12 @@ export class DatabaseService {
     const attemptId = randomUUID()
     let nextReviewAt: string | undefined
     let mastered = false
+    // 模考快照路径（questionSnapshot 直传）不保证题目仍在当前 questions 表：
+    // 中途切换/重索引题库后，wrong_questions/review_tasks 的外键会让交整卷直接卡死。
+    // attempts 表无外键照常落盘；错题与复习任务只对仍存在的题目登记
+    const questionStillIndexed = questionSnapshot
+      ? Boolean(this.db.prepare('SELECT 1 FROM questions WHERE id = ?').get(question.id))
+      : true
     this.db
       .prepare(
         `INSERT INTO attempts(
@@ -979,6 +1030,16 @@ export class DatabaseService {
         question.contentHash,
         now()
       )
+    if (!questionStillIndexed) {
+      return {
+        attemptId,
+        correct,
+        expected: question.answer,
+        explanation: question.explanation,
+        nextReviewAt: undefined,
+        mastered: false
+      }
+    }
     const wrong = this.db
       .prepare('SELECT * FROM wrong_questions WHERE question_id = ?')
       .get(question.id) as Row | undefined
@@ -1047,6 +1108,10 @@ export class DatabaseService {
         .prepare('INSERT OR IGNORE INTO favorites(question_id, created_at) VALUES (?, ?)')
         .run(questionId, now())
     else this.db.prepare('DELETE FROM favorites WHERE question_id = ?').run(questionId)
+  }
+
+  isFavorite(questionId: string): boolean {
+    return Boolean(this.db.prepare('SELECT 1 FROM favorites WHERE question_id = ?').get(questionId))
   }
 
   saveNote(questionId: string, content: string): void {
@@ -1256,7 +1321,7 @@ export class DatabaseService {
     const todayRow = this.db
       .prepare(
         `SELECT COUNT(*) AS attempts, COALESCE(SUM(duration_seconds), 0) AS seconds,
-        COALESCE(SUM(correct), 0) AS correct FROM attempts WHERE substr(created_at, 1, 10) = ?`
+        COALESCE(SUM(correct), 0) AS correct FROM attempts WHERE ${LOCAL_DATE} = ?`
       )
       .get(today) as Row
     const overall = this.db
@@ -1287,9 +1352,9 @@ export class DatabaseService {
       .all() as Row[]
     const activityRows = this.db
       .prepare(
-        `SELECT substr(created_at,1,10) AS date, COUNT(*) AS attempts,
+        `SELECT ${LOCAL_DATE} AS date, COUNT(*) AS attempts,
         ROUND(100.0 * SUM(correct) / COUNT(*), 1) AS accuracy
-        FROM attempts WHERE created_at >= ? GROUP BY substr(created_at,1,10) ORDER BY date`
+        FROM attempts WHERE created_at >= ? GROUP BY ${LOCAL_DATE} ORDER BY date`
       )
       .all(addDays(-13)) as Row[]
     const subjectRows = this.db
@@ -1304,9 +1369,7 @@ export class DatabaseService {
     const learningDates = new Set(
       (
         this.db
-          .prepare(
-            'SELECT DISTINCT substr(created_at,1,10) AS date FROM attempts ORDER BY date DESC'
-          )
+          .prepare(`SELECT DISTINCT ${LOCAL_DATE} AS date FROM attempts ORDER BY date DESC`)
           .all() as Row[]
       ).map((row) => String(row.date))
     )
@@ -1368,8 +1431,8 @@ export class DatabaseService {
       .all(cutoff) as Row[]
     const dailyRows = this.db
       .prepare(
-        `SELECT substr(created_at,1,10) AS date, COUNT(*) AS attempts, SUM(correct) AS correct,
-        SUM(duration_seconds) AS seconds FROM attempts WHERE created_at >= ? GROUP BY date ORDER BY date`
+        `SELECT ${LOCAL_DATE} AS date, COUNT(*) AS attempts, SUM(correct) AS correct,
+        SUM(duration_seconds) AS seconds FROM attempts WHERE created_at >= ? GROUP BY ${LOCAL_DATE} ORDER BY date`
       )
       .all(cutoff) as Row[]
     const causeRows = this.db

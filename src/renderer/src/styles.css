@@ -709,6 +709,20 @@ a {
   margin: 0;
   color: inherit;
 }
+/* 图片选项（图形推理）：图文混合时上下排布，图片限宽防撑破按钮网格 */
+.option-content {
+  display: block;
+  min-width: 0;
+}
+.option-content .markdown {
+  max-width: none;
+}
+.option-content .option-image img,
+.option-button .markdown img {
+  max-width: 260px;
+  max-height: 220px;
+  margin: 6px 0;
+}
 .option-key {
   display: grid;
   place-items: center;
@@ -719,6 +733,40 @@ a {
   font-weight: 700;
   font-size: var(--tz-text-sm);
   color: var(--tz-ink-2);
+}
+/* 复盘区（训练汇总 / 模考逐题复盘）的选项对照行：参考答案绿框、误选红框 */
+.review-options {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0;
+}
+.review-option {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 10px;
+  padding: 8px 12px;
+  border: 1px solid var(--tz-border-strong);
+  border-radius: var(--tz-radius);
+  background: var(--tz-surface);
+}
+.review-option.correct {
+  border-color: rgba(85, 115, 99, 0.6);
+  background: var(--tz-pine-bg);
+}
+.review-option.wrong {
+  border-color: rgba(184, 68, 50, 0.6);
+  background: var(--tz-vermillion-bg);
+}
+.review-option .option-key {
+  margin-top: 2px;
+}
+/* 训练配置的布尔筛选（只练错题 / 只练收藏） */
+.filter-toggles {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 8px 0 2px;
 }
 
 .answer-panel {

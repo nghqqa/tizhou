@@ -277,7 +277,11 @@ async function initialize(): Promise<void> {
 
   const settings = database.getAppSettings()
   if (settings.autoBackup) {
-    const today = new Date().toISOString().slice(0, 10)
+    // 当日去重按本地日期比对（备份时间戳是 UTC ISO，直接 slice 会把 08:00 前的启动误判为昨日未备份）
+    const now = new Date()
+    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(
+      now.getDate()
+    ).padStart(2, '0')}`
     if (!database.listBackups().some((backup) => backup.createdAt.startsWith(today))) {
       database.createBackup('automatic')
       database.pruneBackups(settings.backupRetention)
@@ -425,6 +429,8 @@ async function initialize(): Promise<void> {
         return database!.submitAttempt(request.params)
       case 'favorite.set':
         return database!.setFavorite(request.params.questionId, request.params.favorite)
+      case 'favorite.get':
+        return database!.isFavorite(request.params.questionId)
       case 'note.save':
         return database!.saveNote(request.params.questionId, request.params.content)
       case 'note.get':
@@ -458,16 +464,10 @@ async function initialize(): Promise<void> {
       case 'exam.papers':
         return database!.listPapers()
       case 'exam.createPaper': {
-        // 原卷模考：按 papers 复现记录取题、按卷内题号排序，整卷限时作答
+        // 原卷模考：按 papers 复现记录取题、按卷内题号排序，整卷限时作答。
+        // 专用查询不经 listQuestions 的 5000 截断——大题库的旧年份真题卷不能被截掉
         const paper = request.params.paper
-        const ordered = database!
-          .listQuestions({ subject: 'xingce', limit: 5000 })
-          .flatMap((question) => {
-            const ref = question.papers?.find((item) => item.paper === paper)
-            return ref ? [{ question, order: ref.order }] : []
-          })
-          .sort((a, b) => a.order - b.order)
-          .map((item) => item.question)
+        const ordered = database!.listQuestionsByPaper(paper)
         if (ordered.length < 30)
           throw new Error('该试卷在当前知识库中可用题目不足（联考去重后残余过少），无法整卷组卷')
         return database!.createExam(
@@ -633,6 +633,8 @@ async function initialize(): Promise<void> {
         return database!.listBackups()
       case 'backup.restore': {
         database!.restoreBackup(request.params.path)
+        // 恢复的数据库可能指向另一个知识库目录：重新挂载磁盘监听，避免旧 watcher 失联
+        vaults.startWatching()
         return {
           dashboard: database!.getDashboard(),
           settings: database!.getAppSettings(),

@@ -141,6 +141,19 @@ function artifactStatusLabel(status: KnowledgeArtifactStatus): string {
   }[status]
 }
 
+/** 发布门禁判定：与主进程 partitionByPublishGate 完全同一口径——
+ *  能力边界（非 text-supported）或警告含「配对待确认」且未人工确认 */
+function isPublishGated(artifact: {
+  capability?: string
+  humanConfirmed?: boolean
+  warnings: string[]
+}): boolean {
+  return (
+    (Boolean(artifact.capability) && artifact.capability !== 'text-supported') ||
+    artifact.warnings.some((warning) => warning.includes('配对待确认'))
+  )
+}
+
 function statusAppearance(
   status: KnowledgeArtifactStatus
 ): 'filled' | 'outline' | 'tint' | 'ghost' {
@@ -1227,7 +1240,7 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
                             item.importQualityTier === 'structured'
                               ? '结构化题目：已生成可作答结构，不代表 OCR 内容正确'
                               : item.importQualityTier === 'review-required'
-                                ? '待人工审核：导入结果抽查——含图片/表格/图推等能力边界内容（不是要求标注 OCR 数据集）'
+                                ? '待人工审核：导入结果抽查，含图片/表格/图推等能力边界内容（不是要求标注 OCR 数据集）'
                                 : '原始资料保留：仅保留原始资料，未生成可作答题目'
                           }
                         >
@@ -1351,6 +1364,35 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
                             </label>
                           </div>
                         )}
+                      {artifact.status === 'approved' && isPublishGated(artifact) && (
+                        <div className="builder-warning-list">
+                          {artifact.humanConfirmed ? (
+                            <span className="positive">已人工确认：发布限制已解除。</span>
+                          ) : (
+                            <>
+                              <span>
+                                已批准但受发布门禁限制：批量批准不会带入人工确认，勾选后提交确认才会解除发布限制。
+                              </span>
+                              <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                                <input
+                                  type="checkbox"
+                                  checked={humanConfirmed}
+                                  onChange={(event) => setHumanConfirmed(event.target.checked)}
+                                />
+                                我已查看原始页面并确认内容正确
+                              </label>
+                              <Button
+                                size="small"
+                                appearance="primary"
+                                disabled={busy === 'review' || !humanConfirmed}
+                                onClick={() => void reviewArtifact('approved')}
+                              >
+                                提交人工确认
+                              </Button>
+                            </>
+                          )}
+                        </div>
+                      )}
                       {artifact.status === 'rejected' && (
                         <div className="builder-status-row">
                           <span className="pill">已拒绝</span>
