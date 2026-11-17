@@ -37,6 +37,18 @@ import { directSignature } from './question-import'
 type SqlValue = string | number | bigint | Uint8Array | null
 export type Row = Record<string, SqlValue>
 
+/** UTC ISO 时间或 Date → 本地日期键 `YYYY-MM-DD`。
+ *  备份 createdAt 等时间戳是 UTC ISO，直接 startsWith 本地日期比对会把
+ *  北京时间 00:00~08:00 的记录错判为昨天（UTC 日期尚未翻转），跨零点去重因此失效 */
+export function localDateKeyOf(value: string | Date): string {
+  const date = value instanceof Date ? value : new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
 /** listQuestions 族共用过滤条件（渲染层 QuestionFilter 的主进程宽松版） */
 interface QuestionListFilter {
   subject?: string
@@ -939,6 +951,22 @@ export class DatabaseService {
       )
       .get(mode) as Row | undefined
     return row ? parseJson<PracticeSession | undefined>(row.metadata_json, undefined) : undefined
+  }
+
+  /** 会话已持久化的作答记录（汇总模式恢复时重建内存态结果用），按提交顺序返回 */
+  getSessionAttempts(
+    sessionId: string
+  ): Array<{ questionId: string; answer: string[]; correct: boolean }> {
+    const rows = this.db
+      .prepare(
+        'SELECT question_id, answer_json, correct FROM attempts WHERE session_id = ? ORDER BY created_at, id'
+      )
+      .all(sessionId) as Row[]
+    return rows.map((row) => ({
+      questionId: String(row.question_id),
+      answer: parseJson<string[]>(row.answer_json, []),
+      correct: Boolean(row.correct)
+    }))
   }
 
   updatePracticeSession(

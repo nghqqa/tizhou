@@ -374,4 +374,29 @@ describe('DatabaseService local-date statistics and exam edge cases', () => {
     database.setFavorite(questionId, false)
     expect(database.isFavorite(questionId)).toBe(false)
   })
+
+  it('localDateKeyOf 把 UTC ISO 时间转本地日期键（跨零点备份去重口径）', async () => {
+    const { localDateKeyOf } = await import('../src/main/services/database')
+    // 本地今天 00:30（东八区 → UTC 是昨天 16:30，UTC 日期切片仍是昨天）
+    const today = new Date()
+    const localAfterMidnight = new Date(today)
+    localAfterMidnight.setHours(0, 30, 0, 0)
+    expect(localDateKeyOf(localAfterMidnight.toISOString())).toBe(localDateKey(today))
+    // UTC 字符串与 Date 实例同结果
+    expect(localDateKeyOf(localAfterMidnight)).toBe(localDateKey(today))
+    // 本地昨天 23:30（UTC 日期可能已是今天）必须归入昨天
+    const yesterdayLate = new Date(today)
+    yesterdayLate.setDate(yesterdayLate.getDate() - 1)
+    yesterdayLate.setHours(23, 30, 0, 0)
+    expect(localDateKeyOf(yesterdayLate.toISOString())).toBe(localDateKey(yesterdayLate))
+    // 主进程启动去重谓词：当天创建的备份（birthtime 为 UTC ISO）必须命中今天
+    const backup = database.createBackup('automatic')
+    const listed = database.listBackups()
+    expect(listed.some((item) => localDateKeyOf(item.createdAt) === localDateKey(new Date()))).toBe(
+      true
+    )
+    expect(localDateKeyOf(backup.createdAt)).toBe(localDateKey(new Date()))
+    // 非法输入返回空串而不是抛错（防御脏数据）
+    expect(localDateKeyOf('not-a-date')).toBe('')
+  })
 })

@@ -1,6 +1,12 @@
 // 组题抽题：资料分析一组材料带 N 道连续小题，抽题以组为原子单位
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { buildQuestionUnits, takeUnits } from '../src/main/services/study'
+import { DatabaseService } from '../src/main/services/database'
+import { StudyService } from '../src/main/services/study'
+import { VaultService } from '../src/main/services/vault'
 import type { Question } from '../src/shared/contracts'
 
 function question(id: string, groupId?: string, groupOrder?: number): Question {
@@ -77,5 +83,102 @@ describe('takeUnits', () => {
     const group = [1, 2, 3, 4, 5].map((order) => question(`g${order}`, 'kbg-a', order))
     const picked = takeUnits([group], 3)
     expect(picked.map((item) => item.id)).toEqual(['g1', 'g2', 'g3'])
+  })
+})
+
+describe('StudyService.selectPractice（抽题池与筛选）', () => {
+  let directory: string
+  let database: DatabaseService
+  let study: StudyService
+
+  beforeEach(() => {
+    directory = mkdtempSync(join(tmpdir(), 'tizhou-study-select-'))
+    database = new DatabaseService(
+      join(directory, 'workbench.sqlite'),
+      directory,
+      join(directory, 'backups')
+    )
+    new VaultService(database).ensureBuiltinVault()
+    study = new StudyService(database, {} as never)
+    // 补充带唯一关键词的种子题（内置 8 题之外，验证筛选走 listQuestionsForPool 的完整链路）
+    const vaultId = database.getActiveVault()!.id
+    const insert = (
+      database as unknown as {
+        db: { prepare: (sql: string) => { run: (...v: unknown[]) => unknown } }
+      }
+    ).db.prepare(
+      `INSERT INTO questions(
+        id, vault_id, subject, category, type, stem, options_json, answer_json, explanation,
+        difficulty, source, tags_json, content_hash, indexed_at
+      ) VALUES (?, ?, 'xingce', '判断推理', 'single', ?, ?, '["A"]', '解析',
+        3, '本地资料/筛选', '[]', ?, '2024-01-01')`
+    )
+    for (let index = 1; index <= 3; index += 1) {
+      insert.run(
+        `filter-q-${index}`,
+        vaultId,
+        `第${index}题：斑马条纹筛选独一无二占位词${index}的研究题干`,
+        JSON.stringify([
+          { key: 'A', text: '甲' },
+          { key: 'B', text: '乙' }
+        ]),
+        `hash-filter-${index}`
+      )
+    }
+  })
+
+  afterEach(() => {
+    database.close()
+    rmSync(directory, { recursive: true, force: true })
+  })
+
+  it('onlyWrong 只从未掌握错题中抽题', () => {
+    // filter-q-1 答错（答案 A，提交 B）
+    database.submitAttempt({
+      questionId: 'filter-q-1',
+      answer: ['B'],
+      durationSeconds: 5,
+      mode: 'practice'
+    })
+    const picked = study.selectPractice({
+      mode: 'random',
+      count: 50,
+      feedbackMode: 'immediate',
+      filter: { onlyWrong: true }
+    })
+    expect(picked.map((item) => item.id)).toEqual(['filter-q-1'])
+  })
+
+  it('onlyFavorite 只从收藏题中抽题', () => {
+    database.setFavorite('filter-q-2', true)
+    const picked = study.selectPractice({
+      mode: 'random',
+      count: 50,
+      feedbackMode: 'immediate',
+      filter: { onlyFavorite: true }
+    })
+    expect(picked.map((item) => item.id)).toEqual(['filter-q-2'])
+  })
+
+  it('关键词 query 命中题干（listQuestionsForPool 的 LIKE 过滤链路）', () => {
+    const picked = study.selectPractice({
+      mode: 'sequence',
+      count: 10,
+      feedbackMode: 'immediate',
+      filter: { query: '独一无二占位词2' }
+    })
+    expect(picked.map((item) => item.id)).toEqual(['filter-q-2'])
+  })
+
+  it('全库顺序训练不受列表查询默认条数影响（池走专用查询）', () => {
+    const picked = study.selectPractice({
+      mode: 'sequence',
+      count: 50,
+      feedbackMode: 'immediate',
+      filter: {}
+    })
+    // 内置 8 题 + 3 道筛选种子全部进入池（列表查询默认 500 不截断本规模）
+    expect(picked.length).toBeGreaterThanOrEqual(11)
+    expect(picked.map((item) => item.id)).toContain('filter-q-3')
   })
 })

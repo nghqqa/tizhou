@@ -362,6 +362,116 @@ describe('bindGraphicOptionsByGeometry（混合卷图推小题几何绑定）', 
     expect(list[0]!.stem).not.toContain('q2-')
   })
 
+  it('跨卷锚点扫描不越界：第 1 套漂移题命中本套兜底，不误吞第 2 套同号锚点', () => {
+    // 第 1 套：题 1 正常锚点，题 2 题号漂移（行首无 "2."，漂移块行中含 "2."）；
+    // 第 2 套：题 1、题 2 都是正常行首锚点。锚点号序列 [1, 1, 2]：
+    // 若不按卷段限制，第 1 套题 2 的精确扫描会越过套边界吞掉第 2 套的 "2." 锚点
+    const regions: RegionBlock[] = [
+      text(0, 100, '1.从所给的四个选项中，选择最合适的一个填入问号处，使之呈现一定的规律性：'),
+      ...[0, 1, 2, 3, 4].map((i) => image(0, 60 + i * 150, 170, 120, 100, `images/s-${i}.png`)),
+      image(0, 100, 340, 150, 150, 'images/q1-a.png'),
+      image(0, 400, 340, 150, 150, 'images/q1-b.png'),
+      image(0, 100, 560, 150, 150, 'images/q1-c.png'),
+      image(0, 400, 560, 150, 150, 'images/q1-d.png'),
+      { type: 'text', page: 0, bbox: [165, 500, 185, 520], imgPath: '', text: 'A' },
+      { type: 'text', page: 0, bbox: [465, 500, 485, 520], imgPath: '', text: 'B' },
+      { type: 'text', page: 0, bbox: [165, 720, 185, 740], imgPath: '', text: 'C' },
+      { type: 'text', page: 0, bbox: [465, 720, 485, 740], imgPath: '', text: 'D' },
+      // 第 1 套题 2 的漂移块（行首是上一段文字，"2." 在行中），其后是该题的选项图
+      text(0, 800, '上一题收尾。2.从所给图形中选出最合适的一项：'),
+      image(0, 100, 860, 150, 150, 'images/q2-a.png'),
+      image(0, 400, 860, 150, 150, 'images/q2-b.png'),
+      image(0, 100, 1080, 150, 150, 'images/q2-c.png'),
+      image(0, 400, 1080, 150, 150, 'images/q2-d.png'),
+      { type: 'text', page: 0, bbox: [165, 1020, 185, 1040], imgPath: '', text: 'A' },
+      { type: 'text', page: 0, bbox: [465, 1020, 485, 1040], imgPath: '', text: 'B' },
+      { type: 'text', page: 0, bbox: [165, 1240, 185, 1260], imgPath: '', text: 'C' },
+      { type: 'text', page: 0, bbox: [465, 1240, 485, 1260], imgPath: '', text: 'D' },
+      // 第 2 套（新页）：题 1、题 2 都是正常行首锚点
+      text(1, 100, '1.从所给的四个选项中，选择最合适的一个填入问号处，使之呈现一定的规律性：'),
+      image(1, 100, 180, 150, 150, 'images/set2-q1-a.png'),
+      image(1, 400, 180, 150, 150, 'images/set2-q1-b.png'),
+      image(1, 100, 400, 150, 150, 'images/set2-q1-c.png'),
+      image(1, 400, 400, 150, 150, 'images/set2-q1-d.png'),
+      { type: 'text', page: 1, bbox: [165, 340, 185, 360], imgPath: '', text: 'A' },
+      { type: 'text', page: 1, bbox: [465, 340, 485, 360], imgPath: '', text: 'B' },
+      { type: 'text', page: 1, bbox: [165, 560, 185, 580], imgPath: '', text: 'C' },
+      { type: 'text', page: 1, bbox: [465, 560, 485, 580], imgPath: '', text: 'D' },
+      text(1, 700, '2.从所给的四个选项中，选择最合适的一个填入问号处，使之呈现一定的规律性：'),
+      image(1, 100, 780, 150, 150, 'images/set2-q2-a.png'),
+      image(1, 400, 780, 150, 150, 'images/set2-q2-b.png'),
+      image(1, 100, 1000, 150, 150, 'images/set2-q2-c.png'),
+      image(1, 400, 1000, 150, 150, 'images/set2-q2-d.png'),
+      { type: 'text', page: 1, bbox: [165, 940, 185, 960], imgPath: '', text: 'A' },
+      { type: 'text', page: 1, bbox: [465, 940, 485, 960], imgPath: '', text: 'B' },
+      { type: 'text', page: 1, bbox: [165, 1160, 185, 1180], imgPath: '', text: 'C' },
+      { type: 'text', page: 1, bbox: [465, 1160, 485, 1180], imgPath: '', text: 'D' }
+    ]
+    const list: ParsedQuestion[] = [
+      {
+        set: 1,
+        num: 1,
+        stem: '从所给的四个选项中，选择最合适的一个填入问号处，使之呈现一定的规律性：',
+        options: [
+          { key: 'A', text: 'A' },
+          { key: 'B', text: 'B' }
+        ]
+      },
+      {
+        set: 1,
+        num: 2,
+        stem: '从所给图形中选出最合适的一项：',
+        options: [
+          { key: 'A', text: 'A' },
+          { key: 'B', text: 'B' }
+        ]
+      },
+      {
+        set: 2,
+        num: 1,
+        stem: '从所给的四个选项中，选择最合适的一个填入问号处，使之呈现一定的规律性：',
+        options: [
+          { key: 'A', text: 'A' },
+          { key: 'B', text: 'B' }
+        ]
+      },
+      {
+        set: 2,
+        num: 2,
+        stem: '从所给的四个选项中，选择最合适的一个填入问号处，使之呈现一定的规律性：',
+        options: [
+          { key: 'A', text: 'A' },
+          { key: 'B', text: 'B' }
+        ]
+      }
+    ]
+    const summary = bindGraphicOptionsByGeometry(list, { pages: 2, regions })
+    expect(summary.bound).toBe(4)
+    // 第 1 套题 2 命中本套漂移块（不是第 2 套的锚点）
+    expect(list[1]!.options.map((option) => option.image)).toEqual([
+      'images/q2-a.png',
+      'images/q2-b.png',
+      'images/q2-c.png',
+      'images/q2-d.png'
+    ])
+    // 第 2 套两题各自绑定本套版面，未被第 1 套抢占
+    expect(list[2]!.options.map((option) => option.image)).toEqual([
+      'images/set2-q1-a.png',
+      'images/set2-q1-b.png',
+      'images/set2-q1-c.png',
+      'images/set2-q1-d.png'
+    ])
+    expect(list[3]!.options.map((option) => option.image)).toEqual([
+      'images/set2-q2-a.png',
+      'images/set2-q2-b.png',
+      'images/set2-q2-c.png',
+      'images/set2-q2-d.png'
+    ])
+    // 第 1 套题 1 只保留题干图，不含第 1 套题 2 的图
+    expect(list[0]!.stem.match(/images\/s-\d\.png/g)).toHaveLength(5)
+    expect(list[0]!.stem).not.toContain('q2-')
+  })
+
   it('小数开头的行（1.5亿元）不构成题号锚点', () => {
     const regions: RegionBlock[] = [
       // 小数行在真锚点之前：若被当成 num=1 锚点，第一题的跨度会前移吞掉诱饵图

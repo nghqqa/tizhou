@@ -463,15 +463,34 @@ export function bindGraphicOptionsByGeometry(
   // 题号锚点按 `${set}-${num}` 键控并与 questions 顺序对齐：同文件多套题库时题号重复，
   // 只按 num 索引会把第二套全部映射回第一套的版面位置。锚点游标只前进，容忍 OCR 丢锚点；
   // 行首锚点缺失（题号漂移修复把题号留在行中）时在相邻已定锚点区间内按块内漂移题号或题干前缀兜底，
-  // 兜底块同时作为上一题的终止边界，避免本题图片被吞进上一题
+  // 兜底块同时作为上一题的终止边界，避免本题图片被吞进上一题。
+  // 卷段边界：锚点题号回落（同套题号严格递增，回落或重复即新一套开始）——
+  // 匹配当前题的锚点不得越过本套卷段，否则第一套某题漂移缺锚点时会误吞第二套的同号锚点
+  const segments: Array<{ start: number; end: number }> = []
+  let segmentStart = 0
+  for (let k = 1; k < anchors.length; k += 1) {
+    if (anchors[k]!.num <= anchors[k - 1]!.num) {
+      segments.push({ start: segmentStart, end: k })
+      segmentStart = k
+    }
+  }
+  segments.push({ start: segmentStart, end: anchors.length })
+  // question.set 与卷段按出现顺序对齐：OCR 把套边界整个吞掉时卷段数少于 set 数，
+  // 超出的 set 复用最后一个卷段（退化为段内顺序匹配，不优于原行为也不更差）
+  const setOrder = [...new Set(questions.map((question) => question.set))].sort((a, b) => a - b)
+  const segmentOfSet = new Map<number, { start: number; end: number }>()
+  setOrder.forEach((set, position) => {
+    segmentOfSet.set(set, segments[Math.min(position, segments.length - 1)]!)
+  })
   const anchorIndexByKey = new Map<string, number>()
   const driftAnchorIndexes = new Set<number>()
   let anchorCursor = 0
   let lastLocated = -1
   for (const question of questions) {
     const key = `${question.set}-${question.num}`
+    const segment = segmentOfSet.get(question.set) ?? { start: 0, end: anchors.length }
     let start = -1
-    for (let scan = anchorCursor; scan < anchors.length; scan += 1) {
+    for (let scan = Math.max(anchorCursor, segment.start); scan < segment.end; scan += 1) {
       if (anchors[scan]!.num === question.num) {
         start = anchors[scan]!.index
         anchorCursor = scan + 1
@@ -480,7 +499,14 @@ export function bindGraphicOptionsByGeometry(
     }
     if (start < 0) {
       const lower = lastLocated
-      const upper = anchorCursor < anchors.length ? anchors[anchorCursor]!.index : ordered.length
+      // 兜底区间不越过本套卷段：上界取段内下一个未消费锚点，段耗尽时取下一套首锚点（或全文末尾）
+      const cursorInSegment = Math.max(anchorCursor, segment.start)
+      const upper =
+        cursorInSegment < segment.end
+          ? anchors[cursorInSegment]!.index
+          : segment.end < anchors.length
+            ? anchors[segment.end]!.index
+            : ordered.length
       // 块内漂移题号："12." 出现在文本中间（题号被版面引擎挤进行中）：
       // 前一字符不得是数字，紧邻顿号时顿号前不得是数字（顿号数字枚举不是题号）
       const drift = new RegExp(

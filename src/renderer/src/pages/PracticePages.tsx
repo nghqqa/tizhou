@@ -103,7 +103,7 @@ function Trainer({
   const startedAt = useRef(Date.now())
 
   useEffect(() => {
-    // 科目筛选跟随 URL 参数（xingce / shenlun），空值与 common 视为不限科目
+    // 科目/分类元数据跟随筛选变化（科目筛选来自 URL 参数或下拉选择，空值与 common 视为不限）
     const subjectFilter = subject === 'xingce' || subject === 'shenlun' ? subject : undefined
     void invoke<Category[]>({
       method: 'vault.categories',
@@ -117,14 +117,20 @@ function Trainer({
     })
       .then(setFacets)
       .catch(() => setFacets({ years: [], regions: [], papers: [] }))
+  }, [review, subject])
+
+  // 会话恢复只在挂载时查一次：与科目下拉解耦，调整筛选不应触发未完成会话的重查
+  useEffect(() => {
     void invoke<PracticeSession | undefined>({
       method: 'practice.session.active',
       params: { mode: review ? 'review' : 'practice' }
     })
       .then((active) => {
         if (active) {
-          if (review) restoreSession(active)
-          else setPendingSession(active)
+          if (review) {
+            restoreSession(active)
+            void reloadSummaryResults(active)
+          } else setPendingSession(active)
         } else if (review) {
           void startSession({ mode: 'review', count: 50, feedbackMode: 'immediate' })
         } else {
@@ -135,7 +141,7 @@ function Trainer({
         if (review) void startSession({ mode: 'review', count: 50, feedbackMode: 'immediate' })
         else setLoading(false)
       })
-  }, [review, subject])
+  }, [review])
 
   const current = questions[index]
 
@@ -185,6 +191,36 @@ function Trainer({
     setPendingSession(undefined)
     setLoading(false)
     startedAt.current = Date.now()
+  }
+
+  /** 汇总模式恢复：sessionResults 是内存态，重启后为空——从 attempts 重建已答记录，
+   *  使「整组汇总解析」在恢复会话后仍能看到历史作答的对错与所选选项 */
+  async function reloadSummaryResults(active: PracticeSession): Promise<void> {
+    if (active.feedbackMode !== 'summary') return
+    try {
+      const records = await invoke<
+        Array<{ questionId: string; answer: string[]; correct: boolean }>
+      >({ method: 'practice.session.results', params: { id: active.id } })
+      setSessionResults(
+        records.map((record) => {
+          const snapshot = active.questionSnapshots[record.questionId]
+          return {
+            questionId: record.questionId,
+            answer: record.answer,
+            result: {
+              attemptId: '',
+              correct: record.correct,
+              expected: snapshot?.answer ?? [],
+              explanation: snapshot?.explanation ?? '',
+              nextReviewAt: undefined,
+              mastered: false
+            }
+          }
+        })
+      )
+    } catch {
+      // 拉取失败退化为内存态：已答题在汇总页显示为未作答，不阻塞恢复本身
+    }
   }
 
   async function startSession(override?: PracticeSelection): Promise<void> {
@@ -411,10 +447,11 @@ function Trainer({
   if (loading && !current) return <LoadingState label="正在准备题目" />
 
   if (summaryComplete) {
+    // 分母基于完整题目列表（快照恢复后内存态 sessionResults 可能缺失历史作答）
     const correctCount = sessionResults.filter((item) => item.result.correct).length
     return (
       <Section
-        title={`本组完成：${correctCount}/${sessionResults.length} 正确`}
+        title={`本组完成：${correctCount}/${questions.length} 正确`}
         description="汇总模式在全部作答完成后统一展示答案与解析。"
         actions={
           <Button
@@ -435,7 +472,8 @@ function Trainer({
           return (
             <div className="answer-panel" key={question.id}>
               <h3 className={item?.result.correct ? 'positive' : 'negative'}>
-                第 {questionIndex + 1} 题：{item?.result.correct ? '正确' : '错误'}
+                第 {questionIndex + 1} 题：
+                {item ? (item.result.correct ? '正确' : '错误') : '未作答'}
               </h3>
               {question.material && (
                 <>
@@ -488,7 +526,13 @@ function Trainer({
           description={`上次停在第 ${pendingSession.currentIndex + 1}/${pendingSession.questionIds.length} 题，题目快照已保留。`}
         >
           <div className="button-row">
-            <Button appearance="primary" onClick={() => restoreSession(pendingSession)}>
+            <Button
+              appearance="primary"
+              onClick={() => {
+                restoreSession(pendingSession)
+                void reloadSummaryResults(pendingSession)
+              }}
+            >
               继续上次训练
             </Button>
             <Button onClick={() => void abandonPending()}>放弃并新建</Button>
@@ -528,7 +572,17 @@ function Trainer({
             </Select>
           </Field>
           <Field label="科目">
-            <Select value={subject} onChange={(_, data) => setSubject(data.value as '' | Subject)}>
+            <Select
+              value={subject}
+              onChange={(_, data) => {
+                // 切科目时联动清空旧科目维度的残余筛选，避免「申论科目 + 行测模块」这类矛盾组合
+                setSubject(data.value as '' | Subject)
+                setCategory('')
+                setYear('')
+                setRegion('')
+                setPaper('')
+              }}
+            >
               <option value="xingce">行测</option>
               <option value="shenlun">申论</option>
               <option value="">全部科目</option>

@@ -724,6 +724,10 @@ export type WorkbenchRequest =
   | { method: 'practice.session.start'; params: PracticeSelection }
   | { method: 'practice.session.active'; params: { mode: 'practice' | 'review' } }
   | {
+      method: 'practice.session.results'
+      params: { id: string }
+    }
+  | {
       method: 'practice.session.update'
       params: { id: string; currentIndex?: number; uncertainIds?: string[] }
     }

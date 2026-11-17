@@ -5,7 +5,7 @@ import { createRequire } from 'node:module'
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import type { LearningPlan, WorkbenchRequest } from '../shared/contracts'
 import { AiService } from './services/ai'
-import { DatabaseService } from './services/database'
+import { DatabaseService, localDateKeyOf } from './services/database'
 import { DiagnosticService } from './services/diagnostics'
 import { IntegrationService } from './services/integrations'
 import { KnowledgeBuilderService } from './services/knowledge-builder'
@@ -277,12 +277,10 @@ async function initialize(): Promise<void> {
 
   const settings = database.getAppSettings()
   if (settings.autoBackup) {
-    // 当日去重按本地日期比对（备份时间戳是 UTC ISO，直接 slice 会把 08:00 前的启动误判为昨日未备份）
-    const now = new Date()
-    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(
-      now.getDate()
-    ).padStart(2, '0')}`
-    if (!database.listBackups().some((backup) => backup.createdAt.startsWith(today))) {
+    // 当日去重按本地日期比对：备份 createdAt 是 UTC ISO（toISOString / 文件 birthtime），
+    // 必须先转本地日期键再比较，否则北京时间 00:00~07:59 的启动每天都重复备份
+    const today = localDateKeyOf(new Date())
+    if (!database.listBackups().some((backup) => localDateKeyOf(backup.createdAt) === today)) {
       database.createBackup('automatic')
       database.pruneBackups(settings.backupRetention)
     }
@@ -419,6 +417,8 @@ async function initialize(): Promise<void> {
       }
       case 'practice.session.active':
         return database!.getActivePracticeSession(request.params.mode)
+      case 'practice.session.results':
+        return database!.getSessionAttempts(request.params.id)
       case 'practice.session.update':
         return database!.updatePracticeSession(request.params.id, request.params)
       case 'practice.session.complete':

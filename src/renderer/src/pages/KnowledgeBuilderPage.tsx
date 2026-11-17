@@ -1347,23 +1347,21 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
                           </Button>
                         </div>
                       )}
-                      {artifact.status === 'pending' &&
-                        artifact.capability &&
-                        artifact.capability !== 'text-supported' && (
-                          <div className="builder-warning-list">
-                            <span>
-                              系统能力边界：此资料包含图片型内容。题舟不会自动猜测图形规律、图表数字或图片选项。请以原始页面为准，人工核对后再批准。
-                            </span>
-                            <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                              <input
-                                type="checkbox"
-                                checked={humanConfirmed}
-                                onChange={(event) => setHumanConfirmed(event.target.checked)}
-                              />
-                              我已查看原始页面并确认内容正确
-                            </label>
-                          </div>
-                        )}
+                      {artifact.status === 'pending' && isPublishGated(artifact) && (
+                        <div className="builder-warning-list">
+                          <span>
+                            系统能力边界：此资料包含图片型内容。题舟不会自动猜测图形规律、图表数字或图片选项。请以原始页面为准，人工核对后再批准。
+                          </span>
+                          <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                            <input
+                              type="checkbox"
+                              checked={humanConfirmed}
+                              onChange={(event) => setHumanConfirmed(event.target.checked)}
+                            />
+                            我已查看原始页面并确认内容正确
+                          </label>
+                        </div>
+                      )}
                       {artifact.status === 'approved' && isPublishGated(artifact) && (
                         <div className="builder-warning-list">
                           {artifact.humanConfirmed ? (
