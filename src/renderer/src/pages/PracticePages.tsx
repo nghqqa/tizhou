@@ -444,7 +444,12 @@ function Trainer({
     }
   }
 
-  if (loading && !current) return <LoadingState label="正在准备题目" />
+  if (loading && !current)
+    return (
+      <div className="page">
+        <LoadingState label="正在准备题目" />
+      </div>
+    )
 
   if (summaryComplete) {
     // 分母基于完整题目列表（快照恢复后内存态 sessionResults 可能缺失历史作答）
@@ -930,7 +935,7 @@ export function PracticePage(): React.JSX.Element {
   return (
     <div className="page">
       <PageHeader
-        eyebrow="PRACTICE"
+        eyebrow="训练 · 专项练习"
         title="专项练习"
         description="支持会话恢复、内容快照、即时或汇总解析、键盘选项和自适应选题。"
       />
@@ -955,7 +960,7 @@ export function ReviewPage(): React.JSX.Element {
   return (
     <div className="page">
       <PageHeader
-        eyebrow="REVIEW"
+        eyebrow="训练 · 错题复习"
         title="错题复习"
         description={
           due

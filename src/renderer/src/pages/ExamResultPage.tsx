@@ -89,9 +89,24 @@ export function ExamResultPage(): React.JSX.Element {
   const filteredItems =
     filter === 'wrong-unanswered' ? reviewItems.filter((item) => !item.correct) : reviewItems
 
-  if (loading) return <LoadingState label="正在读取模考结果" />
-  if (error) return <ErrorState message={error} />
-  if (!exam) return <EmptyState title="未找到模考" description="该模考可能已被清除。" />
+  if (loading)
+    return (
+      <div className="page">
+        <LoadingState label="正在读取模考结果" />
+      </div>
+    )
+  if (error)
+    return (
+      <div className="page">
+        <ErrorState message={error} />
+      </div>
+    )
+  if (!exam)
+    return (
+      <div className="page">
+        <EmptyState title="未找到模考" description="该模考可能已被清除。" />
+      </div>
+    )
 
   const totalQuestions = exam.questionIds.length
   const answeredCount = Object.keys(exam.answers).length
@@ -149,7 +164,7 @@ export function ExamResultPage(): React.JSX.Element {
         ))}
       </div>
 
-      <div className="grid two" style={{ marginTop: 14 }}>
+      <div className="grid two">
         <Section title="本次作答摘要">
           <ul className="data-list">
             <li className="data-row">

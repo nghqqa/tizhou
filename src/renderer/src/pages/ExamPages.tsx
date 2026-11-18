@@ -93,7 +93,7 @@ export function ExamHomePage(): React.JSX.Element {
   return (
     <div className="page">
       <PageHeader
-        eyebrow="EXAM"
+        eyebrow="训练 · 模拟考试"
         title="模拟考试"
         description="答案会逐题落盘，关闭应用后仍可继续；交卷时基于题目快照形成完整记录。"
         actions={
@@ -539,11 +539,16 @@ export function ExamRunPage(): React.JSX.Element {
         />
       </div>
     )
-  if (!current) return <LoadingState label="正在读取试卷" />
+  if (!current)
+    return (
+      <div className="page">
+        <LoadingState label="正在读取试卷" />
+      </div>
+    )
   return (
     <div className="page">
       <PageHeader
-        eyebrow="EXAM RUNNING"
+        eyebrow="训练 · 模考进行中"
         title={title}
         description={`开始于 ${formatDate(exam.startedAt)}，答案会自动保存。`}
         actions={

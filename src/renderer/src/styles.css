@@ -263,6 +263,11 @@ a {
   padding: 8px 14px;
   border-top: 1px solid var(--tz-border);
 }
+/* 紧凑视口下按钮文字不折行（「深色模式」「检查更新」曾在 200px 侧栏被挤成两行） */
+.sidebar-footer .fui-Button {
+  flex: none;
+  white-space: nowrap;
+}
 .vault-summary {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
@@ -373,8 +378,16 @@ a {
   background: var(--tz-surface);
   box-shadow: var(--tz-shadow-sm);
 }
+/* 统一 .page 顶层纵向节奏：相邻顶层容器一律 14px，杜绝 stats-row/grid/section 相邻 0px 贴死 */
+.page > * + * {
+  margin-top: 14px;
+}
 .section + .section {
   margin-top: 14px;
+}
+/* 网格内相邻列是同一行的兄弟排版，绝不吃到堆叠间距（否则右侧卡片整体下沉成阶梯错位） */
+.grid > .section + .section {
+  margin-top: 0;
 }
 .section-heading {
   display: flex;
@@ -572,19 +585,29 @@ a {
 .status-neutral {
   background: var(--tz-ink-3);
 }
-.muted {
+.muted,
+.data-row .muted,
+.report-table .muted {
   color: var(--tz-ink-3);
 }
-.accent {
+.accent,
+.data-row .accent,
+.report-table .accent {
   color: var(--tz-vermillion);
 }
-.positive {
+.positive,
+.data-row .positive,
+.report-table .positive {
   color: var(--tz-pine);
 }
-.negative {
+.negative,
+.data-row .negative,
+.report-table .negative {
   color: var(--tz-vermillion);
 }
-.warning {
+.warning,
+.data-row .warning,
+.report-table .warning {
   color: var(--tz-amber);
 }
 .pill {
@@ -1063,22 +1086,87 @@ a {
   align-items: center;
 }
 .score-ring {
+  position: relative;
   display: grid;
   place-items: center;
-  width: 140px;
-  height: 140px;
-  border: 8px solid var(--tz-surface-2);
-  border-top-color: var(--tz-vermillion);
-  border-radius: 50%;
+  width: 150px;
+  height: 150px;
 }
-.score-ring strong {
-  font-size: var(--tz-text-2xl);
+.score-ring-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.score-ring-track {
+  fill: none;
+  stroke: var(--tz-surface-2);
+  stroke-width: 11;
+}
+.score-ring-arc {
+  fill: none;
+  stroke: var(--tz-vermillion);
+  stroke-width: 11;
+  stroke-linecap: round;
+  transition: stroke-dasharray 0.45s ease;
+}
+.score-ring-center {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  text-align: center;
+}
+.score-ring-center strong {
+  font-size: 30px;
+  line-height: 1;
   font-variant-numeric: tabular-nums;
   color: var(--tz-ink);
 }
-.score-ring span {
+.score-ring-center span {
+  white-space: nowrap;
   color: var(--tz-ink-3);
   font-size: var(--tz-text-xs);
+}
+
+/* 训练建议：左侧序号徽章 + 建议正文自然折行（长文案绝不截断） */
+.advice-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.advice-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--tz-border);
+  border-radius: var(--tz-radius);
+  background: var(--tz-surface-2);
+}
+.advice-row strong {
+  font-size: var(--tz-text-base);
+  line-height: 1.6;
+  font-weight: 500;
+  color: var(--tz-ink);
+}
+.advice-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 22px;
+  height: 22px;
+  margin-top: 1px;
+  border-radius: 7px;
+  background: var(--tz-vermillion);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
 }
 
 .check-row {

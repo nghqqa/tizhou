@@ -381,13 +381,13 @@ export function DashboardPage(): React.JSX.Element {
       <StatStrip dashboard={dashboard} />
 
       {/* 节奏 + 掌握 */}
-      <div className="dashboard-grid" style={{ marginTop: 14 }}>
+      <div className="dashboard-grid">
         <TrainingRhythm dashboard={dashboard} />
         <SubjectMastery dashboard={dashboard} />
       </div>
 
       {/* 继续进行 + 最近作答 */}
-      <div className="grid two" style={{ marginTop: 14 }}>
+      <div className="grid two">
         <Section title="继续进行">
           {dashboard.activeExam ? (
             <div>

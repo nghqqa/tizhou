@@ -139,7 +139,7 @@ export function EnvironmentPage(): React.JSX.Element {
   return (
     <div className="page">
       <PageHeader
-        eyebrow="ENVIRONMENT"
+        eyebrow="系统 · 学习环境"
         title="学习环境"
         description="核心训练完全本地可用。Obsidian 只是可选的笔记跳转，不影响题库、复习和报告。"
         actions={
@@ -576,7 +576,7 @@ export function SettingsPage(): React.JSX.Element {
   return (
     <div className="page">
       <PageHeader
-        eyebrow="SETTINGS"
+        eyebrow="系统 · 应用设置"
         title="应用设置"
         description="管理界面、训练默认值、知识库和可恢复备份。第三方受许可保护的内容包不会被导入。"
       />

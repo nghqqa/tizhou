@@ -90,7 +90,7 @@ export function AiPage(): React.JSX.Element {
   return (
     <div className="page">
       <PageHeader
-        eyebrow="AI TUTOR"
+        eyebrow="提升 · AI 助教"
         title="AI 助教"
         description="模型请求由主进程发出，API Key 只保存在系统加密存储中，不进入页面状态和日志。"
         actions={
@@ -314,7 +314,7 @@ export function AiTrainingPage(): React.JSX.Element {
   return (
     <div className="page">
       <PageHeader
-        eyebrow="AI VARIANT"
+        eyebrow="提升 · AI 变式训练"
         title="AI 变式训练"
         description="从当前薄弱模块抽取原题，再生成同考点新情境。每次结果单独保存，不混入官方题库。"
         actions={
@@ -645,7 +645,7 @@ export function ModelSettingsPage(): React.JSX.Element {
   return (
     <div className="page">
       <PageHeader
-        eyebrow="MODEL"
+        eyebrow="系统 · 模型设置"
         title="模型设置"
         description="API Key 使用操作系统加密存储。保存状态和验证状态分开显示，避免把“写入成功”误认为“连接可用”。"
       />

@@ -55,7 +55,7 @@ export function ReportsPage(): React.JSX.Element {
   return (
     <div className="page">
       <PageHeader
-        eyebrow="REPORTS"
+        eyebrow="提升 · 学习报告"
         title="学习报告"
         description="只统计已经提交的有效作答，未作答和草稿不会污染正确率。"
         actions={
@@ -162,6 +162,7 @@ export function ReportsPage(): React.JSX.Element {
                     name="题数"
                     fill="#D65F35"
                     radius={[3, 3, 0, 0]}
+                    maxBarSize={48}
                   />
                   <Line
                     yAxisId="right"
@@ -365,7 +366,7 @@ export function DiagnosisPage(): React.JSX.Element {
   return (
     <div className="page">
       <PageHeader
-        eyebrow="DIAGNOSIS"
+        eyebrow="提升 · 能力诊断"
         title="能力诊断与计划"
         description="画像来自作答记录，不以自评替代证据；样本不足时会明确提示。"
         actions={<Button onClick={() => void load()}>重新诊断</Button>}
@@ -377,8 +378,23 @@ export function DiagnosisPage(): React.JSX.Element {
         <>
           <Section>
             <div className="diagnosis-band">
-              <div className="score-ring">
-                <div>
+              <div
+                className="score-ring"
+                role="img"
+                aria-label={`综合正确率 ${diagnosis.accuracy}%`}
+              >
+                <svg className="score-ring-svg" viewBox="0 0 120 120" aria-hidden="true">
+                  <circle className="score-ring-track" cx="60" cy="60" r="52" />
+                  <circle
+                    className="score-ring-arc"
+                    cx="60"
+                    cy="60"
+                    r="52"
+                    strokeDasharray={`${(2 * Math.PI * 52 * Math.max(0, Math.min(100, diagnosis.accuracy))) / 100} ${2 * Math.PI * 52}`}
+                    transform="rotate(-90 60 60)"
+                  />
+                </svg>
+                <div className="score-ring-center">
                   <strong>{diagnosis.accuracy}%</strong>
                   <span>综合正确率</span>
                 </div>
@@ -417,7 +433,10 @@ export function DiagnosisPage(): React.JSX.Element {
                   ))}
                 </ul>
               ) : (
-                <EmptyState title="样本不足" description="每个模块至少完成几道题后再判断优势。" />
+                <EmptyState
+                  title="样本不足"
+                  description="单模块作答满 3 题且正确率达 70% 后列入相对优势。"
+                />
               )}
             </Section>
             <Section title="优先补强">
@@ -436,18 +455,21 @@ export function DiagnosisPage(): React.JSX.Element {
                   ))}
                 </ul>
               ) : (
-                <EmptyState title="样本不足" description="完成专项训练后再生成优先级。" />
+                <EmptyState
+                  title="暂时没有需要补强的模块"
+                  description="优势之外的模块按正确率升序列在这里；正确率达 80% 即移出补强清单。"
+                />
               )}
             </Section>
           </div>
           <Section title="训练建议">
-            <ul className="data-list">
+            <ul className="advice-list">
               {diagnosis.recommendations.map((recommendation, index) => (
-                <li className="data-row" key={recommendation}>
-                  <div>
-                    <strong>{recommendation}</strong>
-                  </div>
-                  <span>{index + 1}</span>
+                <li className="advice-row" key={recommendation}>
+                  <span className="advice-badge" aria-hidden="true">
+                    {index + 1}
+                  </span>
+                  <strong>{recommendation}</strong>
                 </li>
               ))}
             </ul>

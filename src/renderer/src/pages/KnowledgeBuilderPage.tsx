@@ -762,7 +762,12 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
     }
   }
 
-  if (!engine) return <LoadingState label="正在检查知识转换环境" />
+  if (!engine)
+    return (
+      <div className="page">
+        <LoadingState label="正在检查知识转换环境" />
+      </div>
+    )
 
   // 审核列表筛选 + 分页
   const filteredArtifacts = (job?.artifacts ?? []).filter((item) => {
@@ -789,7 +794,7 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
   return (
     <div className="page knowledge-builder-page">
       <PageHeader
-        eyebrow="知识库工坊"
+        eyebrow="知识 · 知识库工坊"
         title="把本地资料变成可审核的题库"
         description="原料只读，MarkItDown 负责转换，已配置模型负责提炼和复核。只有人工批准的产物才会进入应用管理知识库。"
         actions={

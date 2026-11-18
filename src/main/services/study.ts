@@ -136,12 +136,17 @@ export class StudyService {
   getDiagnosis(): DiagnosisResult {
     const report = this.database.getReport('all')
     const categories = report.categoryStats.filter((item) => item.attempts > 0)
+    // 相对优势硬门槛：单模块有效作答 ≥3 题且正确率 ≥70% 才算真优势；
+    // 只刷过 1 个模块且正确率不足时，两栏都不出现该模块（避免自相矛盾）
     const strengths = [...categories]
-      .filter((item) => item.attempts >= 2)
+      .filter((item) => item.attempts >= 3 && item.accuracy >= 70)
       .sort((a, b) => b.accuracy - a.accuracy || b.attempts - a.attempts)
       .slice(0, 4)
       .map(({ category, accuracy, attempts }) => ({ category, accuracy, attempts }))
+    // 优先补强：先排除已进入优势的模块（两栏严格互斥），再从剩余模块选正确率 <80% 的
+    const strengthCategories = new Set(strengths.map((item) => item.category))
     const weaknesses = [...categories]
+      .filter((item) => !strengthCategories.has(item.category) && item.accuracy < 80)
       .sort((a, b) => a.accuracy - b.accuracy || b.attempts - a.attempts)
       .slice(0, 4)
       .map(({ category, accuracy, attempts }) => ({ category, accuracy, attempts }))
@@ -155,11 +160,11 @@ export class StudyService {
     if (report.accuracy >= 80) recommendations.push('正确率较稳定，可增加限时模考并关注平均用时。')
     if (weaknesses[0])
       recommendations.push(
-        `优先训练“${weaknesses[0].category}”，当前正确率为 ${weaknesses[0].accuracy}%。`
+        `优先训练「${weaknesses[0].category}」，当前正确率为 ${weaknesses[0].accuracy}%。`
       )
     if (report.wrongCauses[0]?.cause && report.wrongCauses[0].cause !== '未标注')
       recommendations.push(
-        `最常见错因是“${report.wrongCauses[0].cause}”，复盘时应设置针对性检查步骤。`
+        `最常见错因是「${report.wrongCauses[0].cause}」，复盘时应设置针对性检查步骤。`
       )
     return {
       generatedAt: now(),

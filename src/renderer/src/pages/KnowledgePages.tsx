@@ -56,7 +56,7 @@ export function KnowledgePage({ subject, kind }: KnowledgePageProps): React.JSX.
   return (
     <div className="page">
       <PageHeader
-        eyebrow="KNOWLEDGE"
+        eyebrow="知识 · 知识与方法"
         title={title}
         description="直接读取当前 Markdown 知识库，保留标题、列表、表格与公式结构。"
       />
@@ -123,7 +123,7 @@ export function PatternsPage(): React.JSX.Element {
   return (
     <div className="page">
       <PageHeader
-        eyebrow="PATTERNS"
+        eyebrow="知识 · 规律中心"
         title="规律中心"
         description="把跨模块可复用的错因、检查步骤和思维模式集中起来。"
       />
@@ -135,7 +135,7 @@ export function PatternsPage(): React.JSX.Element {
           description="在 Markdown frontmatter 中设置 kind: pattern 后重新索引。"
         />
       ) : (
-        <div className="grid two">
+        <div className={documents.length > 1 ? 'grid two' : undefined}>
           {documents.map((document) => (
             <Section
               key={document.id}

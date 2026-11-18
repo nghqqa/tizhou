@@ -129,7 +129,7 @@ export function ShenlunSolutionPage(): React.JSX.Element {
   return (
     <div className="page page-solution">
       <PageHeader
-        eyebrow="SHENLUN"
+        eyebrow="提升 · 申论作答"
         title="申论作答"
         description="草稿在本机自动保存。未配置 AI 时使用透明的本地规则评分，配置后自动尝试语义评估。"
         actions={
