@@ -324,19 +324,26 @@ async function fetchAnonymous(url, { range, method = 'GET', timeoutMs = 60_000 }
   })
 }
 
-async function fetchTextGate(url, label) {
-  const res = await fetchAnonymous(url)
-  if (res.status === 404) throw new Error(`${label}：线上 404（资产未上架或版本号有误）：${url}`)
-  if (res.status !== 200) throw new Error(`${label}：期望 200，实际 ${res.status}`)
-  return await res.text()
-}
-
 async function drainResponse(res) {
   try {
     await res.body?.cancel()
   } catch {
     // 释放连接失败不阻断
   }
+}
+
+async function fetchTextGate(url, label) {
+  const res = await fetchAnonymous(url)
+  if (res.status === 404) {
+    // 先关闭响应体再抛错：遗留未关闭的 undici body 会让 process.exit 撞 libuv 断言崩进程
+    await drainResponse(res)
+    throw new Error(`${label}：线上 404（资产未上架或版本号有误）：${url}`)
+  }
+  if (res.status !== 200) {
+    await drainResponse(res)
+    throw new Error(`${label}：期望 200，实际 ${res.status}`)
+  }
+  return await res.text()
 }
 
 /** Range 双字节探针：206 + Content-Range 区间与总长度精确匹配 */
@@ -395,39 +402,61 @@ function sourceUrls(version) {
   ]
 }
 
-/** Stage 1 前置门禁：防误传 + 版本一致性 + CHANGELOG/发版说明 +（可放宽的）分支/工作区 */
+/**
+ * 前置版本元数据一致性（拆出供单测）：
+ * verify-only 可核验任意线上历史版本——只保留版本格式校验，不强制与当前工作区元数据对齐；
+ * 完整发版与 --dry-run 下 --version/lock/CHANGELOG/发版说明 全部强校验。
+ */
+export function assertReleaseMetadata(
+  ctx,
+  { pkgVersion, lockVersion, changelog, notesExists, notesSize }
+) {
+  if (!VERSION_RE.test(ctx.version)) {
+    throw new Error(`版本号格式非法：${ctx.version}（期望 X.Y.Z）`)
+  }
+  if (ctx.verifyOnly) return
+  if (ctx.requestedVersion && ctx.requestedVersion !== pkgVersion) {
+    throw new Error(
+      `--version ${ctx.requestedVersion} 与 package.json 版本 ${pkgVersion} 不一致（强校验失败）`
+    )
+  }
+  if (lockVersion !== ctx.version) {
+    throw new Error(`package-lock.json 版本 ${lockVersion} 与 ${ctx.version} 不一致`)
+  }
+  const sectionRe = new RegExp(`^## ${ctx.version.replace(/\./g, '\\.')}([\\s-]|$)`, 'm')
+  if (!changelog || !sectionRe.test(changelog)) {
+    throw new Error(`CHANGELOG.md 缺少 "## ${ctx.version}" 段落`)
+  }
+  if (!notesExists || !notesSize) {
+    throw new Error(`发版说明缺失或为空：docs/release-notes-${ctx.version}.md`)
+  }
+}
+
+/** Stage 1 前置门禁：防误传 + 版本元数据 +（可放宽的）分支/工作区 */
 async function stage1Preflight(ctx) {
   banner(1, '前置门禁')
   assertNoStrayRootSha256Sums(ROOT)
   log('✓ 根目录无遗留 SHA256SUMS.txt')
   const pkg = readJson(path.join(ROOT, 'package.json'))
   ctx.version = ctx.requestedVersion || pkg.version
-  if (!VERSION_RE.test(ctx.version)) {
-    throw new Error(`版本号格式非法：${ctx.version}（期望 X.Y.Z）`)
-  }
-  if (ctx.requestedVersion && ctx.requestedVersion !== pkg.version) {
-    throw new Error(
-      `--version ${ctx.requestedVersion} 与 package.json 版本 ${pkg.version} 不一致（强校验失败）`
-    )
-  }
   const lock = readJson(path.join(ROOT, 'package-lock.json'))
-  if (lock.version !== ctx.version) {
-    throw new Error(`package-lock.json 版本 ${lock.version} 与 ${ctx.version} 不一致`)
-  }
-  log(`✓ package.json / package-lock.json 版本一致：${ctx.version}`)
   const changelog = fs.readFileSync(path.join(ROOT, 'CHANGELOG.md'), 'utf8')
-  const sectionRe = new RegExp(`^## ${ctx.version.replace(/\./g, '\\.')}([\\s-]|$)`, 'm')
-  if (!sectionRe.test(changelog)) {
-    throw new Error(`CHANGELOG.md 缺少 "## ${ctx.version}" 段落`)
-  }
-  log(`✓ CHANGELOG.md 存在 ${ctx.version} 段落`)
   const notesPath = path.join(ROOT, 'docs', `release-notes-${ctx.version}.md`)
-  if (!fs.existsSync(notesPath) || fs.statSync(notesPath).size === 0) {
-    throw new Error(`发版说明缺失或为空：docs/release-notes-${ctx.version}.md`)
-  }
+  const notesExists = fs.existsSync(notesPath)
+  assertReleaseMetadata(ctx, {
+    pkgVersion: pkg.version,
+    lockVersion: lock.version,
+    changelog,
+    notesExists,
+    notesSize: notesExists ? fs.statSync(notesPath).size : 0
+  })
   ctx.notesPath = notesPath
-  log(`✓ 发版说明就绪：docs/release-notes-${ctx.version}.md`)
   ctx.exeName = `tizhou-setup-${ctx.version}.exe`
+  if (ctx.verifyOnly) {
+    log(`✓ verify-only 模式：版本 ${ctx.version} 格式校验通过（不与当前工作区元数据对齐）`)
+  } else {
+    log(`✓ package.json / package-lock.json / CHANGELOG / 发版说明 与 ${ctx.version} 全部一致`)
+  }
   if (!ctx.relaxGit) {
     const branch = run('git', ['branch', '--show-current']).trim()
     if (branch !== 'master') throw new Error(`必须在 master 分支发版，当前分支：${branch}`)
@@ -448,18 +477,56 @@ async function stage1Preflight(ctx) {
 }
 
 /**
- * 本地 dist/ 产物核验：三件套存在非空 → latest.yml 强校验 → SHA256SUMS 重算比对。
+ * 本地 dist/ 产物核验管线包装：固定 ROOT/dist 路径（防误传门禁）后委托核心实现。
  * writeSums=true（完整/dry-run 流程）：生成 dist/SHA256SUMS.txt 并回读二次校验；
- * writeSums=false（--verify-only）：只读，不落盘；返回 false 表示本地缺该版本产物。
+ * writeSums=false（--verify-only）：只读，不落盘。
  */
 async function verifyLocalDist(ctx, { writeSums }) {
+  const paths = {
+    exePath: distPath(ctx.exeName),
+    blockmapPath: distPath(`${ctx.exeName}.blockmap`),
+    ymlPath: distPath('latest.yml'),
+    sumsPath: distPath('SHA256SUMS.txt')
+  }
+  ctx.distFiles = [paths.exePath, paths.blockmapPath, paths.ymlPath, paths.sumsPath]
+  return await verifyLocalDistCore(paths, ctx, { writeSums })
+}
+
+/**
+ * 本地 dist/ 产物核验核心（路径可注入，供单测覆盖多版本残留场景）：
+ * 三件套齐全且 latest.yml 归属目标版本才视为「本地参照可用」，返回 true 并在 ctx 上
+ * 记录 exeSize/blockmapSize/ymlRaw/expectedSums/expectedYmlRaw。
+ * dist/ 中历史版本 exe 与最新构建的 latest.yml/SHA256SUMS.txt 并存是常态：
+ * latest.yml 归属其他版本时，writeSums=false 安全返回 false（Stage 5 走纯线上互证），
+ * writeSums=true 严格抛错（完整发版/--dry-run 要求 dist/ 为目标版本的全新构建）。
+ */
+export async function verifyLocalDistCore(
+  { exePath, blockmapPath, ymlPath, sumsPath },
+  ctx,
+  { writeSums } = {}
+) {
   const exeName = ctx.exeName
-  const exePath = distPath(exeName)
-  const blockmapPath = distPath(`${exeName}.blockmap`)
-  const ymlPath = distPath('latest.yml')
-  const sumsPath = distPath('SHA256SUMS.txt')
-  ctx.distFiles = [exePath, blockmapPath, ymlPath, sumsPath]
   if (!fs.existsSync(exePath) || !fs.existsSync(blockmapPath) || !fs.existsSync(ymlPath)) {
+    return false
+  }
+  // 先判 latest.yml 归属再取本地参照，避免拿上一版构建的哈希错配当前目标
+  const ymlRaw = fs.readFileSync(ymlPath, 'utf8')
+  const yml = parseLatestYml(ymlRaw)
+  if (yml.version !== ctx.version) {
+    if (writeSums) {
+      throw new Error(
+        `dist/latest.yml 归属不符：当前为 ${yml.version} 的构建产物，与目标版本 ${ctx.version} 不一致` +
+          '（完整发版/--dry-run 要求 dist/ 为目标版本的全新构建，请先 npm run package）'
+      )
+    }
+    log(
+      `ℹ 本地 dist/latest.yml 当前为 ${yml.version}（非目标 ${ctx.version}），跳过本地参照，仅核验线上双源`
+    )
+    delete ctx.exeSize
+    delete ctx.blockmapSize
+    delete ctx.ymlRaw
+    delete ctx.expectedSums
+    delete ctx.expectedYmlRaw
     return false
   }
   for (const [filePath, name] of [
@@ -473,8 +540,7 @@ async function verifyLocalDist(ctx, { writeSums }) {
   }
   ctx.exeSize = fs.statSync(exePath).size
   ctx.blockmapSize = fs.statSync(blockmapPath).size
-  ctx.ymlRaw = fs.readFileSync(ymlPath, 'utf8')
-  const yml = parseLatestYml(ctx.ymlRaw)
+  ctx.ymlRaw = ymlRaw
   assertLatestYmlConsistency(yml, { version: ctx.version, exeName, exeSize: ctx.exeSize })
   log(`✓ latest.yml 强校验通过：version=${yml.version}，${exeName} size=${ctx.exeSize} 与磁盘一致`)
   const entries = [
@@ -484,7 +550,7 @@ async function verifyLocalDist(ctx, { writeSums }) {
   ]
   for (const entry of entries) log(`  sha256(${entry.name}) = ${entry.hash}`)
   ctx.expectedSums = buildSha256SumsText(entries)
-  ctx.expectedYmlRaw = ctx.ymlRaw
+  ctx.expectedYmlRaw = ymlRaw
   if (fs.existsSync(sumsPath)) {
     verifySha256SumsContent(fs.readFileSync(sumsPath, 'utf8'), entries)
     log('✓ 既有 SHA256SUMS.txt 与磁盘重算哈希一致')
@@ -777,7 +843,10 @@ async function verifyAnonymousSource(src, ctx) {
   log(`✓ latest.yml 匿名 200：version=${yml.version}，${exeName} size=${entry.size}`)
   // 3. blockmap：HEAD Content-Length 匹配（不可靠时回退 Range 探测）
   const headRes = await fetchAnonymous(`${base}/${blockmapName}`, { method: 'HEAD' })
-  if (!headRes.ok) throw new Error(`${label}/${blockmapName}：HEAD 请求失败 ${headRes.status}`)
+  if (!headRes.ok) {
+    await drainResponse(headRes)
+    throw new Error(`${label}/${blockmapName}：HEAD 请求失败 ${headRes.status}`)
+  }
   let headLen = Number(headRes.headers.get('content-length') ?? '0')
   await drainResponse(headRes)
   if (!headLen) {
@@ -962,6 +1031,7 @@ if (isDirectRun) {
   main().catch((error) => {
     const message = error instanceof Error ? error.message : String(error)
     console.error(`\n[release] ✗ ${message}`)
-    process.exit(1)
+    // 不用 process.exit：给未关闭的 socket/uv handle 留出自然退出通道，避免 Windows 下 libuv 断言崩溃
+    process.exitCode = 1
   })
 }

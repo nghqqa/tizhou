@@ -1,8 +1,9 @@
 // scripts/release.mjs 纯函数单测：latest.yml 解析与篡改拦截、SHA256SUMS 生成/回读/不匹配报错、
-// 根目录遗留校验和拦截、防误传路径门禁、release.ts 版本替换幂等性、Content-Range 总长度校验、CLI 参数。
+// 根目录遗留校验和拦截、防误传路径门禁、release.ts 版本替换幂等性、Content-Range 总长度校验、CLI 参数、
+// verify-only 版本解耦前置校验、本地 dist 多版本残留归属判定。
 // 流水线的 git/gh/远端写入分支不在单测覆盖内（由 --dry-run/--verify-only 实跑验证）。
 import { describe, expect, it } from 'vitest'
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -12,11 +13,13 @@ import {
   assertLatestYmlConsistency,
   assertNoStrayRootSha256Sums,
   assertRangeResponse,
+  assertReleaseMetadata,
   buildSha256SumsText,
   parseArgs,
   parseContentRangeTotal,
   parseLatestYml,
   parseSha256SumsText,
+  verifyLocalDistCore,
   verifySha256SumsContent
 } from '../scripts/release.mjs'
 
@@ -352,5 +355,198 @@ describe('CLI 参数解析', () => {
   it('版本格式非法抛错；--version 缺参数抛错', () => {
     expect(() => parseArgs(['--version', 'abc'])).toThrow(/格式非法/)
     expect(() => parseArgs(['--version'])).toThrow(/需要跟版本号/)
+  })
+})
+
+describe('前置版本元数据校验（verify-only 解耦）', () => {
+  const METADATA_OK = {
+    pkgVersion: '1.0.16',
+    lockVersion: '1.0.16',
+    changelog: '# 更新日志\n\n## 1.0.16 - 2026-11-18\n\n- 变更\n',
+    notesExists: true,
+    notesSize: 100
+  }
+
+  it('verify-only：指定非当前 package.json 版本放行，不校验 lock/CHANGELOG/发版说明', () => {
+    expect(
+      assertReleaseMetadata(
+        { verifyOnly: true, requestedVersion: '1.0.15', version: '1.0.15' },
+        { ...METADATA_OK, notesExists: false, notesSize: 0 }
+      )
+    ).toBeUndefined()
+    expect(
+      assertReleaseMetadata(
+        { verifyOnly: true, requestedVersion: '1.0.99', version: '1.0.99' },
+        {
+          pkgVersion: '1.0.16',
+          lockVersion: '1.0.16',
+          changelog: '# 更新日志\n\n## 1.0.16 - 2026-11-18\n',
+          notesExists: false,
+          notesSize: 0
+        }
+      )
+    ).toBeUndefined()
+  })
+
+  it('verify-only：仍拦截非法版本格式', () => {
+    expect(() => assertReleaseMetadata({ verifyOnly: true, version: 'abc' }, METADATA_OK)).toThrow(
+      /格式非法/
+    )
+  })
+
+  it('完整发版/--dry-run：--version 与 package.json 不一致仍抛错拦截', () => {
+    expect(() =>
+      assertReleaseMetadata(
+        { verifyOnly: false, requestedVersion: '1.0.15', version: '1.0.15' },
+        METADATA_OK
+      )
+    ).toThrow(/--version 1\.0\.15 与 package\.json 版本 1\.0\.16 不一致/)
+  })
+
+  it('完整发版/--dry-run：lock 版本、CHANGELOG 段落、发版说明缺失均拦截', () => {
+    expect(() =>
+      assertReleaseMetadata(
+        { verifyOnly: false, requestedVersion: '1.0.16', version: '1.0.17' },
+        { ...METADATA_OK, lockVersion: '1.0.16' }
+      )
+    ).toThrow(/package-lock\.json 版本 1\.0\.16 与 1\.0\.17 不一致/)
+    expect(() =>
+      assertReleaseMetadata(
+        { verifyOnly: false, requestedVersion: '1.0.17', version: '1.0.17' },
+        {
+          ...METADATA_OK,
+          pkgVersion: '1.0.17',
+          lockVersion: '1.0.17',
+          changelog: '## 1.0.16 - 2026-11-18\n'
+        }
+      )
+    ).toThrow(/CHANGELOG\.md 缺少 "## 1\.0\.17" 段落/)
+    expect(() =>
+      assertReleaseMetadata(
+        { verifyOnly: false, requestedVersion: '1.0.17', version: '1.0.17' },
+        {
+          ...METADATA_OK,
+          pkgVersion: '1.0.17',
+          lockVersion: '1.0.17',
+          changelog: '## 1.0.17 - 2026-11-18\n',
+          notesExists: false,
+          notesSize: 0
+        }
+      )
+    ).toThrow(/发版说明缺失或为空/)
+  })
+
+  it('完整发版/--dry-run：元数据全部一致放行', () => {
+    expect(
+      assertReleaseMetadata(
+        { verifyOnly: false, requestedVersion: '1.0.16', version: '1.0.16' },
+        METADATA_OK
+      )
+    ).toBeUndefined()
+  })
+})
+
+describe('本地 dist 归属判定（verifyLocalDistCore）', () => {
+  /**
+   * 造一套真实形态的 dist：残留 1.0.15 与 ymlVersion 两代 exe/blockmap（多版本并存），
+   * latest.yml/SHA256SUMS.txt 归属 ymlVersion（只属于最后一次构建）。
+   */
+  function makeLocalDist(dir: string, ymlVersion: string) {
+    mkdirSync(dir, { recursive: true })
+    for (const v of [...new Set(['1.0.15', ymlVersion])]) {
+      writeFileSync(join(dir, `tizhou-setup-${v}.exe`), Buffer.alloc(2048, 7))
+      writeFileSync(join(dir, `tizhou-setup-${v}.exe.blockmap`), Buffer.alloc(64, 9))
+    }
+    const exeName = `tizhou-setup-${ymlVersion}.exe`
+    writeFileSync(
+      join(dir, 'latest.yml'),
+      `version: ${ymlVersion}\nfiles:\n  - url: ${exeName}\n    sha512: ${'a'.repeat(86)}==\n    size: 2048\npath: ${exeName}\nsha512: ${'a'.repeat(86)}==\n`
+    )
+  }
+
+  const pathsFor = (dir: string, exeName: string) => ({
+    exePath: join(dir, exeName),
+    blockmapPath: join(dir, `${exeName}.blockmap`),
+    ymlPath: join(dir, 'latest.yml'),
+    sumsPath: join(dir, 'SHA256SUMS.txt')
+  })
+
+  const withTempDist = async (run: (dir: string) => Promise<void>): Promise<void> => {
+    const dir = join(tmpdir(), `tizhou-release-dist-${randomUUID().slice(0, 8)}`)
+    try {
+      await run(dir)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  }
+
+  it('writeSums=false：latest.yml 归属其他版本时安全返回 false 并清空本地参照字段', async () => {
+    await withTempDist(async (dir) => {
+      makeLocalDist(dir, '1.0.16') // dist：1.0.15/1.0.16 两代产物并存，latest.yml 归 1.0.16
+      const ctx: Record<string, unknown> = { version: '1.0.15', exeName: 'tizhou-setup-1.0.15.exe' }
+      ctx.exeSize = 12345 // 预置脏字段，验证被清空
+      const ok = await verifyLocalDistCore(pathsFor(dir, 'tizhou-setup-1.0.15.exe'), ctx, {
+        writeSums: false
+      })
+      expect(ok).toBe(false)
+      expect(ctx.exeSize).toBeUndefined()
+      expect(ctx.blockmapSize).toBeUndefined()
+      expect(ctx.ymlRaw).toBeUndefined()
+      expect(ctx.expectedSums).toBeUndefined()
+      expect(ctx.expectedYmlRaw).toBeUndefined()
+    })
+  })
+
+  it('writeSums=true：latest.yml 归属不符严格抛错', async () => {
+    await withTempDist(async (dir) => {
+      makeLocalDist(dir, '1.0.16')
+      const ctx = { version: '1.0.15', exeName: 'tizhou-setup-1.0.15.exe' }
+      await expect(
+        verifyLocalDistCore(pathsFor(dir, ctx.exeName), ctx, { writeSums: true })
+      ).rejects.toThrow(/归属不符.*1\.0\.16.*1\.0\.15/)
+    })
+  })
+
+  it('版本匹配：writeSums=true 生成 SHA256SUMS.txt 并回读二次校验通过', async () => {
+    await withTempDist(async (dir) => {
+      makeLocalDist(dir, '1.0.17')
+      const exeName = 'tizhou-setup-1.0.17.exe'
+      const ctx = { version: '1.0.17', exeName }
+      const ok = await verifyLocalDistCore(pathsFor(dir, exeName), ctx, { writeSums: true })
+      expect(ok).toBe(true)
+      expect(ctx.exeSize).toBe(2048)
+      expect(existsSync(join(dir, 'SHA256SUMS.txt'))).toBe(true)
+      const byName = parseSha256SumsText(readFileSync(join(dir, 'SHA256SUMS.txt'), 'utf8'))
+      expect(byName.get(exeName)).toMatch(/^[0-9a-f]{64}$/)
+      verifySha256SumsContent(readFileSync(join(dir, 'SHA256SUMS.txt'), 'utf8'), [
+        { name: exeName, hash: byName.get(exeName)! },
+        { name: `${exeName}.blockmap`, hash: byName.get(`${exeName}.blockmap`)! },
+        { name: 'latest.yml', hash: byName.get('latest.yml')! }
+      ])
+    })
+  })
+
+  it('版本匹配：writeSums=false 只读不落盘，返回 true 且填齐本地参照', async () => {
+    await withTempDist(async (dir) => {
+      makeLocalDist(dir, '1.0.17')
+      const exeName = 'tizhou-setup-1.0.17.exe'
+      const ctx = { version: '1.0.17', exeName }
+      const ok = await verifyLocalDistCore(pathsFor(dir, exeName), ctx, { writeSums: false })
+      expect(ok).toBe(true)
+      expect(ctx.exeSize).toBe(2048)
+      expect(ctx.expectedSums).toContain(`*${exeName}`)
+      expect(existsSync(join(dir, 'SHA256SUMS.txt'))).toBe(false)
+    })
+  })
+
+  it('三件套缺任一返回 false', async () => {
+    await withTempDist(async (dir) => {
+      makeLocalDist(dir, '1.0.17')
+      const exeName = 'tizhou-setup-1.0.17.exe'
+      rmSync(join(dir, `${exeName}.blockmap`))
+      const ctx = { version: '1.0.17', exeName }
+      const ok = await verifyLocalDistCore(pathsFor(dir, exeName), ctx, { writeSums: false })
+      expect(ok).toBe(false)
+    })
   })
 })
