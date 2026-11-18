@@ -172,9 +172,23 @@ export async function findPythonLauncher(options: {
   throw new Error('未找到可用的 Python 3.10 或更高版本（需支持 venv 模块）')
 }
 
+export interface PortableArchiveSource {
+  label: string
+  url: string
+}
+
+export interface PortableArchiveSpec {
+  version: string
+  buildTag: string
+  fileName: string
+  expectedBytes: number
+  expectedSha256: string
+  sources: PortableArchiveSource[]
+}
+
 // 独立便携版 Python 3.12（python-build-standalone install_only_stripped 构建）：
 // 双源已实测可用——国内主源走 npmmirror CDN，国际备源是同构建的 GitHub Release
-export const PORTABLE_PYTHON = {
+export const PORTABLE_PYTHON: PortableArchiveSpec = {
   version: '3.12.16',
   buildTag: '20261110',
   fileName: 'cpython-3.12.16+20261110-x86_64-pc-windows-msvc-install_only_stripped.tar.gz',
@@ -190,11 +204,19 @@ export const PORTABLE_PYTHON = {
       url: 'https://github.com/astral-sh/python-build-standalone/releases/download/20261110/cpython-3.12.16%2B20261110-x86_64-pc-windows-msvc-install_only_stripped.tar.gz'
     }
   ]
-} as const
+}
 
-export interface PortableArchiveSource {
-  label: string
-  url: string
+// Windows 下裸调 'tar' 可能命中 PATH 里排在前面的 GNU tar（如 Git\usr\bin\tar.exe），
+// 它会把 `C:\...` 里的 `C:` 当远端主机报 `Cannot connect to C: resolve failed`；
+// 因此 win32 固定优先用系统自带的 System32\tar.exe，缺失才回退 PATH 裸名
+export function resolveTarCommand(
+  env: NodeJS.ProcessEnv,
+  exists: (path: string) => boolean,
+  platform: NodeJS.Platform = process.platform
+): string {
+  if (platform !== 'win32') return 'tar'
+  const systemTar = join(env.SystemRoot?.trim() || 'C:\\Windows', 'System32', 'tar.exe')
+  return exists(systemTar) ? systemTar : 'tar'
 }
 
 // 下载进度映射：独立运行时下载占安装总进度 1% → 12%，pip 各阶段在其后顺延
@@ -222,20 +244,29 @@ export function assertPortableArchiveIntegrity(integrity: ArchiveIntegrity): voi
     throw new Error('下载内容校验失败：SHA-256 与预期不符（可能被网络中间层篡改）')
 }
 
-// 流式下载 + 边下边算 SHA-256：不把整包读进内存
+// 流式下载 + 边下边算 SHA-256：不把整包读进内存。
+// timeoutMs（默认 180 秒）经 AbortSignal 同时兜住连接建立与中途断流挂起——
+// 否则主源半途卡死会永久占用 installing 状态且无法回退备源。
 export async function downloadFileStreaming(
   url: string,
   targetPath: string,
   options: {
     fetchFn?: typeof fetch
     totalBytes?: number
+    timeoutMs?: number
     onBytes?: (downloaded: number, total: number) => void
   } = {}
 ): Promise<{ bytes: number; digest: string }> {
   const fetchFn = options.fetchFn ?? fetch
-  const response = await fetchFn(url, { redirect: 'follow' })
-  if (!response.ok || !response.body)
+  const response = await fetchFn(url, {
+    redirect: 'follow',
+    signal: AbortSignal.timeout(options.timeoutMs ?? 180_000)
+  })
+  if (!response.ok || !response.body) {
+    // 释放未消费的响应体，避免底层连接悬挂
+    await response.body?.cancel().catch(() => {})
     throw new Error(`下载请求失败：HTTP ${response.status || '无响应体'}`)
+  }
   const total = (options.totalBytes ?? Number(response.headers.get('content-length'))) || 0
   const source = Readable.fromWeb(
     response.body as unknown as import('node:stream/web').ReadableStream
@@ -256,8 +287,10 @@ export interface PortableRuntimeOptions {
   runner: CommandRunner
   platform?: NodeJS.Platform
   /** 测试注入用：替换归档规格与下载实现；生产恒用 PORTABLE_PYTHON + 流式下载 */
-  archive?: typeof PORTABLE_PYTHON
+  archive?: PortableArchiveSpec
   fetchFn?: typeof fetch
+  downloadTimeoutMs?: number
+  env?: NodeJS.ProcessEnv
   downloadArchive?: (
     source: PortableArchiveSource,
     targetPath: string,
@@ -322,6 +355,7 @@ export async function ensurePortablePythonRuntime(
         : await downloadFileStreaming(source.url, archivePath, {
             fetchFn: options.fetchFn,
             totalBytes: archive.expectedBytes,
+            timeoutMs: options.downloadTimeoutMs,
             onBytes: reportProgress
           })
       assertPortableArchiveIntegrity({
@@ -331,7 +365,11 @@ export async function ensurePortablePythonRuntime(
         expectedSha256: archive.expectedSha256
       })
       onProgress('解压独立 Python 运行时', 12)
-      await options.runner('tar', ['-xzf', archivePath, '-C', extractDir], { timeout: 300_000 })
+      await options.runner(
+        resolveTarCommand(options.env ?? process.env, exists, options.platform),
+        ['-xzf', archivePath, '-C', extractDir],
+        { timeout: 300_000 }
+      )
       const extractedExe = join(extractDir, 'python', 'python.exe')
       const probe = await options.runner(extractedExe, ['--version'], { timeout: 30_000 })
       if (!parsePythonVersionOutput(`${probe.stdout}\n${probe.stderr}`))

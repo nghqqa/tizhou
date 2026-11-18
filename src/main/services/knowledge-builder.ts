@@ -817,47 +817,42 @@ export class KnowledgeBuilderService {
       // 分组件安装并解析 pip 输出推进进度：大块是 OCR 模型与推理运行时。
       // 安装源在批次开始时解析一次（探活排序或用户钉死），整批共用；
       // 某个源失败自动切换下一个，成功后提升为后续包的首选源。
-      const mirrorQueue = await this.resolveMirrorQueue()
-      this.installProgress = { phase: `安装源：${mirrorQueue[0]?.label ?? '自动'}`, percent: 14 }
+      const firstSource = (await this.resolveMirrorQueue())[0]
+      this.installProgress = { phase: `安装源：${firstSource?.label ?? '自动'}`, percent: 14 }
       await this.pipInstallWithProgress(
         pythonPath,
         `markitdown[pdf,docx,pptx,xlsx,xls,outlook]==${MARKITDOWN_VERSION}`,
         15,
         20,
-        '安装文档转换组件 MarkItDown',
-        mirrorQueue
+        '安装文档转换组件 MarkItDown'
       )
       await this.pipInstallWithProgress(
         pythonPath,
         OCR_PACKAGES[0]!,
         36,
         20,
-        '安装 OCR 组件 RapidOCR（含识别模型）',
-        mirrorQueue
+        '安装 OCR 组件 RapidOCR（含识别模型）'
       )
       await this.pipInstallWithProgress(
         pythonPath,
         OCR_PACKAGES[1]!,
         56,
         30,
-        '安装推理运行时 onnxruntime（体积较大）',
-        mirrorQueue
+        '安装推理运行时 onnxruntime（体积较大）'
       )
       await this.pipInstallWithProgress(
         pythonPath,
         OCR_PACKAGES[2]!,
         86,
         5,
-        '安装 PDF 渲染组件 pypdfium2',
-        mirrorQueue
+        '安装 PDF 渲染组件 pypdfium2'
       )
       await this.pipInstallWithProgress(
         pythonPath,
         STRUCTURED_PACKAGE,
         91,
         5,
-        '安装文档结构解析组件 RapidDoc（表格还原）',
-        mirrorQueue
+        '安装文档结构解析组件 RapidDoc（表格还原）'
       )
       this.installProgress = { phase: '验证安装结果', percent: 97 }
       this.engineCache = undefined
@@ -991,14 +986,12 @@ export class KnowledgeBuilderService {
         windowsHide: true,
         maxBuffer: 1024 * 1024
       })
-      const mirrorQueue = await this.resolveMirrorQueue()
       await this.pipInstallWithProgress(
         pythonPath,
         DIRECTML_PACKAGE,
         25,
         55,
-        '安装 DirectML 推理后端（DX12 显卡通用）',
-        mirrorQueue
+        '安装 DirectML 推理后端（DX12 显卡通用）'
       )
       this.installProgress = { phase: '启用 GPU 推理开关', percent: 86 }
       this.setRapidocrDml(true)
@@ -1012,14 +1005,12 @@ export class KnowledgeBuilderService {
           maxBuffer: 1024 * 1024
         })
         // 回退重装 CPU 后端必须走候选源队列（此前漏传镜像源，默认源不可达时直接卡死）
-        const fallbackQueue = await this.resolveMirrorQueue()
         await this.pipInstallWithProgress(
           pythonPath,
           CPU_ONNXRUNTIME_SPEC,
           95,
           3,
-          '回退安装 CPU 推理后端 onnxruntime',
-          fallbackQueue
+          '回退安装 CPU 推理后端 onnxruntime'
         )
         this.setRapidocrDml(false)
         this.engineCache = undefined
@@ -1057,14 +1048,12 @@ export class KnowledgeBuilderService {
         maxBuffer: 1024 * 1024
       })
       this.installProgress = { phase: '恢复 CPU 推理后端 onnxruntime', percent: 45 }
-      const mirrorQueue = await this.resolveMirrorQueue()
       await this.pipInstallWithProgress(
         pythonPath,
         CPU_ONNXRUNTIME_SPEC,
         45,
         40,
-        '恢复 CPU 推理后端 onnxruntime',
-        mirrorQueue
+        '恢复 CPU 推理后端 onnxruntime'
       )
       this.installProgress = { phase: '恢复 CPU 推理开关', percent: 90 }
       this.setRapidocrDml(false)
@@ -1144,15 +1133,17 @@ export class KnowledgeBuilderService {
   }
 
   // 逐包安装并按 pip 输出行(Collecting/Downloading/Successfully)估算完成度，驱动安装进度条；
-  // 内部按候选源队列自动换源重试，手动钉死源失败时附带可操作的排障指引
+  // 内部按候选源队列自动换源重试，手动钉死源失败时附带可操作的排障指引。
+  // 候选队列每次实时读取：获胜源提升写在 this.resolvedMirrorQueue 上，
+  // 调用方若传入开头取好的旧快照，后续包会重复先撞已失败的首源
   private async pipInstallWithProgress(
     pythonPath: string,
     spec: string,
     base: number,
     span: number,
-    phase: string,
-    queue: PipSource[]
+    phase: string
   ): Promise<void> {
+    const queue = await this.resolveMirrorQueue()
     this.installProgress = { phase, percent: base }
     await installWithMirrorQueue({
       queue,

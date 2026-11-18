@@ -15,8 +15,10 @@ import {
   PORTABLE_PYTHON,
   portableDownloadPercent,
   resolveInstallLauncher,
+  resolveTarCommand,
   windowsFixedPythonCandidates,
-  type CommandRunner
+  type CommandRunner,
+  type PortableArchiveSpec
 } from '../src/main/services/python-runtime'
 import { KnowledgeBuilderService } from '../src/main/services/knowledge-builder'
 import type { AiService } from '../src/main/services/ai'
@@ -337,6 +339,64 @@ describe('portable python runtime', () => {
     expect(seen.at(-1)).toEqual([payload.length, payload.length])
     expect(existsSync(target)).toBe(true)
   })
+
+  it('aborts a stalled primary download and falls back to the second source', async () => {
+    const root = tempDir('tizhou-portable-timeout-')
+    const payload = Buffer.from('portable-archive-content')
+    const archive: PortableArchiveSpec = {
+      version: '3.12.16',
+      buildTag: 'test',
+      fileName: 'python.tar.gz',
+      expectedBytes: payload.length,
+      expectedSha256: createHash('sha256').update(payload).digest('hex'),
+      sources: [
+        { label: '主源A', url: 'https://primary.test/python.tar.gz' },
+        { label: '备源B', url: 'https://fallback.test/python.tar.gz' }
+      ]
+    }
+    const seenSignals: unknown[] = []
+    const fetchFn = vi.fn(async (input: unknown, init?: { signal?: AbortSignal }) => {
+      seenSignals.push(init?.signal)
+      if (String(input).includes('primary.test'))
+        throw new DOMException('The operation was aborted.', 'AbortError')
+      return new Response(payload)
+    })
+    const runner = scriptedRunner([{ stdout: 'Python 3.12.16' }]) // tar 解压 + 解压产物 --version
+    const result = await ensurePortablePythonRuntime({
+      runtimeRoot: root,
+      runner,
+      fetchFn,
+      archive,
+      moveDir: () => {}
+    })
+    expect(result).toBe(join(root, 'python', 'python.exe'))
+    expect(fetchFn).toHaveBeenCalledTimes(2)
+    expect(String(fetchFn.mock.calls[1]?.[0])).toContain('fallback.test')
+    expect(seenSignals.every((signal) => signal instanceof AbortSignal)).toBe(true)
+  })
+})
+
+describe('system tar resolution', () => {
+  it('prefers System32 tar.exe on Windows and falls back to bare tar elsewhere', () => {
+    const systemTar = 'C:\\Windows\\System32\\tar.exe'
+    expect(
+      resolveTarCommand({ SystemRoot: 'C:\\Windows' }, (path) => path === systemTar, 'win32')
+    ).toBe(systemTar)
+    // System32\tar.exe 缺失时回退 PATH 裸名
+    expect(resolveTarCommand({ SystemRoot: 'C:\\Windows' }, () => false, 'win32')).toBe('tar')
+    // SystemRoot 未设置时按 C:\Windows 兜底
+    expect(resolveTarCommand({}, () => true, 'win32')).toBe(systemTar)
+    // SystemRoot 前后空白被 trim
+    expect(
+      resolveTarCommand(
+        { SystemRoot: '  C:\\WINDOWS  ' },
+        (path) => path === 'C:\\WINDOWS\\System32\\tar.exe',
+        'win32'
+      )
+    ).toBe('C:\\WINDOWS\\System32\\tar.exe')
+    // 非 Windows 平台恒用裸名
+    expect(resolveTarCommand({}, () => false, 'linux')).toBe('tar')
+  })
 })
 
 describe('install launcher orchestration', () => {
@@ -522,5 +582,55 @@ describe('mirror queue inside the knowledge builder service', () => {
     const promoted = await service.resolveMirrorQueue()
     expect(promoted[0]).toEqual(tail)
     expect(promoted.slice(1)).toEqual(queue.slice(0, 3))
+  })
+
+  it('sends package 2 straight to the winning source without retrying the failed one', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: unknown) => {
+        if (String(input).includes('mirrors.cloud.tencent.com'))
+          return new Response(null, { status: 200 })
+        throw new Error('unreachable')
+      })
+    )
+    const data = tempDir('tizhou-kb-promote-')
+    const service = new KnowledgeBuilderService(data, data, {} as AiService, {} as VaultService)
+    const tencentUrl = 'https://mirrors.cloud.tencent.com/pypi/simple/'
+    const aliyunUrl = 'https://mirrors.aliyun.com/pypi/simple/'
+    const attempted: Array<{ spec: string; url: string }> = []
+    const cast = service as unknown as {
+      runPipInstall: (
+        pythonPath: string,
+        spec: string,
+        source: { url: string; label: string },
+        base: number,
+        span: number,
+        phase: string
+      ) => Promise<void>
+      pipInstallWithProgress: (
+        pythonPath: string,
+        spec: string,
+        base: number,
+        span: number,
+        phase: string
+      ) => Promise<void>
+    }
+    const runSpy = vi
+      .spyOn(cast, 'runPipInstall')
+      .mockImplementation(async (_pythonPath, spec, source) => {
+        attempted.push({ spec, url: source.url })
+        if (source.url === tencentUrl) throw new Error('HTTP 403 Forbidden')
+      })
+    await cast.pipInstallWithProgress('python', 'pkg-one==1.0', 10, 10, '阶段一')
+    await cast.pipInstallWithProgress('python', 'pkg-two==1.0', 30, 10, '阶段二')
+    // 包 1：首源腾讯云 403 → 自动切阿里云成功
+    expect(
+      attempted.filter((item) => item.spec === 'pkg-one==1.0').map((item) => item.url)
+    ).toEqual([tencentUrl, aliyunUrl])
+    // 包 2：获胜源已提升队首，首次请求即直连阿里云，不再撞已失败的腾讯云
+    expect(
+      attempted.filter((item) => item.spec === 'pkg-two==1.0').map((item) => item.url)
+    ).toEqual([aliyunUrl])
+    expect(runSpy).toHaveBeenCalledTimes(3)
   })
 })
