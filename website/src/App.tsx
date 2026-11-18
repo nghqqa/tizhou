@@ -88,7 +88,7 @@ const WHY: Array<{ icon: string; title: string; lead: string; text: string }> = 
     icon: 'offline',
     title: '完全离线',
     lead: '零依赖刷题',
-    text: '训练、模考、错题复习全程离线可用，无广告无推送；仅扫描版 PDF 导入需要 Python 3.10+。'
+    text: '训练、模考、错题复习全程离线可用，无广告无推送；仅扫描版 PDF 导入需要 Python，未安装时应用会自动下载独立运行时。'
   },
   {
     icon: 'backup',
@@ -137,7 +137,7 @@ const FAQ = [
   },
   {
     q: '对电脑配置有什么要求？',
-    a: 'Windows 10 1809+ 或 Windows 11（64 位）；内存 4 GB 起步、推荐 8 GB；磁盘空间为应用约 500 MB 加 OCR 引擎约 200 MB，另加题库空间。Python 3.10+ 仅在导入扫描版 PDF 时需要。'
+    a: 'Windows 10 1809+ 或 Windows 11（64 位）；内存 4 GB 起步、推荐 8 GB；磁盘空间为应用约 500 MB 加 OCR 引擎约 200 MB，另加题库空间。Python 仅在导入扫描版 PDF 时需要，未安装时应用会自动下载独立运行时。'
   },
   {
     q: '题舟收费吗？',
