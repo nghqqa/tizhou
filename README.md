@@ -126,7 +126,7 @@ src/
 ├── shared/            类型契约、Prompt 协议、OCR 解析器
 └── preload/           IPC 桥
 tools/                 OCR worker（Python）、直导脚本、打包烟雾测试
-tests/                 Vitest 单元测试（335 项，含真实 OCR 集成测试）
+tests/                 Vitest 单元测试（363 项，含真实 OCR 集成测试）
 docs/                  用户手册、导入指南、UAT 清单、架构文档
 ```
 
@@ -135,7 +135,7 @@ docs/                  用户手册、导入指南、UAT 清单、架构文档
 ```bash
 npm install
 npm run dev            # 开发模式
-npm test               # 运行 335 项单元测试
+npm test               # 运行 363 项单元测试
 npm run test:e2e       # 运行 24 项 E2E（真实 Electron 实例）
 npm run typecheck      # 类型检查
 npm run format:check   # 代码格式检查
