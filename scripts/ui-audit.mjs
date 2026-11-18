@@ -288,7 +288,9 @@ function auditExpression() {
   if (doc.scrollWidth > window.innerWidth + 1)
     issues.push(`横向溢出：scrollWidth=${doc.scrollWidth} > viewport=${window.innerWidth}`)
   // 同行网格子项顶部对齐（按 2.5px 聚类分行，行内 spread ≤1px）
-  for (const grid of document.querySelectorAll('.grid, .dashboard-grid, .stats-row')) {
+  for (const grid of document.querySelectorAll(
+    '.grid, .dashboard-grid, .stats-row, .side-stack, .form-grid, .document-layout'
+  )) {
     const tops = [...grid.children]
       .filter((child) => child.getBoundingClientRect().height > 0)
       .map((child) => child.getBoundingClientRect().top)

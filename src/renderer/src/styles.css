@@ -369,6 +369,15 @@ a {
   align-items: center;
   gap: 8px;
 }
+/* 头部动作区不被左侧标题/描述挤压：整体不收缩，按钮内不折出孤字 */
+.page-actions,
+.section-actions {
+  flex-shrink: 0;
+}
+.page-actions .fui-Button,
+.section-actions .fui-Button {
+  white-space: nowrap;
+}
 
 /* Section：分区用留白和细线组织，不依赖重边框 */
 .section {
@@ -821,6 +830,15 @@ a {
   align-content: start;
   gap: 14px;
 }
+/* side-stack 是多列网格：内部相邻 section 的堆叠 margin 会让右列整体下沉 */
+.side-stack > .section + .section {
+  margin-top: 0;
+}
+/* 侧栏纵列里的笔记输入占满整行（窄栏不再与按钮挤同一行） */
+.side-stack .fui-Textarea {
+  display: block;
+  width: 100%;
+}
 .progress-text {
   display: flex;
   justify-content: space-between;
@@ -1219,6 +1237,14 @@ a {
   background: var(--tz-surface-2);
   font-size: var(--tz-text-sm);
   color: var(--tz-ink-2);
+}
+/* 计划条目标题与目标上下分行，不再 0px 粘连成一句 */
+.plan-item > div > span {
+  display: block;
+}
+.plan-item > div > small {
+  display: block;
+  margin-top: 2px;
 }
 
 /* ================================================================
@@ -1721,8 +1747,10 @@ a {
   .workspace {
     padding-inline: 22px;
   }
-  .stats-row {
-    grid-template-columns: repeat(2, 1fr);
+  .stats-row,
+  .stat-strip,
+  .stat-strip.three {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .dashboard-grid,
   .question-shell {
@@ -1925,6 +1953,10 @@ a {
   border: 1px solid var(--tz-border);
   border-radius: var(--tz-radius);
   background: var(--tz-border);
+}
+/* 6 项统计的三列变体：2×3 满格，不留右下角空洞 */
+.stat-strip.three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 .stat-strip-item {
   padding: 14px 16px;

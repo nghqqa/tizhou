@@ -385,14 +385,16 @@ export function DiagnosisPage(): React.JSX.Element {
               >
                 <svg className="score-ring-svg" viewBox="0 0 120 120" aria-hidden="true">
                   <circle className="score-ring-track" cx="60" cy="60" r="52" />
-                  <circle
-                    className="score-ring-arc"
-                    cx="60"
-                    cy="60"
-                    r="52"
-                    strokeDasharray={`${(2 * Math.PI * 52 * Math.max(0, Math.min(100, diagnosis.accuracy))) / 100} ${2 * Math.PI * 52}`}
-                    transform="rotate(-90 60 60)"
-                  />
+                  {diagnosis.accuracy > 0 && (
+                    <circle
+                      className="score-ring-arc"
+                      cx="60"
+                      cy="60"
+                      r="52"
+                      strokeDasharray={`${(2 * Math.PI * 52 * Math.max(0, Math.min(100, diagnosis.accuracy))) / 100} ${2 * Math.PI * 52}`}
+                      transform="rotate(-90 60 60)"
+                    />
+                  )}
                 </svg>
                 <div className="score-ring-center">
                   <strong>{diagnosis.accuracy}%</strong>

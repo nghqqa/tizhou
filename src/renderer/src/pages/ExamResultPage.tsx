@@ -152,7 +152,7 @@ export function ExamResultPage(): React.JSX.Element {
         </div>
       </div>
 
-      <div className="stat-strip">
+      <div className="stat-strip three">
         {stats.map((stat) => (
           <div className="stat-strip-item" key={stat.label}>
             <span className="stat-strip-label">{stat.label}</span>
