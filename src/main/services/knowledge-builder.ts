@@ -84,12 +84,23 @@ import {
 } from './graphic-import'
 import {
   envPipIndexUrl,
+  installWithMirrorQueue,
   mirrorById,
+  mirrorQueueFromProbes,
   normalizeMirrorPreference,
-  pickMirrorByProbes,
-  probeMirror
+  pipMirrorFailureHint,
+  PipSourceFailure,
+  probeMirror,
+  type PipSource
 } from './pip-mirror'
 import { PIP_MIRRORS } from '../../shared/pip-mirrors'
+import {
+  ensurePortablePythonRuntime,
+  ensureVirtualEnvironment,
+  findPythonLauncher as findPythonLauncherCandidate,
+  resolveInstallLauncher,
+  type CommandRunner
+} from './python-runtime'
 
 // 文档结构解析组件（RapidAI 生态，表格还原/图形保真/阅读顺序）
 const STRUCTURED_PACKAGE = 'rapid-doc==0.9.10'
@@ -641,7 +652,7 @@ export class KnowledgeBuilderService {
   private installProgress?: { phase: string; percent: number }
   private engineCache?: KnowledgeEngineStatus
   private gpuAdapterProbe?: Promise<string | undefined>
-  private resolvedPipIndex?: { url: string; label: string }
+  private resolvedMirrorQueue?: PipSource[]
 
   constructor(
     dataDirectory: string,
@@ -786,61 +797,67 @@ export class KnowledgeBuilderService {
     if (this.runningJobId) throw new Error('知识构建任务运行时不能更新转换引擎')
     this.installing = true
     try {
-      const launcher = await this.findPythonLauncher()
+      this.installProgress = { phase: '正在定位 Python 环境', percent: 2 }
+      // 本机深度发现（PATH + 固定安装位置，免重启即可发现新装 Python）；
+      // Windows 下完全找不到时自动下载独立便携版 Python 3.12 零门槛兜底
+      const launcher = await resolveInstallLauncher({
+        findLocal: () => this.findPythonLauncher(),
+        ensurePortable: () => this.ensurePortableLauncher()
+      })
       const environment = join(this.engineDirectory, '.venv')
       const pythonPath = this.managedPythonPath()
-      this.installProgress = { phase: '定位 Python 并创建独立环境', percent: 4 }
-      if (!existsSync(pythonPath)) {
-        mkdirSync(this.engineDirectory, { recursive: true })
-        await execFileAsync(launcher.command, [...launcher.args, '-m', 'venv', environment], {
-          timeout: 120_000,
-          windowsHide: true,
-          maxBuffer: 2 * 1024 * 1024
-        })
-      }
+      this.installProgress = { phase: '创建独立虚拟环境', percent: 13 }
+      // 半残 .venv 自愈：pip 可用直接过；否则 ensurepip 补装；仍不行删目录重建
+      await ensureVirtualEnvironment({
+        runner: this.commandRunner(),
+        launcher,
+        environment,
+        pythonPath
+      })
       // 分组件安装并解析 pip 输出推进进度：大块是 OCR 模型与推理运行时。
-      // 安装源在批次开始时解析一次（探活优选或用户钉死），整批共用。
-      const pipIndex = await this.resolvePipIndex()
-      this.installProgress = { phase: `安装源：${pipIndex.label}`, percent: 3 }
+      // 安装源在批次开始时解析一次（探活排序或用户钉死），整批共用；
+      // 某个源失败自动切换下一个，成功后提升为后续包的首选源。
+      const mirrorQueue = await this.resolveMirrorQueue()
+      this.installProgress = { phase: `安装源：${mirrorQueue[0]?.label ?? '自动'}`, percent: 14 }
       await this.pipInstallWithProgress(
         pythonPath,
         `markitdown[pdf,docx,pptx,xlsx,xls,outlook]==${MARKITDOWN_VERSION}`,
-        5,
-        25,
+        15,
+        20,
         '安装文档转换组件 MarkItDown',
-        pipIndex.url
+        mirrorQueue
       )
       await this.pipInstallWithProgress(
         pythonPath,
         OCR_PACKAGES[0]!,
-        30,
+        36,
         20,
         '安装 OCR 组件 RapidOCR（含识别模型）',
-        pipIndex.url
+        mirrorQueue
       )
       await this.pipInstallWithProgress(
         pythonPath,
         OCR_PACKAGES[1]!,
-        50,
-        38,
+        56,
+        30,
         '安装推理运行时 onnxruntime（体积较大）',
-        pipIndex.url
+        mirrorQueue
       )
       await this.pipInstallWithProgress(
         pythonPath,
         OCR_PACKAGES[2]!,
-        84,
-        6,
+        86,
+        5,
         '安装 PDF 渲染组件 pypdfium2',
-        pipIndex.url
+        mirrorQueue
       )
       await this.pipInstallWithProgress(
         pythonPath,
         STRUCTURED_PACKAGE,
-        90,
-        6,
+        91,
+        5,
         '安装文档结构解析组件 RapidDoc（表格还原）',
-        pipIndex.url
+        mirrorQueue
       )
       this.installProgress = { phase: '验证安装结果', percent: 97 }
       this.engineCache = undefined
@@ -853,6 +870,29 @@ export class KnowledgeBuilderService {
     } finally {
       this.installing = false
     }
+  }
+
+  // 统一的子进程执行器（venv / pip 校验、版本探测、tar 解压等命令探测类调用），
+  // 非 0 退出与启动失败一律以异常呈现
+  private commandRunner(): CommandRunner {
+    return (command, args, options) =>
+      execFileAsync(command, args, {
+        timeout: options?.timeout ?? 30_000,
+        windowsHide: true,
+        maxBuffer: 4 * 1024 * 1024,
+        env: { ...process.env, PYTHONUTF8: '1' }
+      })
+  }
+
+  // 本机完全没有可用 Python 时的零门槛兜底：下载独立便携版 Python 3.12 到
+  // 应用数据目录（约 21 MB，SHA-256 硬校验，双源自动回退，不污染系统）
+  private async ensurePortableLauncher(): Promise<{ command: string; args: string[] }> {
+    const pythonExe = await ensurePortablePythonRuntime({
+      runtimeRoot: join(this.engineDirectory, 'runtime'),
+      runner: this.commandRunner(),
+      onProgress: (phase, percent) => (this.installProgress = { phase, percent })
+    })
+    return { command: pythonExe, args: [] }
   }
 
   /** GPU 加速（DirectML）组件：检测、安装、移除。仅 Windows；失败自动回退 CPU 后端 */
@@ -951,14 +991,14 @@ export class KnowledgeBuilderService {
         windowsHide: true,
         maxBuffer: 1024 * 1024
       })
-      const pipIndex = await this.resolvePipIndex()
+      const mirrorQueue = await this.resolveMirrorQueue()
       await this.pipInstallWithProgress(
         pythonPath,
         DIRECTML_PACKAGE,
         25,
         55,
         '安装 DirectML 推理后端（DX12 显卡通用）',
-        pipIndex.url
+        mirrorQueue
       )
       this.installProgress = { phase: '启用 GPU 推理开关', percent: 86 }
       this.setRapidocrDml(true)
@@ -971,10 +1011,15 @@ export class KnowledgeBuilderService {
           windowsHide: true,
           maxBuffer: 1024 * 1024
         })
-        await execFileAsync(
+        // 回退重装 CPU 后端必须走候选源队列（此前漏传镜像源，默认源不可达时直接卡死）
+        const fallbackQueue = await this.resolveMirrorQueue()
+        await this.pipInstallWithProgress(
           pythonPath,
-          ['-m', 'pip', 'install', '--disable-pip-version-check', CPU_ONNXRUNTIME_SPEC],
-          { timeout: 20 * 60_000, windowsHide: true, maxBuffer: 2 * 1024 * 1024 }
+          CPU_ONNXRUNTIME_SPEC,
+          95,
+          3,
+          '回退安装 CPU 推理后端 onnxruntime',
+          fallbackQueue
         )
         this.setRapidocrDml(false)
         this.engineCache = undefined
@@ -1012,19 +1057,14 @@ export class KnowledgeBuilderService {
         maxBuffer: 1024 * 1024
       })
       this.installProgress = { phase: '恢复 CPU 推理后端 onnxruntime', percent: 45 }
-      const pipIndex = await this.resolvePipIndex()
-      await execFileAsync(
+      const mirrorQueue = await this.resolveMirrorQueue()
+      await this.pipInstallWithProgress(
         pythonPath,
-        [
-          '-m',
-          'pip',
-          'install',
-          '--disable-pip-version-check',
-          '--index-url',
-          pipIndex.url,
-          CPU_ONNXRUNTIME_SPEC
-        ],
-        { timeout: 20 * 60_000, windowsHide: true, maxBuffer: 2 * 1024 * 1024 }
+        CPU_ONNXRUNTIME_SPEC,
+        45,
+        40,
+        '恢复 CPU 推理后端 onnxruntime',
+        mirrorQueue
       )
       this.installProgress = { phase: '恢复 CPU 推理开关', percent: 90 }
       this.setRapidocrDml(false)
@@ -1063,18 +1103,23 @@ export class KnowledgeBuilderService {
       this.mirrorPreferencePath(),
       JSON.stringify({ mirrorId: preference, updatedAt: new Date().toISOString() }, null, 2)
     )
-    this.resolvedPipIndex = undefined
+    this.resolvedMirrorQueue = undefined
   }
 
-  private async resolvePipIndex(): Promise<{ url: string; label: string }> {
-    if (this.resolvedPipIndex) return this.resolvedPipIndex
+  // 解析「有序候选源队列」：环境变量显式源 / 用户钉死源各只有一个候选；
+  // auto 模式并发探活全部源产出完整队列——可达国内源按耗时升序、可达官方源次之、
+  // 探活未过的源按固定兜底顺序排末尾（pip 走系统代理时的网络视图可能不同于探活）。
+  private async resolveMirrorQueue(): Promise<PipSource[]> {
+    if (this.resolvedMirrorQueue) return this.resolvedMirrorQueue
     // 用户环境变量显式指定的源优先——那是用户自己配置的环境，不应被应用覆盖
     const fromEnv = envPipIndexUrl()
-    if (fromEnv) return (this.resolvedPipIndex = { url: fromEnv, label: '环境变量 PIP_INDEX_URL' })
+    if (fromEnv)
+      return (this.resolvedMirrorQueue = [{ url: fromEnv, label: '环境变量 PIP_INDEX_URL' }])
     const preference = this.pipMirrorPreference()
     if (preference !== 'auto') {
       const mirror = mirrorById(preference)
-      if (mirror) return (this.resolvedPipIndex = { url: mirror.indexUrl, label: mirror.label })
+      if (mirror)
+        return (this.resolvedMirrorQueue = [{ url: mirror.indexUrl, label: mirror.label }])
     }
     const probes = await Promise.all(
       PIP_MIRRORS.map(async (mirror) => {
@@ -1083,31 +1128,64 @@ export class KnowledgeBuilderService {
         return { ...mirror, reachable, elapsedMs: Date.now() - startedAt }
       })
     )
-    const picked = pickMirrorByProbes(probes)
-    return (this.resolvedPipIndex = { url: picked.indexUrl, label: picked.label })
+    const queue = mirrorQueueFromProbes(probes).map((mirror) => ({
+      url: mirror.indexUrl,
+      label: mirror.label
+    }))
+    return (this.resolvedMirrorQueue = queue)
   }
 
-  // 逐包安装并按 pip 输出行(Collecting/Downloading/Successfully)估算完成度，驱动安装进度条
+  // 首个安装成功的源提升为队首：同一批次后续包不再重复踩已失败的源
+  private promoteMirrorSource(source: PipSource): void {
+    const queue = this.resolvedMirrorQueue
+    if (!queue) return
+    const rest = queue.filter((item) => item.url !== source.url)
+    this.resolvedMirrorQueue = [source, ...rest]
+  }
+
+  // 逐包安装并按 pip 输出行(Collecting/Downloading/Successfully)估算完成度，驱动安装进度条；
+  // 内部按候选源队列自动换源重试，手动钉死源失败时附带可操作的排障指引
   private async pipInstallWithProgress(
     pythonPath: string,
     spec: string,
     base: number,
     span: number,
     phase: string,
-    indexUrl?: string
+    queue: PipSource[]
   ): Promise<void> {
     this.installProgress = { phase, percent: base }
-    await new Promise<void>((resolvePromise, reject) => {
+    await installWithMirrorQueue({
+      queue,
+      run: (source) => this.runPipInstall(pythonPath, spec, source, base, span, phase),
+      onSourceFailure: (_failed, next) => {
+        this.installProgress = {
+          phase: `${phase}（当前源安装失败，自动切换至 ${next.label} 重试…）`,
+          percent: base
+        }
+      },
+      onSourceSuccess: (source) => this.promoteMirrorSource(source),
+      buildHint: (combinedOutput) => {
+        // 环境变量源是用户自配的，指引去 UI 改设置没有意义
+        if (envPipIndexUrl()) return undefined
+        return pipMirrorFailureHint(combinedOutput, this.pipMirrorPreference())
+      }
+    })
+  }
+
+  // 单源 pip 安装：非 0 退出时把 stdout 与 stderr 尾部一起抛出
+  //（部分 pip 错误如 from versions: none 输出在 stdout）
+  private runPipInstall(
+    pythonPath: string,
+    spec: string,
+    source: PipSource,
+    base: number,
+    span: number,
+    phase: string
+  ): Promise<void> {
+    return new Promise<void>((resolvePromise, reject) => {
       const child = spawn(
         pythonPath,
-        [
-          '-m',
-          'pip',
-          'install',
-          '--disable-pip-version-check',
-          ...(indexUrl ? ['--index-url', indexUrl] : []),
-          spec
-        ],
+        ['-m', 'pip', 'install', '--disable-pip-version-check', '--index-url', source.url, spec],
         {
           windowsHide: true,
           shell: false,
@@ -1115,6 +1193,7 @@ export class KnowledgeBuilderService {
         }
       )
       let stderr = ''
+      let stdoutTail = ''
       let buffer = ''
       let collected = 0
       let finished = 0
@@ -1128,6 +1207,7 @@ export class KnowledgeBuilderService {
       }
       child.stdout.setEncoding('utf8')
       child.stdout.on('data', (chunk: string) => {
+        stdoutTail = `${stdoutTail}${chunk}`.slice(-20_000)
         buffer += chunk
         const lines = buffer.split('\n')
         buffer = lines.pop() ?? ''
@@ -1151,8 +1231,9 @@ export class KnowledgeBuilderService {
       })
       child.once('close', (code) => {
         clearTimeout(timer)
-        if (code === 0) resolvePromise()
-        else reject(new Error(stderr.trim() || `pip 进程退出码 ${code ?? '未知'}`))
+        if (code === 0) return resolvePromise()
+        const output = [stderr.trim(), stdoutTail.trim()].filter(Boolean).join('\n')
+        reject(new PipSourceFailure(output || `pip 进程退出码 ${code ?? '未知'}`))
       })
     })
   }
@@ -3415,35 +3496,15 @@ export class KnowledgeBuilderService {
     }
   }
 
+  // Python 深度发现：PATH 候选之外补充扫描 Windows 常见固定安装位置
+  //（免重启应用即可发现新装 Python；显式跳过微软商店假快捷桩），
+  // 每个候选都要通过「版本 ≥3.10」与「venv 可导入」双重校验
   private async findPythonLauncher(): Promise<{ command: string; args: string[] }> {
-    const candidates =
-      process.platform === 'win32'
-        ? [
-            { command: 'py', args: ['-3.12'] },
-            { command: 'py', args: ['-3'] },
-            // uv 等工具管理的 Python 只以 -V:Astral/... 标签注册，py -3 找不到，裸 py 会落到启动器默认环境
-            { command: 'py', args: [] },
-            { command: 'python', args: [] }
-          ]
-        : [
-            { command: 'python3.12', args: [] },
-            { command: 'python3', args: [] },
-            { command: 'python', args: [] }
-          ]
-    for (const candidate of candidates) {
-      try {
-        const { stdout, stderr } = await execFileAsync(
-          candidate.command,
-          [...candidate.args, '--version'],
-          { timeout: 10_000, windowsHide: true, maxBuffer: 1024 * 1024 }
-        )
-        const match = `${stdout}\n${stderr}`.match(/Python\s+(\d+)\.(\d+)/i)
-        if (match && Number(match[1]) >= 3 && Number(match[2]) >= 10) return candidate
-      } catch {
-        // Try the next narrow launcher candidate.
-      }
-    }
-    throw new Error('未找到 Python 3.10 或更高版本')
+    const override = process.env.WORKBENCH_MARKITDOWN_PYTHON?.trim()
+    return findPythonLauncherCandidate({
+      runner: this.commandRunner(),
+      extraCandidates: override ? [{ command: override, args: [] }] : []
+    })
   }
 
   private workerPath(): string {

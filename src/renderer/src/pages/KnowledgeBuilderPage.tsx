@@ -889,7 +889,7 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
               <strong>{engine.message}</strong>
               <small>
                 {engine.pythonPath ??
-                  '需要本机已有 Python 3.10 或更高版本，安装内容位于应用数据目录'}
+                  '优先复用本机 Python 3.10+；若本机未安装将自动下载独立 Python 3.12 运行时（约 21 MB），不改动系统环境'}
               </small>
               <small>
                 OCR 组件（扫描件识别）：
