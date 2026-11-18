@@ -1550,7 +1550,11 @@ a {
   width: 100%;
   min-width: 0;
   max-width: 100%;
+}
+.form-grid .grow .fui-Select__select {
+  overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .builder-artifact strong {
   display: block;
