@@ -1,7 +1,7 @@
 {
   "name": "tizhou-website",
   "private": true,
-  "version": "1.0.17",
+  "version": "1.0.18",
   "type": "module",
   "description": "题舟（Tizhou）官方介绍站点：纯静态构建产物，输出到 website/dist",
   "scripts": {
