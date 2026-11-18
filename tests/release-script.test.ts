@@ -526,6 +526,42 @@ describe('本地 dist 归属判定（verifyLocalDistCore）', () => {
     })
   })
 
+  it('版本匹配：writeSums=true 无条件覆写残留的上一版 SHA256SUMS.txt（v1.0.17 首次全量发版真实故障回归）', async () => {
+    await withTempDist(async (dir) => {
+      makeLocalDist(dir, '1.0.17')
+      // 模拟发新版时 dist/ 残留上一版 sums：条目全是 1.0.16 的
+      writeFileSync(
+        join(dir, 'SHA256SUMS.txt'),
+        `${'a'.repeat(64)} *tizhou-setup-1.0.16.exe\n${'b'.repeat(64)} *tizhou-setup-1.0.16.exe.blockmap\n${'c'.repeat(64)} *latest.yml\n`,
+        'utf8'
+      )
+      const exeName = 'tizhou-setup-1.0.17.exe'
+      const ctx = { version: '1.0.17', exeName }
+      const ok = await verifyLocalDistCore(pathsFor(dir, exeName), ctx, { writeSums: true })
+      expect(ok).toBe(true)
+      const byName = parseSha256SumsText(readFileSync(join(dir, 'SHA256SUMS.txt'), 'utf8'))
+      expect(byName.has('tizhou-setup-1.0.16.exe')).toBe(false)
+      expect(byName.has(exeName)).toBe(true)
+      expect(byName.has('latest.yml')).toBe(true)
+    })
+  })
+
+  it('版本匹配：writeSums=false 且残留不一致的 SHA256SUMS.txt 时仍严格抛错', async () => {
+    await withTempDist(async (dir) => {
+      makeLocalDist(dir, '1.0.17')
+      writeFileSync(
+        join(dir, 'SHA256SUMS.txt'),
+        `${'a'.repeat(64)} *tizhou-setup-1.0.16.exe\n`,
+        'utf8'
+      )
+      const exeName = 'tizhou-setup-1.0.17.exe'
+      const ctx = { version: '1.0.17', exeName }
+      await expect(
+        verifyLocalDistCore(pathsFor(dir, exeName), ctx, { writeSums: false })
+      ).rejects.toThrow(/缺少 tizhou-setup-1\.0\.17\.exe 条目/)
+    })
+  })
+
   it('版本匹配：writeSums=false 只读不落盘，返回 true 且填齐本地参照', async () => {
     await withTempDist(async (dir) => {
       makeLocalDist(dir, '1.0.17')

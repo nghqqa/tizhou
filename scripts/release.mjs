@@ -551,14 +551,17 @@ export async function verifyLocalDistCore(
   for (const entry of entries) log(`  sha256(${entry.name}) = ${entry.hash}`)
   ctx.expectedSums = buildSha256SumsText(entries)
   ctx.expectedYmlRaw = ymlRaw
-  if (fs.existsSync(sumsPath)) {
-    verifySha256SumsContent(fs.readFileSync(sumsPath, 'utf8'), entries)
-    log('✓ 既有 SHA256SUMS.txt 与磁盘重算哈希一致')
-  }
   if (writeSums) {
+    // 完整发版/预演：无条件覆写为当前版本条目再回读校验。
+    // 发新版时 dist/ 残留上一版 SHA256SUMS.txt 是常态，若先拿旧文件预校验新条目
+    // 必然误报「缺少 <新exe> 条目」（2026-11-18 v1.0.17 首次全量发版真实故障）
     fs.writeFileSync(sumsPath, ctx.expectedSums, 'utf8')
     verifySha256SumsContent(fs.readFileSync(sumsPath, 'utf8'), entries)
     log('✓ SHA256SUMS.txt 已生成并通过回读二次校验')
+  } else if (fs.existsSync(sumsPath)) {
+    // 只读复用路径（--verify-only）：本地参照直接采信前先核对磁盘现状
+    verifySha256SumsContent(fs.readFileSync(sumsPath, 'utf8'), entries)
+    log('✓ 既有 SHA256SUMS.txt 与磁盘重算哈希一致')
   }
   return true
 }
