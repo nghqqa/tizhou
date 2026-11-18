@@ -2,7 +2,7 @@
 // 覆盖：模型设置页 VLM 开关的开启与持久化 → 工坊顶部开关与产物详情「VLM 按页精校」
 // 的联动显隐（关闭时不出现精校按钮）→ 人工「编辑正文」保存后的往返持久化（UI 往返 + 磁盘文件）。
 // 不调用真实模型服务：精校按钮只断言显隐联动，不触发推理。
-// 引擎不可用时运行期跳过（打印警告，不计入真实闭环通过）。
+// 引擎不可用时 it.skipIf 跳过——skipped 不计入真实闭环通过。
 import { afterAll, beforeAll, describe, expect, it, onTestFailed } from 'vitest'
 import type { Page } from 'playwright'
 import { spawnSync } from 'node:child_process'
@@ -271,13 +271,9 @@ describe('VLM 按页精校 UI 联动与人工编辑往返（真实 OCR 导入管
   })
 
   function itE2E(name: string, fn: (page: Page) => Promise<void>, timeout = 420_000): void {
-    it(
+    it.skipIf(!engineAvailable)(
       name,
       async () => {
-        if (!engineAvailable) {
-          console.warn('[e2e] 引擎不可用，跳过 VLM UI 用例')
-          return
-        }
         if (!app) throw new Error('应用未启动')
         onTestFailed(() => {
           suiteFailed = true
@@ -358,7 +354,7 @@ describe('VLM 按页精校 UI 联动与人工编辑往返（真实 OCR 导入管
     await editor.waitFor({ timeout: 20_000 })
     expect(await editor.inputValue()).toContain(MARKER)
 
-    // 磁盘持久化：任务目录中的产物 md 包含编辑标记
+    // 磁盘持久化：任务目录中的产物文件包含编辑标记
     expect(dataDir).toBeTruthy()
     const jobsDir = join(dataDir!, 'knowledge-builder', 'jobs')
     expect(existsSync(jobsDir), '任务目录不存在').toBe(true)
@@ -374,6 +370,6 @@ describe('VLM 按页精校 UI 联动与人工编辑往返（真实 OCR 导入管
       }
     }
     walk(jobsDir)
-    expect(found, '任务目录中未找到包含编辑标记的产物 md').toBe(true)
+    expect(found, '任务目录中未找到包含编辑标记的产物文件').toBe(true)
   })
 })
