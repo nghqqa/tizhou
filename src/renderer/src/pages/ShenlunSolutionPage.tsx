@@ -326,41 +326,43 @@ export function ShenlunSolutionPage(): React.JSX.Element {
             {current && <span className="pill">难度 {current.difficulty}</span>}
             <span className="pill">{content.replace(/\s/g, '').length} 字</span>
             {currentStatus && (
-              <span className="pill">
+              <span className="pill is-evaluated">
                 已评 {currentStatus.count} 次 · 最新 {currentStatus.latestScore} 分
-              </span>
-            )}
-            {totalVisible > 0 && currentIndex >= 0 && (
-              <span className="pill">
-                第 {currentIndex + 1} / {totalVisible} 题
               </span>
             )}
           </div>
           <div className="solution-nav-actions">
             <Button
               size="small"
-              appearance={onlyUnattempted ? 'primary' : 'subtle'}
+              appearance={onlyUnattempted ? 'primary' : 'outline'}
               onClick={() => setOnlyUnattempted((value) => !value)}
             >
               {onlyUnattempted ? '显示全部题目' : '只看未做'}
             </Button>
-            <Button
-              size="small"
-              icon={<ArrowLeftIcon />}
-              disabled={!hasPrev}
-              onClick={() => void goAdjacent(-1)}
-            >
-              上一题
-            </Button>
-            <Button
-              size="small"
-              icon={<ArrowRightIcon />}
-              iconPosition="after"
-              disabled={!hasNext}
-              onClick={() => void goAdjacent(1)}
-            >
-              下一题
-            </Button>
+            <div className="solution-pager">
+              <Button
+                size="small"
+                icon={<ArrowLeftIcon />}
+                disabled={!hasPrev}
+                onClick={() => void goAdjacent(-1)}
+              >
+                上一题
+              </Button>
+              {totalVisible > 0 && currentIndex >= 0 && (
+                <span className="solution-pager-count">
+                  {currentIndex + 1} / {totalVisible}
+                </span>
+              )}
+              <Button
+                size="small"
+                icon={<ArrowRightIcon />}
+                iconPosition="after"
+                disabled={!hasNext}
+                onClick={() => void goAdjacent(1)}
+              >
+                下一题
+              </Button>
+            </div>
           </div>
         </div>
         {onlyUnattempted && totalVisible === 0 ? (
@@ -385,6 +387,7 @@ export function ShenlunSolutionPage(): React.JSX.Element {
             </div>
             <div className="essay-col">
               <TabList
+                className="solution-tabs"
                 selectedValue={view}
                 onTabSelect={(_, data) => setView(data.value as 'write' | 'reference' | 'history')}
               >

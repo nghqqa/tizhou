@@ -2318,6 +2318,16 @@ a {
   max-width: none;
   max-height: min(52vh, 640px);
 }
+.page-solution .solution-tabs {
+  border-bottom: 1px solid var(--tz-border);
+  margin-bottom: 12px;
+}
+.page-solution .essay-editor {
+  min-height: min(56vh, 620px);
+}
+.page-solution .answer-panel {
+  margin-top: 0;
+}
 .solution-nav-bar {
   display: flex;
   flex-wrap: wrap;
@@ -2325,15 +2335,35 @@ a {
   justify-content: space-between;
   gap: 10px 16px;
   margin-top: 14px;
+  padding-bottom: 14px;
+  margin-bottom: 18px;
+  border-bottom: 1px solid var(--tz-border);
 }
 .solution-nav-bar .question-meta {
   margin-top: 0;
+}
+.pill.is-evaluated {
+  color: var(--tz-pine);
+  background: var(--tz-pine-bg);
+  border: 1px solid color-mix(in srgb, var(--tz-pine) 28%, transparent);
 }
 .solution-nav-actions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 12px;
+}
+.solution-pager {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.solution-pager-count {
+  min-width: 64px;
+  text-align: center;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--tz-ink-muted);
 }
 .solution-history-list {
   display: flex;
