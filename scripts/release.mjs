@@ -603,10 +603,15 @@ async function stage3TagPushAndCI(ctx) {
   banner(3, 'Tag、双端推送与 CI 门禁')
   const tagName = `v${ctx.version}`
   const head = run('git', ['rev-parse', 'HEAD']).trim()
-  const existing = spawnSync('git', ['rev-parse', '-q', '--verify', `refs/tags/${tagName}`], {
-    cwd: ROOT,
-    encoding: 'utf8'
-  })
+  // 解引用到 ^{commit}：附注 tag 的 refs/tags/v* 返回 tag 对象 SHA，需解引用才能与 HEAD 比对
+  const existing = spawnSync(
+    'git',
+    ['rev-parse', '-q', '--verify', `refs/tags/${tagName}^{commit}`],
+    {
+      cwd: ROOT,
+      encoding: 'utf8'
+    }
+  )
   if (existing.status === 0 && existing.stdout.trim()) {
     if (existing.stdout.trim() !== head) {
       throw new Error(
