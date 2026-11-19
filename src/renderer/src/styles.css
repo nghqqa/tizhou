@@ -1724,6 +1724,44 @@ a {
   color: var(--tz-amber);
   font-size: 10px;
 }
+.fui-Badge.builder-status-badge {
+  font-weight: 500;
+  border-style: solid;
+  border-width: 1px;
+}
+.fui-Badge.builder-status-badge.is-pending {
+  background: var(--tz-amber-bg);
+  border-color: rgba(183, 134, 61, 0.34);
+  color: #8f6420;
+}
+:root:not([data-theme='light']) .fui-Badge.builder-status-badge.is-pending {
+  color: var(--tz-amber);
+}
+.fui-Badge.builder-status-badge.is-approved,
+.fui-Badge.builder-status-badge.is-published {
+  background: var(--tz-pine-bg);
+  border-color: rgba(85, 115, 99, 0.34);
+  color: #3f5c4d;
+}
+:root:not([data-theme='light']) .fui-Badge.builder-status-badge.is-approved,
+:root:not([data-theme='light']) .fui-Badge.builder-status-badge.is-published {
+  color: var(--tz-pine);
+}
+.fui-Badge.builder-status-badge.is-rejected {
+  background: transparent;
+  border-color: var(--tz-border-strong);
+  color: var(--tz-ink-3);
+}
+.fui-Badge.builder-status-badge.is-failed {
+  background: var(--tz-vermillion);
+  border-color: var(--tz-vermillion);
+  color: #fff;
+}
+.fui-Badge.builder-status-badge.is-neutral {
+  background: var(--tz-surface-2);
+  border-color: var(--tz-border);
+  color: var(--tz-ink-2);
+}
 
 /* ================================================================
    Boot Screen

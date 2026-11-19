@@ -76,6 +76,20 @@ function getDisplayJobStatus(job: KnowledgeBuildJob): string {
   return jobStatusLabel(job.status)
 }
 
+/** 任务状态徽章语义色调，避免待审核/正常态沿用朱砂红与报错撞色 */
+function jobStatusTone(job: KnowledgeBuildJob): string {
+  if (job.status === 'failed') return 'is-failed'
+  if (job.status === 'cancelled') return 'is-rejected'
+  if (
+    job.status === 'completed' ||
+    (job.status === 'review' && job.pendingArtifacts === 0 && job.artifacts.length > 0)
+  ) {
+    return 'is-approved'
+  }
+  if (job.status === 'review') return 'is-pending'
+  return 'is-neutral'
+}
+
 /** 来源证据标签：文件·页码；estimated 标「页码为推测」；unavailable 标「暂无法定位原页」 */
 function sourceEvidenceLabel(evidence?: KnowledgeArtifactSummary['sourceEvidence']): string {
   if (!evidence) return ''
@@ -1289,7 +1303,12 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
         >
           <div className="builder-job-head">
             <div>
-              <Badge appearance="filled">{getDisplayJobStatus(job)}</Badge>
+              <Badge
+                appearance={job.status === 'failed' ? 'filled' : 'tint'}
+                className={`builder-status-badge ${jobStatusTone(job)}`}
+              >
+                {getDisplayJobStatus(job)}
+              </Badge>
               <strong>
                 {job.processedFiles}/{job.totalFiles} 文件
               </strong>
@@ -1367,7 +1386,10 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
                     data-testid="builder-artifact-item"
                   >
                     <span>
-                      <Badge appearance={statusAppearance(item.status)}>
+                      <Badge
+                        appearance={statusAppearance(item.status)}
+                        className={`builder-status-badge is-${item.status}`}
+                      >
                         {artifactStatusLabel(item.status)}
                       </Badge>
                       <small>{item.kind === 'question' ? '题目' : '知识'}</small>
