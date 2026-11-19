@@ -286,32 +286,39 @@ dest.save(r'${pdfPath.replace(/\\/g, '\\\\')}')`
     expect(progressCount).toBeGreaterThanOrEqual(1) // At least one progress event
   })
 
-  it('preprocess_for_ocr 漂白浅灰与浅彩水印并保护深黑文字', () => {
+  it('preprocess_for_ocr 漂白浅灰与浅彩水印并保护深黑与彩色印刷文字', () => {
     const script = `
 import importlib.util, numpy as np
 spec = importlib.util.spec_from_file_location('ocr_worker', r'${WORKER.replace(/\\/g, '\\\\')}')
 mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
-img = np.full((600, 600, 3), 245, dtype=np.uint8)
-img[50:120, 50:300] = [210, 210, 210]
-img[150:220, 50:300] = [235, 170, 170]
-img[300:340, 50:300] = [25, 25, 25]
+# 轻微底灰扫描页（225）上的浅灰水印、浅彩水印、深黑字、蓝色重点字、亮红重点字
+img = np.full((600, 600, 3), 225, dtype=np.uint8)
+img[50:120, 50:300] = [210, 210, 210]    # 浅灰水印
+img[150:220, 50:300] = [235, 170, 170]   # 浅粉水印
+img[300:340, 50:300] = [25, 25, 25]      # 深黑印刷字
+img[360:400, 50:300] = [40, 130, 235]    # 蓝色标题/重点字
+img[420:460, 50:300] = [230, 80, 60]     # 亮红重点字
 out = mod.preprocess_for_ocr(img)
 assert out.shape == img.shape and out.dtype == np.uint8
 assert int(out[80, 150].min()) == 255
 assert int(out[180, 150].min()) == 255
 assert int(out[320, 150].max()) < 40
+# 蓝字与亮红字不得被漂白或严重漂淡
+assert int(out[380, 150, 0]) < 80 and int(out[380, 150, 2]) > 180
+assert int(out[440, 150, 0]) > 180 and int(out[440, 150, 2]) < 100
 assert mod.RENDER_DPI >= 260
 `
     execFileSync(VENV_PYTHON, ['-c', script], { timeout: 30000 })
   })
 
-  it('strip_edge_noise 剔除跨页页眉重复小图并保留正文大图', () => {
+  it('strip_edge_noise 仅剔除同槽位跨页重复页眉小图，不误删正文图与页顶独立小图', () => {
     const script = `
 import importlib.util
 spec = importlib.util.spec_from_file_location('ocr_worker', r'${WORKER.replace(/\\/g, '\\\\')}')
 mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
+# 场景1：2页文档每页同槽位页眉 Logo 剔除、正文大图保留
 regions = [
   {'type': 'image', 'page': 0, 'bbox': [50, 20, 180, 90], 'imgPath': 'images/logo1.png', 'text': ''},
   {'type': 'image', 'page': 1, 'bbox': [50, 22, 180, 92], 'imgPath': 'images/logo2.png', 'text': ''},
@@ -322,6 +329,21 @@ new_md, removed, _ = mod.strip_edge_noise(md, regions)
 assert 'logo1.png' not in new_md and 'logo2.png' not in new_md
 assert 'chart.png' in new_md and removed == 2
 assert regions[0]['type'] == 'discarded' and regions[1]['type'] == 'discarded' and regions[2]['type'] == 'image'
+
+# 场景2：多页文档中，同槽位重复>=3页的右上角二维码被剔除，但不同槽位的页顶图推小图必须保留
+regions2 = [
+  {'type': 'image', 'page': 0, 'bbox': [820, 18, 910, 108], 'imgPath': 'images/qr0.png', 'text': ''},
+  {'type': 'image', 'page': 1, 'bbox': [822, 20, 912, 110], 'imgPath': 'images/qr1.png', 'text': ''},
+  {'type': 'image', 'page': 2, 'bbox': [818, 19, 908, 109], 'imgPath': 'images/qr2.png', 'text': ''},
+  {'type': 'image', 'page': 3, 'bbox': [60, 20, 260, 120], 'imgPath': 'images/top_q1.png', 'text': ''},
+  {'type': 'image', 'page': 4, 'bbox': [420, 25, 620, 125], 'imgPath': 'images/top_q2.png', 'text': ''},
+]
+md2 = '\\n'.join(f'![]({r["imgPath"]})' for r in regions2)
+new_md2, removed2, _ = mod.strip_edge_noise(md2, regions2)
+assert removed2 == 3
+assert 'qr0.png' not in new_md2 and 'qr1.png' not in new_md2 and 'qr2.png' not in new_md2
+assert 'top_q1.png' in new_md2 and 'top_q2.png' in new_md2
+assert regions2[3]['type'] == 'image' and regions2[4]['type'] == 'image'
 `
     execFileSync(VENV_PYTHON, ['-c', script], { timeout: 30000 })
   })

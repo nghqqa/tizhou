@@ -104,6 +104,9 @@ import {
 
 // 文档结构解析组件（RapidAI 生态，表格还原/图形保真/阅读顺序）
 const STRUCTURED_PACKAGE = 'rapid-doc==0.9.10'
+// OCR worker 预处理/过滤策略版本：修改渲染 DPI、去水印预处理或页眉剔除策略时递增，
+// 让旧转换缓存自然失效，避免已导过的 PDF 重导时命中旧结果
+const OCR_WORKER_POLICY_VERSION = 'p2'
 import {
   directQuestionMarkdown,
   directSignature,
@@ -1645,10 +1648,12 @@ export class KnowledgeBuilderService {
             !/解析|答案/.test(basename(file.relativePath))
           const useOcr = engine.ocrAvailable && isPdfFile(file.relativePath)
           let structuredOk: boolean | undefined = true
+          const structuredConverterKey = `structured@${STRUCTURED_PACKAGE}+${OCR_WORKER_POLICY_VERSION}`
+          const ocrConverterKey = `ocr@${OCR_PACKAGES.join('+')}+${OCR_WORKER_POLICY_VERSION}`
           const converter = useStructured
-            ? `structured@${STRUCTURED_PACKAGE}`
+            ? structuredConverterKey
             : useOcr
-              ? `ocr@${OCR_PACKAGES.join('+')}`
+              ? ocrConverterKey
               : `markitdown@${MARKITDOWN_VERSION}`
           // 兜底回退 OCR 时改用 ocr@ 键缓存，structured@ 键留待重试
           let effectiveConverter = converter
@@ -1695,7 +1700,7 @@ export class KnowledgeBuilderService {
             if (!structuredOk) {
               // 结构解析失败：回退逐页 OCR 保证批次不中断；兜底结果按 ocr@ 键缓存，
               // structured@ 键留待重试——错存会让毒缓存永久短路结构解析
-              effectiveConverter = `ocr@${OCR_PACKAGES.join('+')}`
+              effectiveConverter = ocrConverterKey
               file.message = '结构解析不可用，回退 OCR 识别'
               this.saveJob(job)
               ocrQuality = await this.ocrConvert(job, file, engine.pythonPath, source, rawPath)
@@ -1736,7 +1741,6 @@ export class KnowledgeBuilderService {
             if ((structuredText.match(/【参考答案(及正确率)?】/g) ?? []).length >= 3) {
               file.message = '解析册：结构重排不利切块，改用逐页 OCR 文本'
               this.saveJob(job)
-              const ocrConverterKey = `ocr@${OCR_PACKAGES.join('+')}`
               const ocrCached = await this.conversionCache.fetch(source, ocrConverterKey)
               if (ocrCached) {
                 copyFileSync(ocrCached.markdownPath, rawPath)

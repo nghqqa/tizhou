@@ -81,8 +81,10 @@ def preprocess_for_ocr(rgb: np.ndarray) -> np.ndarray:
     arr = rgb.astype(np.float32)
     lum = 0.299 * arr[:, :, 0] + 0.587 * arr[:, :, 1] + 0.114 * arr[:, :, 2]
     sat = arr.max(axis=2) - arr.min(axis=2)
-    # 浅彩水印（红/蓝印章、淡彩斜纹）在灰度上偏中灰，略抬高其等效亮度以便一并漂白
-    eff_lum = np.where((sat > 25.0) & (lum > 110.0), np.minimum(255.0, lum + sat * 0.45), lum)
+    # 仅针对高亮度、中低饱和度的浅彩水印（淡红/淡蓝斜纹）抬高其等效亮度以便一并漂白；
+    # 保护蓝/红高饱和彩色印刷文字（lum 偏低或 sat 偏高），避免误漂淡正文重点字。
+    is_pale_color_watermark = (sat > 25.0) & (sat <= 120.0) & (lum > 155.0)
+    eff_lum = np.where(is_pale_color_watermark, np.minimum(255.0, lum + sat * 0.45), lum)
     # 下采样计算背景亮度分位数，耗时从 ~800ms 降至 <50ms
     sample = eff_lum[::4, ::4]
     p75 = float(np.percentile(sample, 75))
@@ -93,7 +95,7 @@ def preprocess_for_ocr(rgb: np.ndarray) -> np.ndarray:
     scale = 255.0 / (white_pt - black_pt)
     target_lum = np.clip((eff_lum - black_pt) * scale, 0.0, 255.0)
     ratio = np.where(lum > 1.0, target_lum / np.maximum(lum, 1.0), 1.0)
-    ratio = np.where(eff_lum >= white_pt, 255.0 / np.maximum(lum, 1.0), np.clip(ratio, 0.65, 1.6))
+    ratio = np.clip(ratio, 0.65, 1.6)
     out = np.empty_like(arr)
     for c in range(3):
         out[:, :, c] = np.clip(arr[:, :, c] * ratio, 0.0, 255.0)
@@ -294,25 +296,44 @@ def strip_edge_noise(markdown: str, regions: list) -> tuple[str, int, list]:
             markdown = markdown.replace(text, '')
             removed += occurrences
             samples.append(text)
-    # 跨页（>=2页）顶部边缘带（y1<155，高<130，宽<420）重复出现的小图多为页眉 Logo 或二维码
-    header_img_pages = {
-        r['page'] for r in regions
-        if r.get('type') == 'image' and r.get('imgPath') and len(r.get('bbox') or []) == 4
-        and r['bbox'][3] < 155 and (r['bbox'][3] - r['bbox'][1]) < 130 and (r['bbox'][2] - r['bbox'][0]) < 420
-    }
-    if len(header_img_pages) >= 2:
-        for r in regions:
-            bbox = r.get('bbox') or []
-            if (r.get('type') == 'image' and r.get('imgPath') and len(bbox) == 4
-                    and bbox[3] < 155 and (bbox[3] - bbox[1]) < 130 and (bbox[2] - bbox[0]) < 420):
-                img_name = Path(r['imgPath']).name
-                r['type'] = 'discarded'
-                if img_name:
-                    pattern = re.compile(r'!\[[^\]]*\]\([^)]*' + re.escape(img_name) + r'\)\s*')
-                    markdown, n = pattern.subn('', markdown)
-                    if n:
-                        removed += n
-                        samples.append(f'[header-img:{img_name}]')
+    # 跨页顶部边缘带（y1<155，高<130，宽<420）且落在同一位置/尺寸簇重复出现的小图多为页眉 Logo 或二维码；
+    # 使用容差聚类（而非硬网格取整）避免扫描微偏移跨边界分裂，同时不误删图推/正文偶发落在页顶的独立小图。
+    total_pages = max((int(r.get('page', 0)) for r in regions), default=-1) + 1
+    min_repeat_pages = 2 if total_pages <= 3 else 3
+    clusters: list[dict] = []
+    for r in regions:
+        bbox = r.get('bbox') or []
+        if r.get('type') != 'image' or not r.get('imgPath') or len(bbox) != 4:
+            continue
+        x0, y0, x1, y1 = bbox
+        w = x1 - x0
+        h = y1 - y0
+        if not (y1 < 155 and 0 < h < 130 and 0 < w < 420):
+            continue
+        page = int(r.get('page', 0))
+        matched = None
+        for cluster in clusters:
+            rx0, ry0, rw, rh = cluster['ref']
+            if abs(x0 - rx0) <= 35 and abs(y0 - ry0) <= 25 and abs(w - rw) <= 35 and abs(h - rh) <= 25:
+                matched = cluster
+                break
+        if matched is None:
+            clusters.append({'ref': (x0, y0, w, h), 'pages': {page}, 'items': [r]})
+        else:
+            matched['pages'].add(page)
+            matched['items'].append(r)
+    for cluster in clusters:
+        if len(cluster['pages']) < min_repeat_pages:
+            continue
+        for r in cluster['items']:
+            img_name = Path(r['imgPath']).name
+            r['type'] = 'discarded'
+            if img_name:
+                pattern = re.compile(r'!\[[^\]]*\]\([^)]*' + re.escape(img_name) + r'\)\s*')
+                markdown, n = pattern.subn('', markdown)
+                if n:
+                    removed += n
+                    samples.append(f'[header-img:{img_name}]')
     return markdown, removed, samples[:10]
 
 
