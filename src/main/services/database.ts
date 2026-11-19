@@ -9,7 +9,9 @@ import type {
   AttemptInput,
   AttemptResult,
   BackupInfo,
+  ConstructedAttemptRecord,
   ConstructedDraft,
+  ConstructedEvaluation,
   DashboardData,
   ExamAnswer,
   ExamConfig,
@@ -1350,6 +1352,47 @@ export class DatabaseService {
         JSON.stringify(payload.evaluation),
         payload.createdAt
       )
+  }
+
+  listConstructedAttempts(params?: {
+    promptId?: string
+    limit?: number
+    range?: ReportData['range']
+  }): ConstructedAttemptRecord[] {
+    const clauses: string[] = []
+    const values: Array<string | number> = []
+    if (params?.promptId) {
+      clauses.push('prompt_id = ?')
+      values.push(params.promptId)
+    }
+    if (params?.range && params.range !== 'all') {
+      const cutoff = params.range === '7d' ? addDays(-7) : addDays(-30)
+      clauses.push('created_at >= ?')
+      values.push(cutoff)
+    }
+    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''
+    const limit = Math.max(1, Math.min(500, params?.limit ?? 100))
+    const rows = this.db
+      .prepare(`SELECT * FROM constructed_attempts ${where} ORDER BY created_at DESC LIMIT ?`)
+      .all(...values, limit) as Row[]
+    const records: ConstructedAttemptRecord[] = []
+    for (const row of rows) {
+      try {
+        const evaluation = JSON.parse(String(row.evaluation_json)) as ConstructedEvaluation
+        if (!evaluation || typeof evaluation.score !== 'number') continue
+        records.push({
+          id: String(row.id),
+          promptId: String(row.prompt_id),
+          title: String(row.title),
+          content: String(row.content),
+          evaluation,
+          createdAt: String(row.created_at)
+        })
+      } catch {
+        /* 跳过损坏的历史评估 JSON，避免影响其他记录读取 */
+      }
+    }
+    return records
   }
 
   getDashboard(): DashboardData {

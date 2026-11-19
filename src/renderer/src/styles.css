@@ -2318,6 +2318,69 @@ a {
   max-width: none;
   max-height: min(52vh, 640px);
 }
+.solution-nav-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+  margin-top: 14px;
+}
+.solution-nav-bar .question-meta {
+  margin-top: 0;
+}
+.solution-nav-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.solution-history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: min(52vh, 560px);
+  overflow-y: auto;
+}
+.solution-history-item {
+  border: 1px solid var(--colorNeutralStroke2);
+  border-radius: 8px;
+  padding: 12px 14px;
+  background: var(--colorNeutralBackground1);
+}
+.solution-history-item.is-active {
+  border-color: var(--tz-vermillion);
+  background: var(--colorNeutralBackground2);
+}
+.solution-history-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.solution-history-meta {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--colorNeutralForeground3);
+}
+.solution-history-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.solution-history-preview {
+  margin: 8px 0 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--colorNeutralForeground2);
+  white-space: pre-wrap;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
 /* 条目容器由 button 改为 div[role=button]（消除按钮嵌套），补焦点可见性 */
 .builder-artifact:focus-visible {
   outline: 2px solid var(--tz-vermillion);

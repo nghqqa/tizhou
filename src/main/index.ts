@@ -561,6 +561,8 @@ async function initialize(): Promise<void> {
         return database!.getDraft(request.params.id)
       case 'constructed.evaluate':
         return study.evaluateConstructed(request.params)
+      case 'constructed.history':
+        return database!.listConstructedAttempts(request.params)
       case 'reports.get':
         return database!.getReport(request.params.range)
       case 'reports.exportMarkdown': {

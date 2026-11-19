@@ -409,6 +409,15 @@ export interface ConstructedEvaluation {
   provider: string
 }
 
+export interface ConstructedAttemptRecord {
+  id: string
+  promptId: string
+  title: string
+  content: string
+  evaluation: ConstructedEvaluation
+  createdAt: string
+}
+
 export type PlanItemType = 'read_knowledge' | 'official_practice' | 'official_review' | 'ai_variant'
 
 /** 根据计划项类型推导默认跳转路由（route 字段优先） */
@@ -826,6 +835,10 @@ export type WorkbenchRequest =
   | { method: 'draft.save'; params: Omit<ConstructedDraft, 'updatedAt'> }
   | { method: 'draft.get'; params: { id: string } }
   | { method: 'constructed.evaluate'; params: { promptId: string; title: string; content: string } }
+  | {
+      method: 'constructed.history'
+      params?: { promptId?: string; limit?: number; range?: ReportData['range'] }
+    }
   | { method: 'reports.get'; params: { range: ReportData['range'] } }
   | { method: 'reports.exportMarkdown'; params: { range: ReportData['range'] } }
   | { method: 'reports.exportObsidian'; params: { range: ReportData['range'] } }

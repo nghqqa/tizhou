@@ -399,4 +399,62 @@ describe('DatabaseService local-date statistics and exam edge cases', () => {
     // 非法输入返回空串而不是抛错（防御脏数据）
     expect(localDateKeyOf('not-a-date')).toBe('')
   })
+
+  it('listConstructedAttempts 支持按题号与时间范围查询并跳过损坏 JSON', () => {
+    const nowIso = new Date().toISOString()
+    const oldIso = new Date(Date.now() - 45 * 24 * 60 * 60 * 1000).toISOString()
+    const evalA = {
+      id: 'eval-a',
+      promptId: 'prompt-1',
+      score: 88,
+      dimensions: [{ name: '要点覆盖', score: 90, comment: '较全' }],
+      summary: '结构清晰',
+      suggestions: ['补足数据'],
+      createdAt: nowIso,
+      provider: 'local-rule'
+    }
+    const evalB = {
+      id: 'eval-b',
+      promptId: 'prompt-2',
+      score: 72,
+      dimensions: [{ name: '要点覆盖', score: 72, comment: '一般' }],
+      summary: '要点略少',
+      suggestions: ['多提炼材料'],
+      createdAt: oldIso,
+      provider: 'local-rule'
+    }
+    database.saveConstructedAttempt({
+      id: 'eval-b',
+      promptId: 'prompt-2',
+      title: '旧申论题',
+      content: '旧作答内容',
+      evaluation: evalB,
+      createdAt: oldIso
+    })
+    database.saveConstructedAttempt({
+      id: 'eval-a',
+      promptId: 'prompt-1',
+      title: '绿色工厂归纳概括',
+      content: '一、环境绿；二、能源绿。',
+      evaluation: evalA,
+      createdAt: nowIso
+    })
+    // 写入一条损坏 JSON 记录，查询应跳过而不崩溃
+    const db = (
+      database as unknown as {
+        db: { prepare: (sql: string) => { run: (...v: unknown[]) => unknown } }
+      }
+    ).db
+    db.prepare(
+      'INSERT INTO constructed_attempts(id, prompt_id, title, content, evaluation_json, created_at) VALUES (?, ?, ?, ?, ?, ?)'
+    ).run('eval-bad', 'prompt-1', '坏记录', '内容', '{broken-json', nowIso)
+
+    const all = database.listConstructedAttempts()
+    expect(all.map((item) => item.id)).toEqual(['eval-a', 'eval-b'])
+    const byPrompt = database.listConstructedAttempts({ promptId: 'prompt-1' })
+    expect(byPrompt).toHaveLength(1)
+    expect(byPrompt[0]!.evaluation.score).toBe(88)
+    const recent30d = database.listConstructedAttempts({ range: '30d' })
+    expect(recent30d.map((item) => item.id)).toEqual(['eval-a'])
+  })
 })
