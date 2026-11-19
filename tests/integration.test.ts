@@ -285,4 +285,44 @@ dest.save(r'${pdfPath.replace(/\\/g, '\\\\')}')`
     expect(qualityCount).toBe(1) // Exactly one final report
     expect(progressCount).toBeGreaterThanOrEqual(1) // At least one progress event
   })
+
+  it('preprocess_for_ocr 漂白浅灰与浅彩水印并保护深黑文字', () => {
+    const script = `
+import importlib.util, numpy as np
+spec = importlib.util.spec_from_file_location('ocr_worker', r'${WORKER.replace(/\\/g, '\\\\')}')
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+img = np.full((600, 600, 3), 245, dtype=np.uint8)
+img[50:120, 50:300] = [210, 210, 210]
+img[150:220, 50:300] = [235, 170, 170]
+img[300:340, 50:300] = [25, 25, 25]
+out = mod.preprocess_for_ocr(img)
+assert out.shape == img.shape and out.dtype == np.uint8
+assert int(out[80, 150].min()) == 255
+assert int(out[180, 150].min()) == 255
+assert int(out[320, 150].max()) < 40
+assert mod.RENDER_DPI >= 260
+`
+    execFileSync(VENV_PYTHON, ['-c', script], { timeout: 30000 })
+  })
+
+  it('strip_edge_noise 剔除跨页页眉重复小图并保留正文大图', () => {
+    const script = `
+import importlib.util
+spec = importlib.util.spec_from_file_location('ocr_worker', r'${WORKER.replace(/\\/g, '\\\\')}')
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+regions = [
+  {'type': 'image', 'page': 0, 'bbox': [50, 20, 180, 90], 'imgPath': 'images/logo1.png', 'text': ''},
+  {'type': 'image', 'page': 1, 'bbox': [50, 22, 180, 92], 'imgPath': 'images/logo2.png', 'text': ''},
+  {'type': 'image', 'page': 0, 'bbox': [100, 220, 800, 520], 'imgPath': 'images/chart.png', 'text': ''},
+]
+md = '![](images/logo1.png)\\n\\n正文\\n\\n![](images/chart.png)\\n\\n![](images/logo2.png)'
+new_md, removed, _ = mod.strip_edge_noise(md, regions)
+assert 'logo1.png' not in new_md and 'logo2.png' not in new_md
+assert 'chart.png' in new_md and removed == 2
+assert regions[0]['type'] == 'discarded' and regions[1]['type'] == 'discarded' and regions[2]['type'] == 'image'
+`
+    execFileSync(VENV_PYTHON, ['-c', script], { timeout: 30000 })
+  })
 })
