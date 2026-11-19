@@ -1807,3 +1807,108 @@ describe('repairDriftedQuestionNumbers（悬挂缩进题号漂移修复）', () 
     expect(repaired[4]).toBe('2.本题题干从这一行开始？')
   })
 })
+
+describe('stripTocSetTitleRuns（目录套标题过滤与套号对齐）', () => {
+  const fillers = Array.from({ length: 12 }, (_, index) => `这是正文解析补充说明第 ${index + 1} 行`)
+
+  it('解析册书首目录紧邻页码且后文各套孤立分布时正确剔除目录，不再把套号推高错位', () => {
+    const solutionLines = [
+      '目录',
+      '练习题 01 套',
+      '001',
+      '练习题 02 套',
+      '015',
+      '练习题 03 套',
+      '029',
+      '练习题01',
+      '1. 如果从专业发展的角度看，同届不同专业的学生混居不仅能拓展知识面。',
+      '【参考答案】C',
+      '【实战解析】选 C。',
+      ...fillers,
+      '练习题02',
+      '1. 创建理想社会是人类文明的伟大目标之一，文学艺术家的看法与众不同。',
+      '【参考答案】C',
+      '【实战解析】选 C。',
+      ...fillers,
+      '练习题03',
+      '1. 建筑在实用和审美功能之外的文化象征意涵往往联系着民族认同。',
+      '【参考答案】B',
+      '【实战解析】选 B。'
+    ]
+    const solutions = parseSolutionBook(solutionLines)
+    expect([...solutions.keys()]).toEqual(['1-1', '2-1', '3-1'])
+    expect(solutions.get('1-1')?.answer).toBe('C')
+    expect(solutions.get('3-1')?.answer).toBe('B')
+
+    const questionLines = [
+      '练习题01',
+      '1. 如果从专业发展的角度看，同届不同专业的学生混居不仅能拓展知识面。',
+      'A. 拓展知识结构',
+      'B. 独特之处',
+      'C. 对人才培养的好处',
+      'D. 优势大于劣势',
+      '练习题02',
+      '1. 创建理想社会是人类文明的伟大目标之一，文学艺术家的看法与众不同。',
+      'A. 不同视角',
+      'B. 伟大目标',
+      'C. 文学艺术家眼中的理想社会',
+      'D. 携手努力',
+      '练习题03',
+      '1. 建筑在实用和审美功能之外的文化象征意涵往往联系着民族认同。',
+      'A. 摆脱浮躁',
+      'B. 准确把握本土与外来关系',
+      'C. 发挥个性',
+      'D. 延续传统'
+    ]
+    const merged = mergeDirectQuestions(parseQuestionBook(questionLines), solutions, new Map(), {
+      subject: 'xingce',
+      category: '片段阅读',
+      sourceFile: '片段阅读-题本.pdf',
+      tags: []
+    })
+    expect(merged.aborted).toBe(false)
+    expect(merged.skippedMisaligned).toBe(0)
+    expect(merged.items.map((item) => item.answer)).toEqual([['C'], ['C'], ['B']])
+  })
+
+  it('分册书首目录尾行（第 30 套）紧邻正文首套（第 16 套）时按套号回落切簇，不误删正文第 16 套', () => {
+    const solutionLines = [
+      '目录',
+      '练习题16套',
+      '001',
+      '练习题17套',
+      '015',
+      '练习题30套',
+      '197',
+      '练习题16',
+      '1. 任何一个生命体都有生命周期，城市成长亦如此。',
+      '【参考答案】C',
+      '【实战解析】选 C。',
+      ...fillers,
+      '练习题17',
+      '1. 书院是中国历史上独具特色的文化教育形式。',
+      '【参考答案】B',
+      '【实战解析】选 B。',
+      ...fillers,
+      '练习题30',
+      '1. 二十世纪九十年代经济转轨存在不同路径选择。',
+      '【参考答案】D',
+      '【实战解析】选 D。'
+    ]
+    const solutions = parseSolutionBook(solutionLines)
+    expect([...solutions.keys()]).toEqual(['16-1', '17-1', '30-1'])
+    expect(solutions.get('16-1')?.answer).toBe('C')
+  })
+
+  it('无后文重复证据的紧凑小夹具不被误判为目录删光', () => {
+    const solutions = parseSolutionBook([
+      '练习题01',
+      '1. 第一套题目题干内容？',
+      '【参考答案】A',
+      '练习题02',
+      '1. 第二套题目题干内容？',
+      '【参考答案】B'
+    ])
+    expect([...solutions.keys()]).toEqual(['1-1', '2-1'])
+  })
+})

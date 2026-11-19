@@ -249,7 +249,9 @@ function stripTocSetTitleRuns(lines: string[]): TocStrippedLines {
   })
   if (titleRows.length < 2) return { lines, removedRows: new Set<number>() }
 
-  // 相邻标题行间距 <= TOC_GAP 视为同一簇（簇内保留行间内容不动）
+  // 相邻标题行间距 <= TOC_GAP 且套号单调递增才视为同一目录簇；
+  // 一旦套号回落（如目录到 30 套结束、紧接着正文从 16 套或 1 套开始），必须切开为新簇，
+  // 防止把紧邻目录尾行的正文首套标题一并吞进目录簇删除。
   const TOC_GAP = 3
   interface TitleCluster {
     rows: Array<{ row: number; set: number }>
@@ -258,7 +260,8 @@ function stripTocSetTitleRuns(lines: string[]): TocStrippedLines {
   let clusterBuf: TitleCluster | undefined
   let lastRow = -10
   for (const entry of titleRows) {
-    if (!clusterBuf || entry.row - lastRow > TOC_GAP) {
+    const prevSet = clusterBuf?.rows[clusterBuf.rows.length - 1]?.set ?? -1
+    if (!clusterBuf || entry.row - lastRow > TOC_GAP || entry.set <= prevSet) {
       clusterBuf = { rows: [entry] }
       clusters.push(clusterBuf)
     } else {
@@ -267,21 +270,20 @@ function stripTocSetTitleRuns(lines: string[]): TocStrippedLines {
     lastRow = entry.row
   }
 
-  // 簇 A 是目录副本当且仅当：其后存在另一簇 B，共享 ≥ 一半的套号（且至少 2 个）
-  const sharedNumbers = (a: TitleCluster, b: TitleCluster): number => {
-    const setsB = new Set(b.rows.map((item) => item.set))
-    return a.rows.filter((item) => setsB.has(item.set)).length
-  }
+  // 簇 A（至少 2 个紧凑标题）是目录副本当且仅当：其后所有簇合计至少重现了一半（且 ≥2 个）套号。
+  // 正文套标题彼此相隔上百行、各自形成长度 1 的孤立簇，若只与单个后文簇比较会永远漏判目录。
   const poisonedClusters = new Set<number>()
-  for (let a = 0; a < clusters.length - 1; a += 1)
+  for (let a = 0; a < clusters.length - 1; a += 1) {
+    if (clusters[a]!.rows.length < 2) continue
+    const laterSets = new Set<number>()
     for (let b = a + 1; b < clusters.length; b += 1) {
-      if (
-        sharedNumbers(clusters[a]!, clusters[b]!) >=
-        Math.max(2, Math.floor(Math.min(clusters[a]!.rows.length, clusters[b]!.rows.length) / 2))
-      ) {
-        poisonedClusters.add(a)
-      }
+      for (const item of clusters[b]!.rows) laterSets.add(item.set)
     }
+    const shared = clusters[a]!.rows.filter((item) => laterSets.has(item.set)).length
+    if (shared >= Math.max(2, Math.floor(clusters[a]!.rows.length / 2))) {
+      poisonedClusters.add(a)
+    }
+  }
   if (!poisonedClusters.size) return { lines, removedRows: new Set<number>() }
 
   const removeRows = new Set<number>()
