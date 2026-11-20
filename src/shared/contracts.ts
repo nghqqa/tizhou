@@ -693,6 +693,7 @@ export interface RuntimeStatus {
 
 export interface AppSettings {
   theme: 'dark' | 'light' | 'system'
+  uiScale: number
   dailyTarget: number
   defaultPracticeCount: number
   defaultExamMinutes: number
@@ -897,4 +898,5 @@ export type WorkbenchRequest =
 export interface WorkbenchAPI {
   invoke<T = unknown>(request: WorkbenchRequest): Promise<T>
   platform: string
+  onSettingsUpdated?: (listener: (settings: AppSettings) => void) => () => void
 }

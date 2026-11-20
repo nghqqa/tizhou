@@ -529,4 +529,16 @@ describe('DatabaseService local-date statistics and exam edge cases', () => {
       best: 99
     })
   })
+
+  it('uiScale 持久化并在 85-150 范围内边界钳制，listQuestionsForPool 默认全量返回', () => {
+    expect(database.getAppSettings().uiScale).toBe(100)
+    expect(database.saveAppSettings({ uiScale: 120 }).uiScale).toBe(120)
+    expect(database.getAppSettings().uiScale).toBe(120)
+    expect(database.saveAppSettings({ uiScale: 40 }).uiScale).toBe(85)
+    expect(database.saveAppSettings({ uiScale: 260 }).uiScale).toBe(150)
+    expect(database.saveAppSettings({ uiScale: Number.NaN }).uiScale).toBe(100)
+
+    expect(database.listQuestionsForPool()).toHaveLength(8)
+    expect(database.listQuestionsForPool({ limit: 3 })).toHaveLength(3)
+  })
 })

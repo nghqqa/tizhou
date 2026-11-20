@@ -31,7 +31,8 @@ const IGNORED_DIRECTORIES = new Set([
   '附件'
 ])
 const MAX_FILE_BYTES = 5 * 1024 * 1024
-const MAX_FILES = 50_000
+// 不限制知识库 Markdown 文件总数（支持超 5 万题大型共享题库），仅限制目录嵌套深度防异常路径爆栈
+const MAX_WALK_DEPTH = 32
 // 磁盘变更防抖：批量写入（导入脚本落几千个文件）期间事件连续到达，静默到最后一次事件后再重索引一次
 const AUTO_REINDEX_DEBOUNCE_MS = 3000
 
@@ -532,15 +533,17 @@ export class VaultService {
 
   private walkMarkdown(root: string, warnings: string[]): string[] {
     const results: string[] = []
-    const visit = (directory: string): void => {
+    const visit = (directory: string, depth: number): void => {
+      if (depth > MAX_WALK_DEPTH) {
+        warnings.push(`${relative(root, directory)}：目录嵌套超过 ${MAX_WALK_DEPTH} 层，已跳过`)
+        return
+      }
       for (const entry of readdirSync(directory, { withFileTypes: true })) {
-        if (results.length >= MAX_FILES)
-          throw new Error(`Markdown 文件超过 ${MAX_FILES} 个，已停止索引`)
         if (entry.isSymbolicLink()) continue
         const fullPath = resolve(directory, entry.name)
         if (!fullPath.toLowerCase().startsWith(root.toLowerCase())) continue
         if (entry.isDirectory()) {
-          if (!IGNORED_DIRECTORIES.has(entry.name)) visit(fullPath)
+          if (!IGNORED_DIRECTORIES.has(entry.name)) visit(fullPath, depth + 1)
           continue
         }
         if (!entry.isFile() || extname(entry.name).toLowerCase() !== '.md') continue
@@ -552,7 +555,7 @@ export class VaultService {
         results.push(fullPath)
       }
     }
-    visit(root)
+    visit(root, 0)
     return results
   }
 

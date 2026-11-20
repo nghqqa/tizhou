@@ -313,6 +313,19 @@ describe('图形题选项（图片选项）', () => {
     expect(vaults.lastAutoIndex?.added).toBe(1)
     expect(vaults.lastAutoIndex?.reused).toBe(1)
   }, 15_000)
+
+  it('超过 32 层嵌套目录只发出跳过警告而不中止合法知识库索引', () => {
+    writeFileSync(join(vaultDirectory, 'root-q.md'), QUESTION, 'utf8')
+    let nested = vaultDirectory
+    for (let depth = 0; depth < 34; depth += 1) {
+      nested = join(nested, `d${depth}`)
+      mkdirSync(nested, { recursive: true })
+    }
+    writeFileSync(join(nested, 'too-deep.md'), QUESTION.replace('小王不是乙', '超深题目'), 'utf8')
+    const result = vaults.connect(vaultDirectory)
+    expect(result.vault.questionCount).toBe(1)
+    expect(result.warnings.some((warning) => warning.includes('目录嵌套超过'))).toBe(true)
+  })
 })
 
 // 真实大库基准：VAULT_BENCH_DIR=<知识库目录> npx vitest run tests/vault.test.ts

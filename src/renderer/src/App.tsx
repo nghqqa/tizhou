@@ -388,6 +388,7 @@ function StatusIndicator({ builtin }: { builtin: boolean }): React.JSX.Element {
 
 export function App(): React.JSX.Element {
   const settings = useAppStore((state) => state.data?.settings)
+  const syncSettings = useAppStore((state) => state.syncSettings)
   const [systemDark, setSystemDark] = useState(
     () => window.matchMedia('(prefers-color-scheme: dark)').matches
   )
@@ -397,6 +398,9 @@ export function App(): React.JSX.Element {
     media.addEventListener('change', update)
     return () => media.removeEventListener('change', update)
   }, [])
+  useEffect(() => {
+    return window.workbench?.onSettingsUpdated?.(syncSettings)
+  }, [syncSettings])
   const isDark =
     settings?.theme === 'light' ? false : settings?.theme === 'system' ? systemDark : true
   const theme = useMemo(() => (isDark ? darkTheme : lightTheme), [isDark])

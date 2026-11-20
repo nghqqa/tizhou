@@ -32,7 +32,8 @@ import {
   DEFAULT_SETTINGS,
   REVIEW_CORRECT_DELAY_DAYS,
   REVIEW_MASTERED_STREAK,
-  REVIEW_WRONG_DELAY_DAYS
+  REVIEW_WRONG_DELAY_DAYS,
+  clampUiScale
 } from '../../shared/defaults'
 import { directSignature } from './question-import'
 
@@ -383,6 +384,7 @@ export class DatabaseService {
 
   saveAppSettings(patch: Partial<AppSettings>): AppSettings {
     const settings = { ...this.getAppSettings(), ...patch }
+    settings.uiScale = clampUiScale(settings.uiScale)
     settings.dailyTarget = Math.max(1, Math.min(500, Math.round(settings.dailyTarget)))
     settings.defaultPracticeCount = Math.max(
       1,
@@ -612,17 +614,19 @@ export class DatabaseService {
     return rows.map((row) => this.mapQuestion(row))
   }
 
-  /** 练习抽题池：与 listQuestions 同过滤，但不受列表查询的 5000 上限约束——
-   *  万题级题库全库采样时按 year DESC 截断会让旧题永远抽不到 */
+  /** 练习抽题池：与 listQuestions 同过滤，不设人为题量上限——
+   *  超五万题的大型题库全库采样时也不因 LIMIT 截断而漏抽旧题 */
   listQuestionsForPool(filter: QuestionListFilter = {}): Question[] {
     const { where, values } = this.buildQuestionFilter(filter)
-    const limit = Math.max(1, Math.min(50_000, filter.limit ?? 50_000))
-    const rows = this.db
-      .prepare(
-        `SELECT q.* FROM questions q JOIN vault_registry v ON v.id = q.vault_id
-        WHERE ${where.join(' AND ')} ORDER BY q.year DESC, q.category, q.id LIMIT ?`
-      )
-      .all(...values, limit) as Row[]
+    const hasExplicitLimit = filter.limit !== undefined
+    const sql =
+      `SELECT q.* FROM questions q JOIN vault_registry v ON v.id = q.vault_id ` +
+      `WHERE ${where.join(' AND ')} ORDER BY q.year DESC, q.category, q.id` +
+      (hasExplicitLimit ? ' LIMIT ?' : '')
+    const queryValues = hasExplicitLimit
+      ? [...values, Math.max(1, Math.round(filter.limit!))]
+      : values
+    const rows = this.db.prepare(sql).all(...queryValues) as Row[]
     return rows.map((row) => this.mapQuestion(row))
   }
 

@@ -34,6 +34,13 @@ export function ShenlunSolutionPage(): React.JSX.Element {
   const [promptId, setPromptId] = useState(requestedPromptId)
   const [keyword, setKeyword] = useState('')
   const [onlyUnattempted, setOnlyUnattempted] = useState(false)
+  const [officialTypography, setOfficialTypography] = useState<boolean>(() => {
+    try {
+      return window.localStorage.getItem('tizhou:shenlun-official-typography') === '1'
+    } catch {
+      return false
+    }
+  })
   const [content, setContent] = useState('')
   const [evaluation, setEvaluation] = useState<ConstructedEvaluation>()
   const [selectedHistoryId, setSelectedHistoryId] = useState<string>('')
@@ -100,6 +107,17 @@ export function ShenlunSolutionPage(): React.JSX.Element {
   useEffect(() => {
     void refreshAllHistory()
   }, [])
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        'tizhou:shenlun-official-typography',
+        officialTypography ? '1' : '0'
+      )
+    } catch {
+      /* 忽略受限环境下的 localStorage 写入失败 */
+    }
+  }, [officialTypography])
 
   // 响应 URL 参数跳转（例如从学习报告「申论作答记录」点进复盘）
   useEffect(() => {
@@ -416,6 +434,15 @@ export function ShenlunSolutionPage(): React.JSX.Element {
           <div className="solution-nav-actions">
             <Button
               size="small"
+              appearance={officialTypography ? 'primary' : 'outline'}
+              aria-pressed={officialTypography}
+              title="按党政机关公文排版习惯（仿宋正文、黑体/楷体标题、首行缩进）呈现材料与作答"
+              onClick={() => setOfficialTypography((value) => !value)}
+            >
+              公文体
+            </Button>
+            <Button
+              size="small"
               appearance={onlyUnattempted ? 'primary' : 'outline'}
               disabled={evaluating}
               onClick={() => void toggleOnlyUnattempted()}
@@ -454,7 +481,7 @@ export function ShenlunSolutionPage(): React.JSX.Element {
             description="所有匹配题目均已有评估记录，可切换「显示全部题目」继续二刷精进。"
           />
         ) : (
-          <div className="essay-columns">
+          <div className={`essay-columns${officialTypography ? ' is-official-doc' : ''}`}>
             <div className="essay-col">
               {current?.material && (
                 <div className="essay-material">

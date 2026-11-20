@@ -32,6 +32,12 @@
     'Source Han Sans SC', 'Noto Sans CJK SC', 'Microsoft YaHei UI', 'PingFang SC', sans-serif;
   --tz-font-display: 'Source Han Serif SC', 'Noto Serif CJK SC', 'STSong', 'SimSun', serif;
   --tz-font-code: 'JetBrains Mono', 'Source Code Pro', 'Cascadia Mono', monospace;
+  /* 申论公文体可选排版令牌（参考 GB/T 9704：仿宋正文 + 黑体一级 + 楷体次级） */
+  --tz-font-official-body:
+    'FangSong_GB2312', 'FangSong', 'STFangsong', 'Source Han Serif SC', 'Noto Serif CJK SC', serif;
+  --tz-font-official-h1: 'SimHei', 'Source Han Sans SC', 'Microsoft YaHei UI', sans-serif;
+  --tz-font-official-h2:
+    'KaiTi_GB2312', 'KaiTi', 'STKaiti', 'Source Han Serif SC', 'Noto Serif CJK SC', serif;
   /* 向后兼容别名 */
   --tz-font-body: var(--tz-font-ui);
   --tz-font-serif: var(--tz-font-display);
@@ -46,13 +52,13 @@
   --tz-space-lg: 24px;
   --tz-space-xl: 32px;
 
-  /* 字号（固定，不随视口缩放） */
-  --tz-text-xs: 11px;
-  --tz-text-sm: 12px;
-  --tz-text-base: 13px;
-  --tz-text-md: 14px;
-  --tz-text-lg: 16px;
-  --tz-text-xl: 20px;
+  /* 字号（固定基准，大屏可配合界面缩放 uiScale / Ctrl +/-/0 等比调整） */
+  --tz-text-xs: 12px;
+  --tz-text-sm: 13px;
+  --tz-text-base: 14px;
+  --tz-text-md: 15px;
+  --tz-text-lg: 17px;
+  --tz-text-xl: 21px;
   --tz-text-2xl: 28px;
   --tz-text-3xl: 34px;
 
@@ -218,9 +224,9 @@ a {
 .nav-group-label {
   padding: 0 10px 6px;
   color: var(--tz-ink-3);
-  font-size: 10px;
+  font-size: var(--tz-text-xs);
   font-weight: 600;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 .nav-item {
@@ -292,7 +298,7 @@ a {
 .vault-summary small {
   margin-top: 2px;
   color: var(--tz-ink-3);
-  font-size: 10px;
+  font-size: var(--tz-text-xs);
 }
 .vault-indicator {
   width: 6px;
@@ -355,9 +361,9 @@ a {
 }
 .eyebrow {
   color: var(--tz-vermillion);
-  font-size: 10px;
+  font-size: var(--tz-text-xs);
   font-weight: 700;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
   margin-bottom: 4px;
 }
@@ -673,12 +679,21 @@ a {
   gap: 6px;
   margin-bottom: 16px;
 }
-.question-stem {
+.question-stem,
+.markdown.question-stem {
   margin: 0 0 18px;
   font-size: var(--tz-text-lg);
+  font-weight: 500;
   line-height: 1.85;
   color: var(--tz-ink);
   white-space: pre-wrap;
+}
+.markdown.question-stem p {
+  color: var(--tz-ink);
+  margin: 0 0 8px;
+}
+.markdown.question-stem p:last-child {
+  margin-bottom: 0;
 }
 .options {
   display: grid;
@@ -690,8 +705,8 @@ a {
   align-items: start;
   gap: 10px;
   width: 100%;
-  min-height: 46px;
-  padding: 10px 14px;
+  min-height: 48px;
+  padding: 12px 16px;
   border: 1px solid var(--tz-border-strong);
   border-radius: var(--tz-radius);
   background: var(--tz-surface);
@@ -758,8 +773,8 @@ a {
 .option-key {
   display: grid;
   place-items: center;
-  width: 24px;
-  height: 24px;
+  width: 26px;
+  height: 26px;
   border-radius: 4px;
   background: var(--tz-surface-2);
   font-weight: 700;
@@ -2427,6 +2442,36 @@ a {
 }
 .solution-history-expand:hover {
   text-decoration: underline;
+}
+/* 申论「公文体」切换模式：仅作用于申论材料、题干、作答与参考解析区，不影响全站 UI */
+.essay-columns.is-official-doc .essay-material .markdown,
+.essay-columns.is-official-doc .essay-editor,
+.essay-columns.is-official-doc .answer-panel .markdown,
+.essay-columns.is-official-doc .answer-panel > p,
+.essay-columns.is-official-doc .solution-history-preview {
+  font-family: var(--tz-font-official-body);
+  font-size: 16px;
+  line-height: 1.9;
+}
+.essay-columns.is-official-doc .markdown.question-stem {
+  font-family: var(--tz-font-official-body);
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.9;
+}
+.essay-columns.is-official-doc .essay-material h3,
+.essay-columns.is-official-doc .answer-panel h3,
+.essay-columns.is-official-doc .markdown h1,
+.essay-columns.is-official-doc .markdown h2 {
+  font-family: var(--tz-font-official-h1);
+}
+.essay-columns.is-official-doc .markdown h3,
+.essay-columns.is-official-doc .markdown h4 {
+  font-family: var(--tz-font-official-h2);
+}
+.essay-columns.is-official-doc .essay-material .markdown p,
+.essay-columns.is-official-doc .answer-panel .markdown p {
+  text-indent: 2em;
 }
 /* 条目容器由 button 改为 div[role=button]（消除按钮嵌套），补焦点可见性 */
 .builder-artifact:focus-visible {

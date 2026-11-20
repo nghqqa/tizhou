@@ -1,7 +1,18 @@
 import type { AiConfigView, AppSettings, IntegrationConfig } from './contracts'
 
+export const UI_SCALE_MIN = 85
+export const UI_SCALE_MAX = 150
+export const UI_SCALE_STEP = 10
+export const UI_SCALE_PRESETS = [90, 100, 110, 120, 130, 140, 150] as const
+
+export function clampUiScale(value: unknown): number {
+  const numeric = typeof value === 'number' && Number.isFinite(value) ? value : 100
+  return Math.max(UI_SCALE_MIN, Math.min(UI_SCALE_MAX, Math.round(numeric)))
+}
+
 export const DEFAULT_SETTINGS: AppSettings = {
   theme: 'light',
+  uiScale: 100,
   dailyTarget: 30,
   defaultPracticeCount: 10,
   defaultExamMinutes: 120,

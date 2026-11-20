@@ -4,6 +4,7 @@ import { cpSync, existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from
 import { createRequire } from 'node:module'
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import type { LearningPlan, WorkbenchRequest } from '../shared/contracts'
+import { UI_SCALE_MAX, UI_SCALE_MIN, UI_SCALE_STEP, clampUiScale } from '../shared/defaults'
 import { AiService } from './services/ai'
 import { DatabaseService, localDateKeyOf } from './services/database'
 import { DiagnosticService } from './services/diagnostics'
@@ -103,6 +104,11 @@ if (testRuntime.dataDirOverride) {
   app.setPath('userData', testRuntime.dataDirOverride)
 }
 
+function applyWindowZoom(uiScale: number): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  mainWindow.webContents.setZoomFactor(clampUiScale(uiScale) / 100)
+}
+
 function createWindow(): void {
   mainWindow = new BrowserWindow({
     width: 1440,
@@ -120,7 +126,37 @@ function createWindow(): void {
       sandbox: true
     }
   })
-  mainWindow.once('ready-to-show', () => mainWindow?.show())
+  // 启动与每次页面加载完成时恢复持久化界面缩放
+  const restoreSavedZoom = (): void => {
+    if (!database) return
+    applyWindowZoom(database.getAppSettings().uiScale)
+  }
+  mainWindow.webContents.on('did-finish-load', restoreSavedZoom)
+  // 拦截 Ctrl/Cmd + / - / 0：直接走持久化 uiScale，避免与 Chromium 临时缩放失步
+  mainWindow.webContents.on('before-input-event', (event, input) => {
+    if (input.type !== 'keyDown' || input.alt || !(input.control || input.meta) || !database) return
+    let delta: number | 'reset' | undefined
+    if (input.key === '+' || input.key === '=' || input.code === 'NumpadAdd') delta = UI_SCALE_STEP
+    else if (input.key === '-' || input.key === '_' || input.code === 'NumpadSubtract')
+      delta = -UI_SCALE_STEP
+    else if (input.key === '0' || input.code === 'Numpad0') delta = 'reset'
+    if (delta === undefined) return
+    event.preventDefault()
+    const current = clampUiScale(database.getAppSettings().uiScale)
+    const next =
+      delta === 'reset'
+        ? 100
+        : Math.max(UI_SCALE_MIN, Math.min(UI_SCALE_MAX, Math.round((current + delta) / 5) * 5))
+    const saved = database.saveAppSettings({ uiScale: next })
+    applyWindowZoom(saved.uiScale)
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('workbench:settings-updated', saved)
+    }
+  })
+  mainWindow.once('ready-to-show', () => {
+    restoreSavedZoom()
+    mainWindow?.show()
+  })
   // 截图/路由/滚动断言注入：仅测试运行时（冒烟或 E2E）生效
   if (isTestRuntime && process.env.WORKBENCH_SMOKE_CAPTURE) {
     mainWindow.webContents.once('did-finish-load', () => {
@@ -628,8 +664,11 @@ async function initialize(): Promise<void> {
         return database!.listAiTrainingRecords()
       case 'settings.get':
         return database!.getAppSettings()
-      case 'settings.save':
-        return database!.saveAppSettings(request.params)
+      case 'settings.save': {
+        const saved = database!.saveAppSettings(request.params)
+        applyWindowZoom(saved.uiScale)
+        return saved
+      }
       case 'runtime.status':
         return diagnostics.runtimeStatus()
       case 'integration.get':

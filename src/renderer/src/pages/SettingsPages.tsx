@@ -18,6 +18,7 @@ import type {
   VaultIndexResult,
   VaultSnapshotInfo
 } from '@shared/contracts'
+import { UI_SCALE_PRESETS } from '@shared/defaults'
 import { formatBytes, formatFullDate, invoke } from '../api'
 import {
   EmptyState,
@@ -365,6 +366,14 @@ export function SettingsPage(): React.JSX.Element {
   const [showWarnings, setShowWarnings] = useState(false)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
+  // 快捷键（Ctrl +/-/0）在主进程修改界面缩放时同步表单显示
+  useEffect(() => {
+    if (data?.settings.uiScale !== undefined) {
+      setSettings((prev) =>
+        prev.uiScale === data.settings.uiScale ? prev : { ...prev, uiScale: data.settings.uiScale }
+      )
+    }
+  }, [data?.settings.uiScale])
   useEffect(() => {
     void invoke<BackupInfo[]>({ method: 'backup.list' }).then(setBackups)
     void invoke<VaultInfo[]>({ method: 'vault.list' }).then(setVaults)
@@ -601,6 +610,29 @@ export function SettingsPage(): React.JSX.Element {
                 <option value="system">跟随系统</option>
               </Select>
             </Field>
+            <Field label="界面缩放（Ctrl +/-/0）">
+              <Select
+                value={String(settings.uiScale ?? 100)}
+                onChange={(_, value) => {
+                  const nextScale = Number(value.value) || 100
+                  setSettings((prev) => ({ ...prev, uiScale: nextScale }))
+                  void updateSettings({ uiScale: nextScale })
+                }}
+              >
+                {!UI_SCALE_PRESETS.includes(
+                  (settings.uiScale ?? 100) as (typeof UI_SCALE_PRESETS)[number]
+                ) && (
+                  <option value={String(settings.uiScale)}>{settings.uiScale}%（自定义）</option>
+                )}
+                <option value="90">90%（紧凑）</option>
+                <option value="100">100%（默认）</option>
+                <option value="110">110%（适中）</option>
+                <option value="120">120%（推荐 · 大屏）</option>
+                <option value="130">130%（大号）</option>
+                <option value="140">140%（超大）</option>
+                <option value="150">150%（特大）</option>
+              </Select>
+            </Field>
             <Field label="每日目标题数">
               <Input
                 type="number"
@@ -634,6 +666,17 @@ export function SettingsPage(): React.JSX.Element {
                 }
               />
             </Field>
+            <Field label="保留备份数量">
+              <Input
+                type="number"
+                min={1}
+                max={100}
+                value={String(settings.backupRetention)}
+                onChange={(_, value) =>
+                  setSettings({ ...settings, backupRetention: Number(value.value) || 1 })
+                }
+              />
+            </Field>
           </div>
           <div className="data-row">
             <div>
@@ -655,17 +698,6 @@ export function SettingsPage(): React.JSX.Element {
               onChange={(_, value) => setSettings({ ...settings, autoBackup: value.checked })}
             />
           </div>
-          <Field label="保留备份数量">
-            <Input
-              type="number"
-              min={1}
-              max={100}
-              value={String(settings.backupRetention)}
-              onChange={(_, value) =>
-                setSettings({ ...settings, backupRetention: Number(value.value) || 1 })
-              }
-            />
-          </Field>
           <Button
             appearance="primary"
             style={{ marginTop: 16 }}

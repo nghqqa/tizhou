@@ -10,6 +10,7 @@ interface AppState {
   refreshDashboard: () => Promise<void>
   refreshVault: () => Promise<void>
   updateSettings: (patch: Partial<AppSettings>) => Promise<void>
+  syncSettings: (settings: AppSettings) => void
   clearError: () => void
 }
 
@@ -55,6 +56,11 @@ export const useAppStore = create<AppState>((set, get) => ({
     } catch (error) {
       set({ error: error instanceof Error ? error.message : '设置保存失败' })
     }
+  },
+  syncSettings(settings) {
+    const current = get().data
+    if (!current) return
+    set({ data: { ...current, settings } })
   },
   clearError() {
     set({ error: undefined })
