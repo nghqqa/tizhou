@@ -41,40 +41,7 @@ export function extractWordLimit(stem: string): EssayWordLimit | null {
   return null
 }
 
-export interface MarkdownHeading {
-  level: 2 | 3
-  text: string
-  index: number
-}
-
-/** 提取 Markdown 文档中的二级/三级标题用于目录跳转（自动忽略代码块内注释行） */
-export function extractMarkdownHeadings(markdown: string): MarkdownHeading[] {
-  if (!markdown) return []
-  const headings: MarkdownHeading[] = []
-  let inFence = false
-  let order = 0
-  for (const rawLine of markdown.split(/\r?\n/)) {
-    const line = rawLine.trim()
-    if (/^(`{3,}|~{3,})/.test(line)) {
-      inFence = !inFence
-      continue
-    }
-    if (inFence) continue
-    const match = line.match(/^(#{2,3})\s+(.+?)\s*#*$/)
-    if (!match) continue
-    const level = match[1]!.length as 2 | 3
-    const text = match[2]!
-      .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-      .replace(/[*_`~]/g, '')
-      .trim()
-    if (!text) continue
-    headings.push({ level, text, index: order })
-    order += 1
-  }
-  return headings
-}
-
-/** 在正文中查找关键词匹配片段（用于知识中心全文搜索预览） */
+/** 在正文中查找关键词匹配片段（用于知识中心与全局检索预览） */
 export function extractSearchSnippet(
   content: string,
   query: string,

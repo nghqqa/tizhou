@@ -357,6 +357,26 @@ export function ExamRunPage(): React.JSX.Element {
   const reading = useReadingTypography()
   const essayTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const mountedRef = useRef(true)
+  // 每题累计耗时（秒）与当前题目进入时间戳：切题、保存答案及交卷前实时累计，支撑复盘页模块耗时分析
+  const questionDurationsRef = useRef<Record<string, number>>({})
+  const timingAnchorRef = useRef<{ questionId: string; enteredAt: number } | null>(null)
+  const examRef = useRef<ExamSession | undefined>(undefined)
+  examRef.current = exam
+
+  function flushActiveQuestionDuration(questionId?: string): number {
+    const anchor = timingAnchorRef.current
+    const nowMs = Date.now()
+    if (anchor) {
+      const delta = Math.max(0, Math.round((nowMs - anchor.enteredAt) / 1000))
+      if (delta > 0) {
+        questionDurationsRef.current[anchor.questionId] =
+          (questionDurationsRef.current[anchor.questionId] ?? 0) + delta
+      }
+      timingAnchorRef.current = { questionId: anchor.questionId, enteredAt: nowMs }
+    }
+    return questionId ? (questionDurationsRef.current[questionId] ?? 0) : 0
+  }
+
   // 客观题答案保存控制器：串行化 + 同题去重 + 失败保留 + 交卷前 drain
   const answerSaveRef = useRef<ExamAnswerSaveController | null>(null)
   if (!answerSaveRef.current) {
@@ -368,7 +388,7 @@ export function ExamRunPage(): React.JSX.Element {
           answer: {
             questionId: request.questionId,
             answer: request.answer,
-            durationSeconds: 0
+            durationSeconds: questionDurationsRef.current[request.questionId] ?? 0
           }
         }
       })
@@ -386,7 +406,7 @@ export function ExamRunPage(): React.JSX.Element {
             answer: {
               questionId: save.questionId,
               answer: save.answer,
-              durationSeconds: 0
+              durationSeconds: questionDurationsRef.current[save.questionId] ?? 0
             }
           }
         })
@@ -414,6 +434,12 @@ export function ExamRunPage(): React.JSX.Element {
       .then((active) => {
         pruneStaleExamUncertainKeys(active?.id)
         if (!active) return
+        // 从持久化答案恢复已累计耗时，断点续答不丢耗时
+        const restoredDurations: Record<string, number> = {}
+        for (const [qId, ans] of Object.entries(active.answers)) {
+          restoredDurations[qId] = Math.max(0, Math.round(ans.durationSeconds ?? 0))
+        }
+        questionDurationsRef.current = restoredDurations
         setExam(active)
         setSeconds(remainingSeconds(active))
         try {
@@ -441,8 +467,34 @@ export function ExamRunPage(): React.JSX.Element {
   useEffect(() => {
     if (exam && seconds === 0 && !finishing) void finish()
   }, [seconds, exam?.id])
-  const answered = exam ? Object.keys(exam.answers).length : 0
+  const answered = exam
+    ? Object.values(exam.answers).filter((item) => item.answer.some((value) => value.trim())).length
+    : 0
   const current = questions[index]
+
+  // 切题时结算上一题停留耗时并切换计时锚点；若上一题已作答且有新增耗时则顺手持久化
+  useEffect(() => {
+    const nextId = current?.id
+    const prevAnchor = timingAnchorRef.current
+    const nowMs = Date.now()
+    if (prevAnchor && prevAnchor.questionId !== nextId) {
+      const delta = Math.max(0, Math.round((nowMs - prevAnchor.enteredAt) / 1000))
+      if (delta > 0) {
+        questionDurationsRef.current[prevAnchor.questionId] =
+          (questionDurationsRef.current[prevAnchor.questionId] ?? 0) + delta
+        const activeExam = examRef.current
+        const prevAnswer = activeExam?.answers[prevAnchor.questionId]
+        if (activeExam && prevAnswer?.answer.some((v) => v.trim())) {
+          answerSaveRef.current?.save({
+            examId: activeExam.id,
+            questionId: prevAnchor.questionId,
+            answer: prevAnswer.answer
+          })
+        }
+      }
+    }
+    timingAnchorRef.current = nextId ? { questionId: nextId, enteredAt: nowMs } : null
+  }, [current?.id])
   const currentAnswer =
     current && exam?.answers[current.id]?.answer ? exam.answers[current.id]!.answer : []
   const currentUncertain = current ? uncertainIds.includes(current.id) : false
@@ -530,12 +582,13 @@ export function ExamRunPage(): React.JSX.Element {
           ? currentAnswer.filter((item) => item !== key)
           : [...currentAnswer, key]
         : [key]
+    const durationSeconds = flushActiveQuestionDuration(current.id)
     // 乐观更新：用户意图立即生效（保存失败不再回滚——回滚会用旧快照覆盖更新的作答）
     setExam({
       ...exam,
       answers: {
         ...exam.answers,
-        [current.id]: { questionId: current.id, answer, durationSeconds: 0 }
+        [current.id]: { questionId: current.id, answer, durationSeconds }
       }
     })
     // 串行化保存队列：同题连续选择自动去重为最新一次，旧响应不会覆盖新状态
@@ -547,6 +600,21 @@ export function ExamRunPage(): React.JSX.Element {
   }
   async function finish(): Promise<void> {
     if (!exam) return
+    // 交卷前结算当前题耗时并同步写入已作答记录
+    if (current) {
+      const finalDuration = flushActiveQuestionDuration(current.id)
+      const existingAns = exam.answers[current.id]
+      if (
+        existingAns?.answer.some((v) => v.trim()) &&
+        finalDuration !== existingAns.durationSeconds
+      ) {
+        answerSaveRef.current?.save({
+          examId: exam.id,
+          questionId: current.id,
+          answer: existingAns.answer
+        })
+      }
+    }
     // 交卷前 flush pending 并检查保存失败
     if (essayTimerRef.current) {
       clearTimeout(essayTimerRef.current)
@@ -579,6 +647,7 @@ export function ExamRunPage(): React.JSX.Element {
     }
     setSaveBlocked(false)
     setFinishing(true)
+    setConfirmOpen(false)
     setError('')
     try {
       await invoke({ method: 'exam.finish', params: { examId: exam.id } })
@@ -593,7 +662,6 @@ export function ExamRunPage(): React.JSX.Element {
       setError(cause instanceof Error ? cause.message : '交卷失败')
     } finally {
       setFinishing(false)
-      setConfirmOpen(false)
     }
   }
 

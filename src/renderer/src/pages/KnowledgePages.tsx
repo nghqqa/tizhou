@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Field, Input } from '@fluentui/react-components'
 import { MagnifyingGlassIcon } from '@phosphor-icons/react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import type { KnowledgeDocument, Subject } from '@shared/contracts'
 import { invoke } from '../api'
 import { MarkdownContent } from '../components/MarkdownContent'
@@ -16,18 +16,25 @@ interface KnowledgePageProps {
 
 export function KnowledgePage({ subject, kind }: KnowledgePageProps): React.JSX.Element {
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  const requestedDocId = searchParams.get('docId') ?? ''
   const [documents, setDocuments] = useState<KnowledgeDocument[]>()
-  const [selectedId, setSelectedId] = useState('')
+  const [selectedId, setSelectedId] = useState(requestedDocId)
   const [query, setQuery] = useState('')
   const [error, setError] = useState('')
   const reading = useReadingTypography()
+  useEffect(() => {
+    if (requestedDocId) setSelectedId(requestedDocId)
+  }, [requestedDocId])
   useEffect(() => {
     setDocuments(undefined)
     setError('')
     void invoke<KnowledgeDocument[]>({ method: 'documents.list', params: { subject, kind } })
       .then((items) => {
         setDocuments(items)
-        setSelectedId(items[0]?.id ?? '')
+        setSelectedId((prev) =>
+          prev && items.some((item) => item.id === prev) ? prev : (items[0]?.id ?? '')
+        )
       })
       .catch((cause) => setError(cause instanceof Error ? cause.message : '文档读取失败'))
   }, [subject, kind])

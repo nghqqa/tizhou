@@ -21,6 +21,7 @@ import {
   HouseIcon,
   LightbulbFilamentIcon,
   ListChecksIcon,
+  MagnifyingGlassIcon,
   MoonIcon,
   NotePencilIcon,
   RobotIcon,
@@ -36,6 +37,7 @@ import { darkTheme, lightTheme } from './theme'
 import { useAppStore } from './store'
 import { invoke } from './api'
 import { LoadingState } from './components/ui'
+import { CommandPalette } from './components/CommandPalette'
 import { RouteErrorBoundary } from './components/RouteErrorBoundary'
 
 const DashboardPage = lazy(() =>
@@ -144,10 +146,20 @@ const groups: Array<{ label: string; items: NavItem[] }> = [
 ]
 
 function AppShell(): React.JSX.Element {
-  const { data, loading, error, initialize, refreshVault, clearError, updateSettings } =
-    useAppStore()
+  const {
+    data,
+    loading,
+    error,
+    toast,
+    initialize,
+    refreshVault,
+    clearError,
+    clearToast,
+    updateSettings
+  } = useAppStore()
   const location = useLocation()
   const navigate = useNavigate()
+  const [paletteOpen, setPaletteOpen] = useState(false)
   const isDark =
     data?.settings.theme === 'light'
       ? false
@@ -158,6 +170,17 @@ function AppShell(): React.JSX.Element {
   const toggleTheme = (): void => {
     void updateSettings({ theme: isDark ? 'light' : 'dark' })
   }
+
+  useEffect(() => {
+    const onGlobalKeyDown = (event: KeyboardEvent): void => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault()
+        setPaletteOpen((value) => !value)
+      }
+    }
+    window.addEventListener('keydown', onGlobalKeyDown)
+    return () => window.removeEventListener('keydown', onGlobalKeyDown)
+  }, [])
 
   const updateBusyRef = useRef(false)
 
@@ -224,6 +247,10 @@ function AppShell(): React.JSX.Element {
   }, [refreshVault])
   useEffect(() => {
     document.querySelector('main')?.scrollTo({ top: 0 })
+    // Fluent UI Dialog 在确认并立即触发路由卸载时可能残留 #root[aria-hidden="true"]，切页时兜底清理
+    if (!document.querySelector('[role="dialog"]')) {
+      document.getElementById('root')?.removeAttribute('aria-hidden')
+    }
   }, [location.pathname])
 
   if (loading && !data) {
@@ -261,6 +288,16 @@ function AppShell(): React.JSX.Element {
             <span>题海行舟 · 终将上岸</span>
           </div>
         </div>
+        <button
+          type="button"
+          className="sidebar-search-btn"
+          title="全局快捷检索（Ctrl+K）"
+          onClick={() => setPaletteOpen(true)}
+        >
+          <MagnifyingGlassIcon size={14} aria-hidden />
+          <span>快捷检索</span>
+          <kbd className="command-kbd">Ctrl+K</kbd>
+        </button>
         <nav className="main-nav" aria-label="主导航">
           {groups.map((group) => (
             <div className="nav-group" key={group.label}>
@@ -372,7 +409,17 @@ function AppShell(): React.JSX.Element {
             </Routes>
           </RouteErrorBoundary>
         </Suspense>
+        {toast && (
+          <div className="global-toast" role="status" aria-live="polite" onClick={clearToast}>
+            {toast}
+          </div>
+        )}
       </main>
+      <CommandPalette
+        open={paletteOpen}
+        onClose={() => setPaletteOpen(false)}
+        onToggleTheme={toggleTheme}
+      />
     </div>
   )
 }

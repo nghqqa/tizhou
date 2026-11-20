@@ -11,15 +11,19 @@ import {
 } from '@fluentui/react-components'
 import {
   ArrowRightIcon,
+  ChatCircleTextIcon,
   CheckCircleIcon,
   PaperPlaneTiltIcon,
+  PlusIcon,
   SparkleIcon,
+  TrashIcon,
   WarningCircleIcon
 } from '@phosphor-icons/react'
 import type {
   AiAskResult,
   AiConfigInput,
   AiConfigView,
+  AiConversation,
   AiMessage,
   AiProviderInfo,
   AiTrainingRecord,
@@ -29,9 +33,9 @@ import type {
   VlmConfigView
 } from '@shared/contracts'
 import { FEATURE_PROMPTS, taskDataEnvelope } from '@shared/prompts'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { MarkdownContent } from '../components/MarkdownContent'
-import { formatFullDate, invoke } from '../api'
+import { formatDate, formatFullDate, invoke } from '../api'
 import {
   EmptyState,
   ErrorState,
@@ -46,53 +50,202 @@ function canUseModel(config: AiConfigView): boolean {
   return config.hasApiKey || config.provider === 'ollama' || config.provider === 'lmstudio'
 }
 
+function buildQuestionContextPrompt(question: Question): string {
+  return taskDataEnvelope('关联追问原题背景', {
+    category: question.category,
+    subject: question.subject,
+    type: question.type,
+    material: question.material ?? '',
+    stem: question.stem,
+    options: question.options.map((opt) => `${opt.key}. ${opt.text}`),
+    referenceAnswer: question.answer,
+    referenceExplanation: question.explanation
+  })
+}
+
 export function AiPage(): React.JSX.Element {
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const requestedQuestionId = searchParams.get('questionId') ?? ''
   const ai = useAppStore((state) => state.data!.ai)
+  const [conversations, setConversations] = useState<AiConversation[]>([])
+  const [activeConvId, setActiveConvId] = useState<string | undefined>(undefined)
+  const [activeTitle, setActiveTitle] = useState('新对话')
   const [messages, setMessages] = useState<AiMessage[]>([])
+  const [contextQuestion, setContextQuestion] = useState<Question | null>(null)
+  const [showContextDetail, setShowContextDetail] = useState(false)
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const bottomRef = useRef<HTMLDivElement>(null)
+  const activeConvIdRef = useRef<string | undefined>(activeConvId)
+  activeConvIdRef.current = activeConvId
+
+  // 挂载时加载本地持久化历史会话（未指定带题追问时自动恢复最近一次对话）
+  useEffect(() => {
+    let cancelled = false
+    void invoke<AiConversation[]>({ method: 'ai.conversations.list', params: { limit: 50 } })
+      .then((list) => {
+        if (cancelled) return
+        setConversations(list)
+        if (!requestedQuestionId && list[0]) {
+          const latest = list[0]
+          setActiveConvId(latest.id)
+          setActiveTitle(latest.title)
+          setMessages(latest.messages)
+          if (latest.questionId) {
+            void invoke<Question | undefined>({
+              method: 'questions.get',
+              params: { id: latest.questionId }
+            })
+              .then((q) => {
+                if (!cancelled) setContextQuestion(q ?? null)
+              })
+              .catch(() => {
+                if (!cancelled) setContextQuestion(null)
+              })
+          }
+        }
+      })
+      .catch(() => {
+        /* 历史加载失败不阻塞新对话 */
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  // 响应从练习页 / 错题本 / 模考复盘页带入的 ?questionId=xxx
+  useEffect(() => {
+    if (!requestedQuestionId) return
+    let cancelled = false
+    void invoke<Question | undefined>({
+      method: 'questions.get',
+      params: { id: requestedQuestionId }
+    })
+      .then((q) => {
+        if (cancelled || !q) return
+        setActiveConvId(undefined)
+        const snippet = q.stem.replace(/\s+/g, ' ').trim().slice(0, 22)
+        setActiveTitle(`${q.category} · ${snippet || '带题追问'}`)
+        setMessages([])
+        setContextQuestion(q)
+        setShowContextDetail(true)
+        setInput('请帮我拆解这道题的解题思路和最容易掉进去的干扰项陷阱。')
+        setSearchParams({}, { replace: true })
+      })
+      .catch(() => {
+        /* 忽略加载失败 */
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [requestedQuestionId, setSearchParams])
+
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, busy])
+
+  function startNewConversation(): void {
+    if (busy) return
+    setActiveConvId(undefined)
+    setActiveTitle('新对话')
+    setMessages([])
+    setContextQuestion(null)
+    setShowContextDetail(false)
+    setError('')
+  }
+
+  function selectConversation(conv: AiConversation): void {
+    if (busy) return
+    setActiveConvId(conv.id)
+    setActiveTitle(conv.title)
+    setMessages(conv.messages)
+    setError('')
+    setShowContextDetail(false)
+    if (conv.questionId) {
+      void invoke<Question | undefined>({
+        method: 'questions.get',
+        params: { id: conv.questionId }
+      })
+        .then((q) => {
+          if (activeConvIdRef.current === conv.id) setContextQuestion(q ?? null)
+        })
+        .catch(() => {
+          if (activeConvIdRef.current === conv.id) setContextQuestion(null)
+        })
+    } else {
+      setContextQuestion(null)
+    }
+  }
+
+  async function removeConversation(convId: string, event: React.MouseEvent): Promise<void> {
+    event.stopPropagation()
+    if (busy) return
+    try {
+      await invoke({ method: 'ai.conversations.delete', params: { id: convId } })
+      setConversations((prev) => prev.filter((item) => item.id !== convId))
+      if (activeConvId === convId) {
+        startNewConversation()
+      }
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : '删除对话失败')
+    }
+  }
+
   async function send(): Promise<void> {
     const content = input.trim()
     if (!content || busy) return
     const userMessage: AiMessage = { role: 'user', content }
     const next = [...messages, userMessage]
+    const convTitle =
+      messages.length === 0 && activeTitle === '新对话' ? content.slice(0, 28) : activeTitle
     setMessages(next)
+    setActiveTitle(convTitle)
     setInput('')
     setBusy(true)
     setError('')
     try {
+      const systemMessages: AiMessage[] = [{ role: 'system', content: FEATURE_PROMPTS.chat }]
+      if (contextQuestion) {
+        systemMessages.push({
+          role: 'system',
+          content: `用户正在围绕以下真题向你追问，请结合题干、选项、参考答案与解析精准作答：\n\n${buildQuestionContextPrompt(contextQuestion)}`
+        })
+      }
       const response = await invoke<AiAskResult>({
         method: 'ai.ask',
         params: {
           purpose: 'chat',
-          messages: [
-            {
-              role: 'system',
-              content: FEATURE_PROMPTS.chat
-            },
-            ...next
-          ]
+          messages: [...systemMessages, ...next]
         }
       })
-      setMessages([...next, { role: 'assistant', content: response.content }])
+      const completed: AiMessage[] = [...next, { role: 'assistant', content: response.content }]
+      setMessages(completed)
+      const saved = await invoke<AiConversation>({
+        method: 'ai.conversations.save',
+        params: {
+          id: activeConvId,
+          title: convTitle,
+          questionId: contextQuestion?.id,
+          messages: completed
+        }
+      })
+      setActiveConvId(saved.id)
+      setConversations((prev) => [saved, ...prev.filter((item) => item.id !== saved.id)])
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'AI 请求失败')
     } finally {
       setBusy(false)
     }
   }
+
   return (
     <div className="page">
       <PageHeader
         eyebrow="提升 · AI 助教"
         title="AI 助教"
-        description="模型请求由主进程发出，API Key 只保存在系统加密存储中，不进入页面状态和日志。"
+        description="会话自动持久化到本地数据库，支持多轮追问与从刷题/错题页直接带题进入讨论。"
         actions={
           <span className="pill">
             <StatusDot status={ai.verified ? 'ok' : ai.hasApiKey ? 'warning' : 'neutral'} />{' '}
@@ -110,59 +263,180 @@ export function AiPage(): React.JSX.Element {
       ) : (
         <>
           {error && <ErrorState message={error} />}
-          <Section className="chat-shell">
-            <div className="chat-messages">
-              {!messages.length && (
-                <div className="empty-state">
-                  <SparkleIcon size={30} className="accent" />
-                  <h3>从一道具体问题开始</h3>
-                  <p>可以让我解释错题、比较方法，或把知识点整理成复习清单。</p>
-                  <div className="button-row">
-                    <Button onClick={() => setInput('请帮我总结资料分析中增长率题目的常见陷阱。')}>
-                      增长率陷阱
-                    </Button>
-                    <Button onClick={() => setInput('如何区分言语理解中的主旨项和对策项？')}>
-                      主旨与对策
-                    </Button>
-                  </div>
-                </div>
-              )}
-              {messages.map((message, index) => (
-                <div className={`chat-message ${message.role}`} key={`${message.role}-${index}`}>
-                  {message.role === 'assistant' ? (
-                    <MarkdownContent content={message.content} />
-                  ) : (
-                    message.content
-                  )}
-                </div>
-              ))}
-              {busy && (
-                <div className="chat-message">
-                  <Spinner size="tiny" label="助教正在整理" />
-                </div>
-              )}
-              <div ref={bottomRef} />
-            </div>
-            <div className="chat-compose">
-              <Textarea
-                value={input}
-                resize="none"
-                placeholder="输入你的学习问题，Ctrl+Enter 发送"
-                onChange={(_, data) => setInput(data.value)}
-                onKeyDown={(event) => {
-                  if (event.ctrlKey && event.key === 'Enter') void send()
-                }}
-              />
+          <div className="ai-chat-layout">
+            <aside className="ai-conv-sidebar">
               <Button
                 appearance="primary"
-                icon={<PaperPlaneTiltIcon />}
-                disabled={!input.trim() || busy}
-                onClick={() => void send()}
+                size="small"
+                icon={<PlusIcon />}
+                disabled={busy}
+                onClick={startNewConversation}
               >
-                发送
+                新建对话
               </Button>
-            </div>
-          </Section>
+              <div className="ai-conv-list">
+                {conversations.length === 0 ? (
+                  <p className="muted" style={{ fontSize: 12, margin: '8px 4px' }}>
+                    发送第一条消息后自动保存历史记录。
+                  </p>
+                ) : (
+                  conversations.map((conv) => (
+                    <div
+                      key={conv.id}
+                      role="button"
+                      tabIndex={0}
+                      className={`ai-conv-item${conv.id === activeConvId ? ' is-active' : ''}`}
+                      onClick={() => selectConversation(conv)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault()
+                          selectConversation(conv)
+                        }
+                      }}
+                    >
+                      <div className="ai-conv-item-main">
+                        <ChatCircleTextIcon size={14} className="muted" />
+                        <div className="ai-conv-item-text">
+                          <strong>{conv.title}</strong>
+                          <small>
+                            {conv.messages.length} 条 · {formatDate(conv.updatedAt)}
+                          </small>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        className="ai-conv-del"
+                        aria-label="删除对话"
+                        title="删除对话"
+                        onClick={(event) => void removeConversation(conv.id, event)}
+                      >
+                        <TrashIcon size={13} />
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+            </aside>
+            <Section className="chat-shell">
+              {contextQuestion && (
+                <div className="ai-context-card">
+                  <div className="ai-context-head">
+                    <span>
+                      <strong>关联原题</strong> · {contextQuestion.category}
+                      {contextQuestion.year ? ` (${contextQuestion.year})` : ''}
+                    </span>
+                    <div className="button-row">
+                      <Button
+                        size="small"
+                        appearance="subtle"
+                        onClick={() => setShowContextDetail((v) => !v)}
+                      >
+                        {showContextDetail ? '收起题面' : '展开题面'}
+                      </Button>
+                      {!activeConvId && (
+                        <Button
+                          size="small"
+                          appearance="subtle"
+                          onClick={() => setContextQuestion(null)}
+                        >
+                          取消关联
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                  {showContextDetail && (
+                    <div className="ai-context-body">
+                      <MarkdownContent
+                        content={contextQuestion.stem}
+                        sourceFilePath={contextQuestion.filePath}
+                      />
+                      {contextQuestion.options.length > 0 && (
+                        <ul className="ai-context-options">
+                          {contextQuestion.options.map((opt) => (
+                            <li key={opt.key}>
+                              <strong>{opt.key}.</strong> {opt.text}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                      <p className="muted" style={{ margin: '6px 0 0', fontSize: 12 }}>
+                        参考答案：{contextQuestion.answer.join('、') || '见解析'}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
+              <div className="chat-messages">
+                {!messages.length && (
+                  <div className="empty-state">
+                    <SparkleIcon size={30} className="accent" />
+                    <h3>
+                      {contextQuestion ? '已载入原题背景，直接开始追问' : '从一道具体问题开始'}
+                    </h3>
+                    <p>可以让我解释错题、比较方法，或把知识点整理成复习清单。</p>
+                    <div className="button-row">
+                      <Button
+                        onClick={() =>
+                          setInput(
+                            contextQuestion
+                              ? '为什么正确选项优于最容易混淆的干扰项？'
+                              : '请帮我总结资料分析中增长率题目的常见陷阱。'
+                          )
+                        }
+                      >
+                        {contextQuestion ? '对比干扰项' : '增长率陷阱'}
+                      </Button>
+                      <Button
+                        onClick={() =>
+                          setInput(
+                            contextQuestion
+                              ? '把这道题背后的考点和同类秒杀思路总结成 3 条口诀。'
+                              : '如何区分言语理解中的主旨项和对策项？'
+                          )
+                        }
+                      >
+                        {contextQuestion ? '提炼解题口诀' : '主旨与对策'}
+                      </Button>
+                    </div>
+                  </div>
+                )}
+                {messages.map((message, index) => (
+                  <div className={`chat-message ${message.role}`} key={`${message.role}-${index}`}>
+                    {message.role === 'assistant' ? (
+                      <MarkdownContent content={message.content} />
+                    ) : (
+                      message.content
+                    )}
+                  </div>
+                ))}
+                {busy && (
+                  <div className="chat-message">
+                    <Spinner size="tiny" label="助教正在整理" />
+                  </div>
+                )}
+                <div ref={bottomRef} />
+              </div>
+              <div className="chat-compose">
+                <Textarea
+                  value={input}
+                  resize="none"
+                  placeholder="输入你的学习问题，Ctrl+Enter 发送"
+                  onChange={(_, data) => setInput(data.value)}
+                  onKeyDown={(event) => {
+                    if (event.ctrlKey && event.key === 'Enter') void send()
+                  }}
+                />
+                <Button
+                  appearance="primary"
+                  icon={<PaperPlaneTiltIcon />}
+                  disabled={!input.trim() || busy}
+                  onClick={() => void send()}
+                >
+                  发送
+                </Button>
+              </div>
+            </Section>
+          </div>
         </>
       )}
     </div>

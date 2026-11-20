@@ -603,4 +603,60 @@ describe('DatabaseService local-date statistics and exam edge cases', () => {
     expect(database.saveAppSettings({ examGoalDate: '2026-02-31' }).examGoalDate).toBe('')
     expect(database.saveAppSettings({ examGoalDate: '2026-13-45' }).examGoalDate).toBe('')
   })
+
+  it('getQuestionsByIds / getQuestionsUserMeta / setWrongQuestionCause 与 AI 会话持久化闭环', () => {
+    const [q1, q2, q3] = database.listQuestions()
+    // 保序去重，跳过不存在的 ID
+    const byIds = database.getQuestionsByIds([q3!.id, 'not-exist', q1!.id, q3!.id])
+    expect(byIds.map((q) => q.id)).toEqual([q3!.id, q1!.id])
+
+    // 批量元数据 + 更新错因
+    database.submitAttempt({
+      questionId: q1!.id,
+      answer: ['Z'],
+      durationSeconds: 18,
+      mode: 'exam'
+    })
+    database.setFavorite(q1!.id, true)
+    database.saveNote(q1!.id, '模考复盘笔记')
+    database.setWrongQuestionCause(q1!.id, '时间压力')
+
+    const meta = database.getQuestionsUserMeta([q1!.id, q2!.id])
+    expect(meta[q1!.id]).toEqual({
+      favorite: true,
+      note: '模考复盘笔记',
+      wrongCause: '时间压力'
+    })
+    expect(meta[q2!.id]).toEqual({ favorite: false, note: '' })
+
+    // AI 多会话持久化 CRUD 及 resetLearningData 清理
+    const conv = database.saveAiConversation({
+      title: '资料分析追问',
+      questionId: q1!.id,
+      messages: [
+        { role: 'user', content: '为什么选 A？' },
+        { role: 'assistant', content: '因为基期量公式...' }
+      ]
+    })
+    expect(conv.id).toBeTruthy()
+    const updated = database.saveAiConversation({
+      id: conv.id,
+      title: '资料分析追问',
+      messages: [...conv.messages, { role: 'user', content: '能再给个速算吗？' }]
+    })
+    expect(updated.questionId).toBe(q1!.id)
+    expect(updated.messages).toHaveLength(3)
+    expect(database.listAiConversations()).toHaveLength(1)
+
+    database.deleteAiConversation(conv.id)
+    expect(database.listAiConversations()).toHaveLength(0)
+
+    database.saveAiConversation({
+      title: '待重置会话',
+      messages: [{ role: 'user', content: 'hi' }]
+    })
+    expect(database.listAiConversations()).toHaveLength(1)
+    database.resetLearningData()
+    expect(database.listAiConversations()).toHaveLength(0)
+  })
 })

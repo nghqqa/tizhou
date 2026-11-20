@@ -95,6 +95,9 @@ export class StudyService {
   ) {}
 
   selectPractice(selection: PracticeSelection): Question[] {
+    if (selection.questionIds?.length) {
+      return this.database.getQuestionsByIds(selection.questionIds)
+    }
     const count = clamp(Math.round(selection.count), 1, 100)
     if (selection.mode === 'review')
       return this.database.getDueReviews(count).map((item) => item.question)

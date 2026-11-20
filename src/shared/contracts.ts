@@ -319,6 +319,8 @@ export interface PracticeSelection {
   filter?: QuestionFilter
   count: number
   feedbackMode?: 'immediate' | 'summary'
+  /** 指定题号列表直达练习（用于模考错题重刷、全局检索直达单题） */
+  questionIds?: string[]
 }
 
 export interface PracticeSession {
@@ -610,6 +612,31 @@ export interface AiMessage {
   images?: AiImageInput[]
 }
 
+export interface AiConversation {
+  id: string
+  title: string
+  questionId?: string
+  messages: AiMessage[]
+  createdAt: string
+  updatedAt: string
+}
+
+export interface QuestionUserMeta {
+  favorite: boolean
+  note: string
+  wrongCause?: string
+}
+
+export interface QuestionLibraryExportParams {
+  tab: 'wrong' | 'favorite' | 'notes'
+  category?: string
+  wrongCause?: string
+  query?: string
+  includeAnswers: boolean
+  includeNotes: boolean
+  format: 'markdown' | 'html'
+}
+
 export interface AiAskInput {
   messages: AiMessage[]
   purpose: 'chat' | 'explain' | 'evaluate' | 'variant' | 'plan' | 'knowledge'
@@ -826,6 +853,8 @@ export type WorkbenchRequest =
       params: { subject?: Subject | 'common'; kind?: KnowledgeDocument['kind']; query?: string }
     }
   | { method: 'questions.get'; params: { id: string } }
+  | { method: 'questions.userMeta'; params: { questionIds: string[] } }
+  | { method: 'wrongQuestion.setCause'; params: { questionId: string; wrongCause: string } }
   | {
       method: 'questions.library'
       params: {
@@ -836,6 +865,7 @@ export type WorkbenchRequest =
         limit?: number
       }
     }
+  | { method: 'questions.library.export'; params: QuestionLibraryExportParams }
   | { method: 'practice.select'; params: PracticeSelection }
   | { method: 'practice.session.start'; params: PracticeSelection }
   | { method: 'practice.session.active'; params: { mode: 'practice' | 'review' } }
@@ -896,6 +926,12 @@ export type WorkbenchRequest =
   | { method: 'ai.models.discover'; params?: undefined }
   | { method: 'ai.test'; params?: undefined }
   | { method: 'ai.ask'; params: AiAskInput }
+  | { method: 'ai.conversations.list'; params?: { limit?: number } }
+  | {
+      method: 'ai.conversations.save'
+      params: { id?: string; title: string; questionId?: string; messages: AiMessage[] }
+    }
+  | { method: 'ai.conversations.delete'; params: { id: string } }
   | { method: 'aiTraining.record'; params: Omit<AiTrainingRecord, 'id' | 'correct' | 'createdAt'> }
   | { method: 'aiTraining.history'; params?: undefined }
   | { method: 'settings.get'; params?: undefined }

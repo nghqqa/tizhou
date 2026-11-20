@@ -1,12 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import {
   computeExamCountdown,
-  extractMarkdownHeadings,
   extractSearchSnippet,
   extractWordLimit
 } from '../src/renderer/src/services/study-helpers'
 
-describe('study-helpers（申论字数识别、文档目录/正文检索、考试倒计时）', () => {
+describe('study-helpers（申论字数识别、正文检索、考试倒计时）', () => {
   it('extractWordLimit 准确识别常见申论字数要求格式', () => {
     expect(extractWordLimit('要求：全面、准确、有条理。不超过200字。')).toEqual({
       max: 200,
@@ -51,24 +50,6 @@ describe('study-helpers（申论字数识别、文档目录/正文检索、考�
       label: '约 500 字'
     })
     expect(extractWordLimit('请概括该社区治理做法的主要特点。')).toBeNull()
-  })
-
-  it('extractMarkdownHeadings 提取 H2/H3 并忽略代码块中的注释井号', () => {
-    const md = [
-      '# 一级主标题',
-      '## 第一部分：核心原则',
-      '正文内容',
-      '```python',
-      '## 代码块内不是标题',
-      '```',
-      '### 1.1 **具体步骤**',
-      '## [第二部分](https://example.com) ##'
-    ].join('\n')
-    expect(extractMarkdownHeadings(md)).toEqual([
-      { level: 2, text: '第一部分：核心原则', index: 0 },
-      { level: 3, text: '1.1 具体步骤', index: 1 },
-      { level: 2, text: '第二部分', index: 2 }
-    ])
   })
 
   it('extractSearchSnippet 返回正文命中上下文片段', () => {

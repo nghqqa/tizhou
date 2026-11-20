@@ -1,18 +1,24 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Button, Select } from '@fluentui/react-components'
+import { Button, Field, Select, Textarea } from '@fluentui/react-components'
 import {
   ArrowLeftIcon,
+  BookmarkSimpleIcon,
   CalendarCheckIcon,
   ChartLineUpIcon,
   CheckCircleIcon,
-  ExamIcon
+  ExamIcon,
+  NotePencilIcon,
+  RobotIcon,
+  TargetIcon
 } from '@phosphor-icons/react'
 import { useNavigate, useParams } from 'react-router-dom'
-import type { ExamSession, Question } from '@shared/contracts'
+import type { ExamSession, PracticeSession, Question, QuestionUserMeta } from '@shared/contracts'
 import { formatFullDate, invoke } from '../api'
 import { MarkdownContent } from '../components/MarkdownContent'
 import { OptionContent } from '../components/OptionContent'
+import { ReadingTypographyBar, useReadingTypography } from '../components/ReadingTypographyControl'
 import { EmptyState, ErrorState, LoadingState, Section } from '../components/ui'
+import { useAppStore } from '../store'
 
 /** 与交卷判分同口径：去空格、大写、去重、排序后比较 */
 function isAnswerCorrect(question: Question, answer: string[]): boolean {
@@ -24,70 +30,232 @@ function isAnswerCorrect(question: Question, answer: string[]): boolean {
   )
 }
 
+function formatDurationBrief(seconds: number): string {
+  if (seconds <= 0) return '—'
+  const mins = Math.floor(seconds / 60)
+  const secs = seconds % 60
+  return mins > 0 ? `${mins}分${secs}秒` : `${secs}秒`
+}
+
 type ReviewFilter = 'all' | 'wrong-unanswered'
+
+const WRONG_CAUSE_OPTIONS = [
+  '知识缺口',
+  '概念混淆',
+  '审题失误',
+  '计算失误',
+  '时间压力',
+  '猜测',
+  '未知'
+]
 
 export function ExamResultPage(): React.JSX.Element {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const showToast = useAppStore((state) => state.showToast)
+  const reading = useReadingTypography()
   const [exam, setExam] = useState<ExamSession>()
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState<ReviewFilter>('all')
+  const [userMeta, setUserMeta] = useState<Record<string, QuestionUserMeta>>({})
+  const [noteDrafts, setNoteDrafts] = useState<Record<string, string>>({})
+  const [openNoteIds, setOpenNoteIds] = useState<Record<string, boolean>>({})
+  const [savingNoteId, setSavingNoteId] = useState('')
+  const [redoBusy, setRedoBusy] = useState(false)
 
   useEffect(() => {
     if (!id) return
+    let cancelled = false
     setLoading(true)
     void invoke<ExamSession | null>({ method: 'exam.get', params: { examId: id } })
       .then((result) => {
+        if (cancelled) return
         if (!result) {
           setError('未找到该场模考记录')
           return
         }
         setExam(result)
+        void invoke<Record<string, QuestionUserMeta>>({
+          method: 'questions.userMeta',
+          params: { questionIds: result.questionIds }
+        })
+          .then((meta) => {
+            if (cancelled) return
+            setUserMeta(meta)
+            const drafts: Record<string, string> = {}
+            for (const [qId, item] of Object.entries(meta)) {
+              drafts[qId] = item.note
+            }
+            setNoteDrafts(drafts)
+          })
+          .catch(() => {
+            /* 元数据拉取失败不阻塞复盘主视图 */
+          })
       })
-      .catch((cause) => setError(cause instanceof Error ? cause.message : '读取模考结果失败'))
-      .finally(() => setLoading(false))
+      .catch((cause) => {
+        if (!cancelled) setError(cause instanceof Error ? cause.message : '读取模考结果失败')
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
   }, [id])
 
-  /** 逐题复盘条目：快照 + 作答 + 判分（与交卷口径一致，未作答按错误计） */
+  /** 逐题复盘条目：快照 + 作答 + 判分 + 单题耗时（与交卷口径一致，未作答按错误计） */
   const reviewItems = useMemo(() => {
     if (!exam) return []
     return exam.questionIds.flatMap((questionId, index) => {
       const snapshot = exam.questionSnapshots[questionId]
       if (!snapshot) return []
-      const userAnswer = exam.answers[questionId]?.answer ?? []
+      const answerRec = exam.answers[questionId]
+      const userAnswer = answerRec?.answer ?? []
+      const answered = userAnswer.some((v) => v.trim())
       return [
         {
           index: index + 1,
           question: snapshot,
           userAnswer,
-          answered: userAnswer.length > 0,
-          correct: isAnswerCorrect(snapshot, userAnswer)
+          answered,
+          correct: isAnswerCorrect(snapshot, userAnswer),
+          durationSeconds: Math.max(0, Math.round(answerRec?.durationSeconds ?? 0))
         }
       ]
     })
   }, [exam])
 
-  /** 各模块（category）正确率分布 */
+  /** 各模块（category）正确率与耗时分布 */
   const categoryStats = useMemo(() => {
-    const byCategory = new Map<string, { attempts: number; correct: number }>()
+    const byCategory = new Map<
+      string,
+      { attempts: number; correct: number; totalDuration: number; timedCount: number }
+    >()
     for (const item of reviewItems) {
-      const entry = byCategory.get(item.question.category) ?? { attempts: 0, correct: 0 }
+      const entry = byCategory.get(item.question.category) ?? {
+        attempts: 0,
+        correct: 0,
+        totalDuration: 0,
+        timedCount: 0
+      }
       entry.attempts += 1
       if (item.correct) entry.correct += 1
+      if (item.durationSeconds > 0) {
+        entry.totalDuration += item.durationSeconds
+        entry.timedCount += 1
+      }
       byCategory.set(item.question.category, entry)
     }
     return [...byCategory.entries()]
       .map(([category, stat]) => ({
         category,
-        ...stat,
-        accuracy: stat.attempts ? Math.round((stat.correct / stat.attempts) * 100) : 0
+        attempts: stat.attempts,
+        correct: stat.correct,
+        accuracy: stat.attempts ? Math.round((stat.correct / stat.attempts) * 100) : 0,
+        totalDuration: stat.totalDuration,
+        avgDuration: stat.timedCount ? Math.round(stat.totalDuration / stat.timedCount) : 0
       }))
       .sort((a, b) => a.accuracy - b.accuracy || b.attempts - a.attempts)
   }, [reviewItems])
 
+  const wrongIds = useMemo(
+    () => reviewItems.filter((item) => !item.correct).map((item) => item.question.id),
+    [reviewItems]
+  )
+
   const filteredItems =
     filter === 'wrong-unanswered' ? reviewItems.filter((item) => !item.correct) : reviewItems
+
+  async function toggleFavorite(questionId: string): Promise<void> {
+    const currentFav = userMeta[questionId]?.favorite ?? false
+    const nextFav = !currentFav
+    try {
+      await invoke({ method: 'favorite.set', params: { questionId, favorite: nextFav } })
+      setUserMeta((prev) => ({
+        ...prev,
+        [questionId]: {
+          favorite: nextFav,
+          note: prev[questionId]?.note ?? '',
+          wrongCause: prev[questionId]?.wrongCause
+        }
+      }))
+    } catch (cause) {
+      showToast(cause instanceof Error ? cause.message : '收藏更新失败')
+    }
+  }
+
+  async function updateWrongCause(questionId: string, cause: string): Promise<void> {
+    try {
+      await invoke({ method: 'wrongQuestion.setCause', params: { questionId, wrongCause: cause } })
+      setUserMeta((prev) => ({
+        ...prev,
+        [questionId]: {
+          favorite: prev[questionId]?.favorite ?? false,
+          note: prev[questionId]?.note ?? '',
+          wrongCause: cause || undefined
+        }
+      }))
+      showToast(cause ? `已标注错因：${cause}` : '已清除错因标注')
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : '错因保存失败')
+    }
+  }
+
+  async function saveNote(questionId: string): Promise<void> {
+    const content = noteDrafts[questionId] ?? ''
+    setSavingNoteId(questionId)
+    try {
+      await invoke({ method: 'note.save', params: { questionId, content } })
+      setUserMeta((prev) => ({
+        ...prev,
+        [questionId]: {
+          favorite: prev[questionId]?.favorite ?? false,
+          note: content,
+          wrongCause: prev[questionId]?.wrongCause
+        }
+      }))
+      showToast('笔记已保存')
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : '笔记保存失败')
+    } finally {
+      setSavingNoteId('')
+    }
+  }
+
+  async function redoWrongQuestions(): Promise<void> {
+    if (!wrongIds.length || redoBusy) return
+    setRedoBusy(true)
+    try {
+      await invoke<PracticeSession>({
+        method: 'practice.session.start',
+        params: {
+          mode: 'sequence',
+          count: wrongIds.length,
+          feedbackMode: 'immediate',
+          questionIds: wrongIds
+        }
+      })
+      navigate('/practice?resumeActive=1')
+    } catch (cause) {
+      showToast(cause instanceof Error ? cause.message : '启动错题重刷失败')
+    } finally {
+      setRedoBusy(false)
+    }
+  }
+
+  function jumpToQuestion(questionId: string, isCorrect: boolean): void {
+    const doScroll = (): void => {
+      const target = document.getElementById(`exam-review-q-${questionId}`)
+      if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }
+    if (filter === 'wrong-unanswered' && isCorrect) {
+      setFilter('all')
+      window.setTimeout(doScroll, 40)
+    } else {
+      doScroll()
+    }
+  }
 
   if (loading)
     return (
@@ -109,7 +277,7 @@ export function ExamResultPage(): React.JSX.Element {
     )
 
   const totalQuestions = exam.questionIds.length
-  const answeredCount = Object.keys(exam.answers).length
+  const answeredCount = reviewItems.filter((item) => item.answered).length
   const unanswered = totalQuestions - answeredCount
   const correct = exam.correctCount ?? 0
   const accuracy = totalQuestions > 0 ? Math.round((correct / totalQuestions) * 100) : 0
@@ -145,7 +313,17 @@ export function ExamResultPage(): React.JSX.Element {
             {exam.status === 'finished' ? '考试已完成' : '考试未完成'} · 限时 {durationMin} 分钟
           </p>
         </div>
-        <div className="dash-header-action">
+        <div className="dash-header-action button-row">
+          {wrongIds.length > 0 && (
+            <Button
+              appearance="primary"
+              icon={<TargetIcon />}
+              disabled={redoBusy}
+              onClick={() => void redoWrongQuestions()}
+            >
+              {redoBusy ? '正在组卷…' : `重刷本场错题 (${wrongIds.length})`}
+            </Button>
+          )}
           <Button icon={<ArrowLeftIcon />} onClick={() => navigate('/exam')}>
             返回模考
           </Button>
@@ -186,13 +364,16 @@ export function ExamResultPage(): React.JSX.Element {
             <li className="data-row">
               <div>
                 <strong>错题已加入复习</strong>
-                <span>可在错题复习中按间隔复习</span>
+                <span>可在下方就地标注错因、记笔记，或一键重刷本场错题</span>
               </div>
               <CalendarCheckIcon className="positive" />
             </li>
           </ul>
         </Section>
-        <Section title="模块正确率分布" description="按快照分类统计，弱项模块排前。">
+        <Section
+          title="模块正确率与耗时分布"
+          description="按快照分类统计，弱项模块排前；显示各模块累计与均题耗时。"
+        >
           {categoryStats.length ? (
             <div className="mastery-list">
               {categoryStats.map((item) => (
@@ -201,6 +382,14 @@ export function ExamResultPage(): React.JSX.Element {
                     <strong>{item.category}</strong>
                     <span className="mastery-detail">
                       {item.correct}/{item.attempts} 正确
+                      {item.totalDuration > 0 && (
+                        <>
+                          {' · '}总耗时 {formatDurationBrief(item.totalDuration)} · 均题{' '}
+                          <span className={item.avgDuration > 75 ? 'warning' : undefined}>
+                            {item.avgDuration}秒
+                          </span>
+                        </>
+                      )}
                     </span>
                   </div>
                   <div className="mastery-bar-wrap">
@@ -218,78 +407,210 @@ export function ExamResultPage(): React.JSX.Element {
         </Section>
       </div>
 
+      {reviewItems.length > 0 && (
+        <div style={{ marginTop: 16 }}>
+          <Section
+            title="题号快速定位"
+            description="绿底为答对、红底为答错/未答；点击题号直接定位到对应解析。"
+          >
+            <div className="exam-review-jumpbar">
+              {reviewItems.map((item) => (
+                <button
+                  key={item.question.id}
+                  type="button"
+                  className={`exam-jump-btn ${item.correct ? 'is-correct' : item.answered ? 'is-wrong' : 'is-unanswered'}`}
+                  title={`第 ${item.index} 题 · ${item.question.category}${item.durationSeconds > 0 ? ` · 用时 ${item.durationSeconds} 秒` : ''}`}
+                  onClick={() => jumpToQuestion(item.question.id, item.correct)}
+                >
+                  {item.index}
+                </button>
+              ))}
+            </div>
+          </Section>
+        </div>
+      )}
+
       <div style={{ marginTop: 16 }}>
         <Section
           title="逐题复盘"
-          description="基于交卷时的题目快照展示每题作答、参考答案与解析。"
+          description="基于交卷时的题目快照展示每题作答、参考答案、耗时与解析，支持就地收藏、标注错因、记笔记与 AI 追问。"
           actions={
-            <Select
-              value={filter}
-              onChange={(_, data) => setFilter(data.value as ReviewFilter)}
-              aria-label="复盘筛选"
-            >
-              <option value="all">全部题目</option>
-              <option value="wrong-unanswered">仅看错题与未答</option>
-            </Select>
+            <div className="button-row">
+              <ReadingTypographyBar
+                typography={reading.typography}
+                onUpdate={reading.update}
+                onStepScale={reading.stepScale}
+                onResetScale={reading.resetScale}
+              />
+              <Select
+                value={filter}
+                onChange={(_, data) => setFilter(data.value as ReviewFilter)}
+                aria-label="复盘筛选"
+              >
+                <option value="all">全部题目（{reviewItems.length}）</option>
+                <option value="wrong-unanswered">仅看错题与未答（{wrongIds.length}）</option>
+              </Select>
+            </div>
           }
         >
           {filteredItems.length ? (
-            filteredItems.map((item) => (
-              <div className="answer-panel" key={item.question.id}>
-                <h3 className={item.correct ? 'positive' : 'negative'}>
-                  第 {item.index} 题：{item.answered ? (item.correct ? '正确' : '错误') : '未作答'}
-                  <span className="muted" style={{ fontWeight: 400, marginLeft: 8 }}>
-                    {item.question.category}
-                  </span>
-                </h3>
-                {item.question.material && (
-                  <>
-                    <strong>给定材料</strong>
+            <div
+              ref={reading.surfaceRef}
+              className="question-reading-surface"
+              data-reading-font={reading.typography.font}
+              style={reading.surfaceStyle}
+            >
+              {filteredItems.map((item) => {
+                const meta = userMeta[item.question.id] ?? { favorite: false, note: '' }
+                const noteOpen = Boolean(openNoteIds[item.question.id] || meta.note)
+                return (
+                  <div
+                    className="answer-panel exam-review-card"
+                    id={`exam-review-q-${item.question.id}`}
+                    key={item.question.id}
+                  >
+                    <div className="exam-review-card-head">
+                      <h3 className={item.correct ? 'positive' : 'negative'} style={{ margin: 0 }}>
+                        第 {item.index} 题：
+                        {item.answered ? (item.correct ? '正确' : '错误') : '未作答'}
+                        <span className="muted" style={{ fontWeight: 400, marginLeft: 8 }}>
+                          {item.question.category}
+                          {item.durationSeconds > 0
+                            ? ` · 用时 ${formatDurationBrief(item.durationSeconds)}`
+                            : ''}
+                        </span>
+                      </h3>
+                      <div className="button-row">
+                        {!item.correct && (
+                          <Select
+                            size="small"
+                            aria-label={`第 ${item.index} 题错因标注`}
+                            value={meta.wrongCause ?? ''}
+                            onChange={(_, data) =>
+                              void updateWrongCause(item.question.id, data.value)
+                            }
+                          >
+                            <option value="">标注错因…</option>
+                            {WRONG_CAUSE_OPTIONS.map((cause) => (
+                              <option key={cause} value={cause}>
+                                {cause}
+                              </option>
+                            ))}
+                          </Select>
+                        )}
+                        <Button
+                          size="small"
+                          appearance={meta.favorite ? 'secondary' : 'subtle'}
+                          icon={<BookmarkSimpleIcon weight={meta.favorite ? 'fill' : undefined} />}
+                          onClick={() => void toggleFavorite(item.question.id)}
+                        >
+                          {meta.favorite ? '已收藏' : '收藏'}
+                        </Button>
+                        <Button
+                          size="small"
+                          appearance="subtle"
+                          icon={<NotePencilIcon />}
+                          onClick={() =>
+                            setOpenNoteIds((prev) => ({
+                              ...prev,
+                              [item.question.id]: !noteOpen
+                            }))
+                          }
+                        >
+                          {noteOpen ? '收起笔记' : '记笔记'}
+                        </Button>
+                        <Button
+                          size="small"
+                          appearance="subtle"
+                          icon={<RobotIcon />}
+                          onClick={() =>
+                            navigate(`/ai?questionId=${encodeURIComponent(item.question.id)}`)
+                          }
+                        >
+                          AI 追问
+                        </Button>
+                      </div>
+                    </div>
+                    {item.question.material && (
+                      <>
+                        <strong>给定材料</strong>
+                        <MarkdownContent
+                          content={item.question.material}
+                          sourceFilePath={item.question.filePath}
+                        />
+                      </>
+                    )}
                     <MarkdownContent
-                      content={item.question.material}
+                      className="question-stem"
+                      content={item.question.stem}
                       sourceFilePath={item.question.filePath}
                     />
-                  </>
-                )}
-                <MarkdownContent
-                  className="question-stem"
-                  content={item.question.stem}
-                  sourceFilePath={item.question.filePath}
-                />
-                {item.question.options.length > 0 && (
-                  <div className="review-options">
-                    {item.question.options.map((option) => {
-                      const isAnswer = item.question.answer.includes(option.key)
-                      const isChosen = item.userAnswer.includes(option.key)
-                      return (
-                        <div
-                          key={option.key}
-                          className={`review-option ${
-                            isAnswer ? 'correct' : isChosen ? 'wrong' : ''
-                          }`.trim()}
+                    {item.question.options.length > 0 && (
+                      <div className="review-options">
+                        {item.question.options.map((option) => {
+                          const isAnswer = item.question.answer.includes(option.key)
+                          const isChosen = item.userAnswer.includes(option.key)
+                          return (
+                            <div
+                              key={option.key}
+                              className={`review-option ${
+                                isAnswer ? 'correct' : isChosen ? 'wrong' : ''
+                              }`.trim()}
+                            >
+                              <span className="option-key">{option.key}</span>
+                              <OptionContent
+                                option={option}
+                                sourceFilePath={item.question.filePath}
+                              />
+                              <span className="muted">
+                                {isChosen ? '你的选择' : ''}
+                                {isChosen && isAnswer ? ' · ' : ''}
+                                {isAnswer ? '参考答案' : ''}
+                              </span>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
+                    <p>
+                      你的作答：{item.userAnswer.length ? item.userAnswer.join('、') : '未作答'} ·
+                      参考答案：{item.question.answer.join('、') || '无'}
+                    </p>
+                    <MarkdownContent
+                      content={item.question.explanation}
+                      sourceFilePath={item.question.filePath}
+                    />
+                    {noteOpen && (
+                      <div className="library-note-box">
+                        <Field label="本题复盘笔记">
+                          <Textarea
+                            rows={2}
+                            value={noteDrafts[item.question.id] ?? ''}
+                            onChange={(_, data) =>
+                              setNoteDrafts((prev) => ({
+                                ...prev,
+                                [item.question.id]: data.value
+                              }))
+                            }
+                            placeholder="记录本题陷阱、速算技巧或错因复盘"
+                          />
+                        </Field>
+                        <Button
+                          size="small"
+                          appearance="secondary"
+                          icon={<NotePencilIcon />}
+                          disabled={savingNoteId === item.question.id}
+                          style={{ marginTop: 8 }}
+                          onClick={() => void saveNote(item.question.id)}
                         >
-                          <span className="option-key">{option.key}</span>
-                          <OptionContent option={option} sourceFilePath={item.question.filePath} />
-                          <span className="muted">
-                            {isChosen ? '你的选择' : ''}
-                            {isChosen && isAnswer ? ' · ' : ''}
-                            {isAnswer ? '参考答案' : ''}
-                          </span>
-                        </div>
-                      )
-                    })}
+                          {savingNoteId === item.question.id ? '保存中…' : '保存笔记'}
+                        </Button>
+                      </div>
+                    )}
                   </div>
-                )}
-                <p>
-                  你的作答：{item.userAnswer.length ? item.userAnswer.join('、') : '未作答'} ·
-                  参考答案：{item.question.answer.join('、') || '无'}
-                </p>
-                <MarkdownContent
-                  content={item.question.explanation}
-                  sourceFilePath={item.question.filePath}
-                />
-              </div>
-            ))
+                )
+              })}
+            </div>
           ) : (
             <EmptyState
               title={filter === 'wrong-unanswered' ? '没有错题' : '没有可复盘的题目'}
@@ -305,12 +626,18 @@ export function ExamResultPage(): React.JSX.Element {
 
       <div style={{ marginTop: 16 }}>
         <Section title="下一步">
-          <div style={{ display: 'grid', gap: 10 }}>
-            <Button
-              appearance="primary"
-              icon={<CalendarCheckIcon />}
-              onClick={() => navigate('/review')}
-            >
+          <div className="button-row">
+            {wrongIds.length > 0 && (
+              <Button
+                appearance="primary"
+                icon={<TargetIcon />}
+                disabled={redoBusy}
+                onClick={() => void redoWrongQuestions()}
+              >
+                重刷本场错题（{wrongIds.length} 题）
+              </Button>
+            )}
+            <Button icon={<CalendarCheckIcon />} onClick={() => navigate('/review')}>
               进入错题复习
             </Button>
             <Button icon={<ChartLineUpIcon />} onClick={() => navigate('/reports')}>

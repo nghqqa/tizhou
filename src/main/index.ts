@@ -10,6 +10,11 @@ import { DatabaseService, localDateKeyOf } from './services/database'
 import { DiagnosticService } from './services/diagnostics'
 import { IntegrationService } from './services/integrations'
 import { KnowledgeBuilderService } from './services/knowledge-builder'
+import {
+  libraryExportFileName,
+  renderQuestionLibraryHtml,
+  renderQuestionLibraryMarkdown
+} from './services/library-export'
 import { MigrationService } from './services/migration'
 import { renderReportMarkdown, reportFileName } from './services/report-markdown'
 import { StudyService } from './services/study'
@@ -457,8 +462,37 @@ async function initialize(): Promise<void> {
         return database!.listDocuments(request.params)
       case 'questions.get':
         return database!.getQuestion(request.params.id)
+      case 'questions.userMeta':
+        return database!.getQuestionsUserMeta(request.params.questionIds)
+      case 'wrongQuestion.setCause':
+        database!.setWrongQuestionCause(request.params.questionId, request.params.wrongCause)
+        return true
       case 'questions.library':
         return database!.listQuestionLibrary(request.params)
+      case 'questions.library.export': {
+        const items = database!.listQuestionLibrary({
+          tab: request.params.tab,
+          category: request.params.category,
+          wrongCause: request.params.wrongCause,
+          query: request.params.query,
+          limit: 500
+        })
+        if (!items.length) throw new Error('当前筛选下没有可导出的题目')
+        const isHtml = request.params.format === 'html'
+        const selected = await dialog.showSaveDialog(mainWindow!, {
+          title: isHtml ? '导出可打印题单 (HTML)' : '导出题单 (Markdown)',
+          defaultPath: libraryExportFileName(request.params),
+          filters: isHtml
+            ? [{ name: 'HTML 打印版', extensions: ['html'] }]
+            : [{ name: 'Markdown', extensions: ['md'] }]
+        })
+        if (selected.canceled || !selected.filePath) return undefined
+        const output = isHtml
+          ? renderQuestionLibraryHtml(items, request.params)
+          : renderQuestionLibraryMarkdown(items, request.params)
+        writeFileSync(selected.filePath, output, 'utf8')
+        return selected.filePath
+      }
       case 'practice.select':
         return study.selectPractice(request.params)
       case 'practice.session.start': {
@@ -660,6 +694,13 @@ async function initialize(): Promise<void> {
         return ai.test()
       case 'ai.ask':
         return ai.ask(request.params)
+      case 'ai.conversations.list':
+        return database!.listAiConversations(request.params?.limit)
+      case 'ai.conversations.save':
+        return database!.saveAiConversation(request.params)
+      case 'ai.conversations.delete':
+        database!.deleteAiConversation(request.params.id)
+        return true
       case 'aiTraining.record':
         return database!.saveAiTrainingRecord(request.params)
       case 'aiTraining.history':

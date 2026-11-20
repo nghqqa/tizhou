@@ -176,7 +176,12 @@ describe('启动、导航与全局功能', () => {
         await page.getByText(/第 1 题/).waitFor({ timeout: 15_000 })
       }
 
-      // 提交第 1 题并保存笔记，验证错题复习 4 Tab 中「我的笔记」可见
+      // 速查卡开关：点击展示百化分与高频公式，再点收起
+      await page.getByRole('button', { name: '速查卡' }).click()
+      await page.getByText('常用百化分速查').waitFor({ timeout: 10_000 })
+      await page.getByRole('button', { name: '速查卡' }).click()
+
+      // 提交第 1 题并保存笔记，验证错题复习 4 Tab 中「我的笔记」可见且带导出入口
       await firstOption.click()
       await page.getByRole('button', { name: '提交答案' }).click()
       await page.getByRole('button', { name: /下一题|完成本组/ }).waitFor({ timeout: 15_000 })
@@ -186,11 +191,25 @@ describe('启动、导航与全局功能', () => {
 
       await page.getByRole('link', { name: '错题复习' }).click()
       await page.getByRole('tab', { name: '错题本' }).waitFor({ timeout: 15_000 })
+      // 0 到期时不再出现多余报错横幅
+      expect(await page.getByText('当前筛选条件下没有可用题目').count()).toBe(0)
       await page.getByRole('tab', { name: '我的收藏' }).click()
       await page.getByRole('tab', { name: '我的笔记' }).click()
       await page.getByText('E2E 复盘笔记关键字_TIZHOU27').waitFor({ timeout: 15_000 })
+      await page.getByRole('button', { name: '导出 MD' }).waitFor({ timeout: 10_000 })
+      await page.getByRole('button', { name: '打印版 HTML' }).waitFor({ timeout: 10_000 })
     }
   )
+
+  itE2E('全局快捷检索面板（Ctrl+K）支持搜索页面与回车直达', async (page) => {
+    await page.keyboard.press('Control+k')
+    const paletteInput = page.getByPlaceholder(/搜索页面、知识文档正文或题库原题/)
+    await paletteInput.waitFor({ timeout: 10_000 })
+    await paletteInput.fill('学习报告')
+    await page.keyboard.press('Enter')
+    await page.waitForURL(/\/reports/, { timeout: 10_000 })
+    expect(page.url()).toContain('/reports')
+  })
 
   itE2E('首页目标考试倒计时行内设置与知识中心全文检索/目录', async (page) => {
     await page.getByRole('link', { name: '今日工作台' }).click()
@@ -263,6 +282,27 @@ describe('模考全流程（独立种子题库，正常保存）', () => {
     await page.getByRole('button', { name: '确认交卷' }).click()
     await page.waitForURL(/\/exam\/result\//, { timeout: 60_000 })
     expect(page.url()).toContain('/exam/result/')
+
+    // 模考复盘页深度闭环：题号定位条、收藏、就地记笔记
+    await page.locator('.exam-review-jumpbar .exam-jump-btn').first().waitFor({ timeout: 15_000 })
+    await page.locator('.exam-review-card').first().getByRole('button', { name: '收藏' }).click()
+    await page
+      .locator('.exam-review-card')
+      .first()
+      .getByRole('button', { name: '已收藏' })
+      .waitFor({ timeout: 10_000 })
+    await page.locator('.exam-review-card').first().getByRole('button', { name: '记笔记' }).click()
+    await page
+      .locator('.exam-review-card')
+      .first()
+      .getByPlaceholder(/记录本题陷阱/)
+      .fill('E2E 模考复盘笔记')
+    await page
+      .locator('.exam-review-card')
+      .first()
+      .getByRole('button', { name: '保存笔记' })
+      .click()
+    await page.getByText('笔记已保存').waitFor({ timeout: 10_000 })
   })
 })
 

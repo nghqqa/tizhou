@@ -4,6 +4,8 @@ import { DatabaseSync } from 'node:sqlite'
 import { randomUUID } from 'node:crypto'
 import { gzipSync, gunzipSync } from 'node:zlib'
 import type {
+  AiConversation,
+  AiMessage,
   AppSettings,
   AiTrainingRecord,
   AttemptInput,
@@ -23,6 +25,7 @@ import type {
   Question,
   QuestionFacets,
   QuestionLibraryItem,
+  QuestionUserMeta,
   ReportData,
   ReviewItem,
   VaultIndexResult,
@@ -333,6 +336,15 @@ export class DatabaseService {
         payload_json TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS ai_conversations (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        question_id TEXT,
+        messages_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_ai_conversations_updated ON ai_conversations(updated_at DESC);
     `)
     const examColumns = this.db.prepare('PRAGMA table_info(exam_sessions)').all() as Row[]
     if (!examColumns.some((column) => String(column.name) === 'question_snapshots_json')) {
@@ -806,6 +818,135 @@ export class DatabaseService {
       note: String(row.note_content ?? ''),
       noteUpdatedAt: row.note_updated_at ? String(row.note_updated_at) : undefined
     }))
+  }
+
+  /** 按题号顺序批量取题（用于模考错题重刷、全局检索直达单题），自动去重并保序 */
+  getQuestionsByIds(ids: string[]): Question[] {
+    const uniqueIds = [...new Set(ids.map((id) => id.trim()).filter(Boolean))].slice(0, 200)
+    if (!uniqueIds.length) return []
+    const placeholders = uniqueIds.map(() => '?').join(',')
+    const rows = this.db
+      .prepare(`SELECT * FROM questions WHERE id IN (${placeholders})`)
+      .all(...uniqueIds) as Row[]
+    const byId = new Map(rows.map((row) => [String(row.id), this.mapQuestion(row)]))
+    return uniqueIds.map((id) => byId.get(id)).filter((item): item is Question => Boolean(item))
+  }
+
+  /** 批量获取题目用户元数据（收藏 / 笔记 / 最近错因），供模考复盘页一次 IPC 拉齐 */
+  getQuestionsUserMeta(questionIds: string[]): Record<string, QuestionUserMeta> {
+    const uniqueIds = [...new Set(questionIds.map((id) => id.trim()).filter(Boolean))].slice(0, 500)
+    const result: Record<string, QuestionUserMeta> = {}
+    for (const id of uniqueIds) {
+      result[id] = { favorite: false, note: '' }
+    }
+    if (!uniqueIds.length) return result
+    const placeholders = uniqueIds.map(() => '?').join(',')
+    const favRows = this.db
+      .prepare(`SELECT question_id FROM favorites WHERE question_id IN (${placeholders})`)
+      .all(...uniqueIds) as Row[]
+    for (const row of favRows) {
+      const id = String(row.question_id)
+      if (result[id]) result[id]!.favorite = true
+    }
+    const noteRows = this.db
+      .prepare(`SELECT question_id, content FROM user_notes WHERE question_id IN (${placeholders})`)
+      .all(...uniqueIds) as Row[]
+    for (const row of noteRows) {
+      const id = String(row.question_id)
+      if (result[id]) result[id]!.note = String(row.content ?? '')
+    }
+    const wrongRows = this.db
+      .prepare(
+        `SELECT question_id, last_wrong_cause FROM wrong_questions WHERE question_id IN (${placeholders})`
+      )
+      .all(...uniqueIds) as Row[]
+    for (const row of wrongRows) {
+      const id = String(row.question_id)
+      if (result[id] && row.last_wrong_cause) {
+        result[id]!.wrongCause = String(row.last_wrong_cause)
+      }
+    }
+    return result
+  }
+
+  /** 更新错题的错因标注（仅对已入错题表或存在题目记录的题生效） */
+  setWrongQuestionCause(questionId: string, wrongCause: string): void {
+    const trimmed = wrongCause.trim().slice(0, 40)
+    const exists = this.db
+      .prepare('SELECT 1 FROM wrong_questions WHERE question_id = ?')
+      .get(questionId)
+    if (exists) {
+      this.db
+        .prepare('UPDATE wrong_questions SET last_wrong_cause = ? WHERE question_id = ?')
+        .run(trimmed || null, questionId)
+    }
+  }
+
+  listAiConversations(limit = 50): AiConversation[] {
+    const safeLimit = Math.max(
+      1,
+      Math.min(100, Math.round(Number.isFinite(limit) ? Number(limit) : 50))
+    )
+    const rows = this.db
+      .prepare('SELECT * FROM ai_conversations ORDER BY updated_at DESC LIMIT ?')
+      .all(safeLimit) as Row[]
+    return rows.map((row) => ({
+      id: String(row.id),
+      title: String(row.title),
+      questionId: row.question_id ? String(row.question_id) : undefined,
+      messages: parseJson<AiMessage[]>(row.messages_json, []),
+      createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at)
+    }))
+  }
+
+  saveAiConversation(input: {
+    id?: string
+    title: string
+    questionId?: string
+    messages: AiMessage[]
+  }): AiConversation {
+    const timestamp = now()
+    const id = input.id?.trim() || randomUUID()
+    const existing = this.db
+      .prepare('SELECT created_at, question_id FROM ai_conversations WHERE id = ?')
+      .get(id) as Row | undefined
+    const createdAt = existing ? String(existing.created_at) : timestamp
+    const title = (input.title || '新对话').trim().slice(0, 60) || '新对话'
+    const cleanMessages: AiMessage[] = (Array.isArray(input.messages) ? input.messages : [])
+      .slice(-100)
+      .filter(
+        (m): m is AiMessage =>
+          Boolean(m) &&
+          (m.role === 'user' || m.role === 'assistant' || m.role === 'system') &&
+          typeof m.content === 'string'
+      )
+      .map((m) => ({ role: m.role, content: m.content }))
+    const resolvedQuestionId =
+      input.questionId?.trim() || (existing?.question_id ? String(existing.question_id) : null)
+    this.db
+      .prepare(
+        `INSERT INTO ai_conversations(id, title, question_id, messages_json, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           title = excluded.title,
+           question_id = COALESCE(excluded.question_id, ai_conversations.question_id),
+           messages_json = excluded.messages_json,
+           updated_at = excluded.updated_at`
+      )
+      .run(id, title, resolvedQuestionId, JSON.stringify(cleanMessages), createdAt, timestamp)
+    return {
+      id,
+      title,
+      questionId: resolvedQuestionId ?? undefined,
+      messages: cleanMessages,
+      createdAt,
+      updatedAt: timestamp
+    }
+  }
+
+  deleteAiConversation(id: string): void {
+    this.db.prepare('DELETE FROM ai_conversations WHERE id = ?').run(id)
   }
 
   /** 整库题目一次取出（供快照与增量索引复用未变文件的记录） */
@@ -2027,7 +2168,8 @@ export class DatabaseService {
         'constructed_attempts',
         'plan_completions',
         'learning_plans',
-        'ai_training_attempts'
+        'ai_training_attempts',
+        'ai_conversations'
       ]) {
         this.db.exec(`DELETE FROM ${table}`)
       }

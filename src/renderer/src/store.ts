@@ -6,13 +6,18 @@ interface AppState {
   data?: BootstrapData
   loading: boolean
   error?: string
+  toast?: string
   initialize: () => Promise<void>
   refreshDashboard: () => Promise<void>
   refreshVault: () => Promise<void>
   updateSettings: (patch: Partial<AppSettings>) => Promise<void>
   syncSettings: (settings: AppSettings) => void
   clearError: () => void
+  showToast: (message: string) => void
+  clearToast: () => void
 }
+
+let toastTimer: ReturnType<typeof setTimeout> | undefined
 
 export const useAppStore = create<AppState>((set, get) => ({
   loading: true,
@@ -64,5 +69,18 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
   clearError() {
     set({ error: undefined })
+  },
+  showToast(message) {
+    if (toastTimer) clearTimeout(toastTimer)
+    set({ toast: message })
+    toastTimer = setTimeout(() => {
+      set({ toast: undefined })
+      toastTimer = undefined
+    }, 3600)
+  },
+  clearToast() {
+    if (toastTimer) clearTimeout(toastTimer)
+    toastTimer = undefined
+    set({ toast: undefined })
   }
 }))

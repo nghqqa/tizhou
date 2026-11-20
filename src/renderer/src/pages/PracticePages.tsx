@@ -14,10 +14,15 @@ import {
 import {
   ArrowLeftIcon,
   BookmarkSimpleIcon,
+  CalculatorIcon,
   CheckIcon,
   ClockIcon,
+  ColumnsIcon,
+  ExportIcon,
   FlagIcon,
   NotePencilIcon,
+  PrinterIcon,
+  RobotIcon,
   SkipForwardIcon
 } from '@phosphor-icons/react'
 import type {
@@ -59,7 +64,41 @@ interface TrainerInitial {
   subject?: '' | Subject
   onlyWrong?: boolean
   onlyFavorite?: boolean
+  onlyUnattempted?: boolean
+  questionId?: string
+  resumeActive?: boolean
 }
+
+const BAIGUAFEN_TABLE: Array<[string, string]> = [
+  ['1/2', '50%'],
+  ['1/3', '33.3%'],
+  ['1/4', '25%'],
+  ['1/5', '20%'],
+  ['1/6', '16.7%'],
+  ['1/7', '14.3%'],
+  ['1/8', '12.5%'],
+  ['1/9', '11.1%'],
+  ['1/10', '10%'],
+  ['1/11', '9.1%'],
+  ['1/12', '8.3%'],
+  ['1/13', '7.7%'],
+  ['1/14', '7.1%'],
+  ['1/15', '6.7%'],
+  ['1/16', '6.25%'],
+  ['1/17', '5.9%'],
+  ['1/18', '5.6%'],
+  ['1/19', '5.3%'],
+  ['1/20', '5%']
+]
+
+const FORMULA_HINTS: Array<{ name: string; expr: string }> = [
+  { name: '基期量', expr: 'A / (1 + r)' },
+  { name: '增长量（r = 1/n）', expr: 'A / (n + 1)（减少：A / (n - 1)）' },
+  { name: '间隔增长率', expr: 'r₁ + r₂ + r₁·r₂' },
+  { name: '两期比重差', expr: '(A / B) · (a - b) / (1 + a)' },
+  { name: '平均数增长率', expr: '(a - b) / (1 + b)' },
+  { name: '混合增长率', expr: '居中且偏向基数（现期近似）较大者' }
+]
 
 function Trainer({
   review = false,
@@ -68,7 +107,9 @@ function Trainer({
   review?: boolean
   initial?: TrainerInitial
 }): React.JSX.Element {
+  const navigate = useNavigate()
   const refreshDashboard = useAppStore((state) => state.refreshDashboard)
+  const showToast = useAppStore((state) => state.showToast)
   const ai = useAppStore((state) => state.data!.ai)
   const [categories, setCategories] = useState<Category[]>([])
   const [facets, setFacets] = useState<QuestionFacets>({ years: [], regions: [], papers: [] })
@@ -81,7 +122,7 @@ function Trainer({
   const [keyword, setKeyword] = useState('')
   const [onlyWrong, setOnlyWrong] = useState(Boolean(initial?.onlyWrong))
   const [onlyFavorite, setOnlyFavorite] = useState(Boolean(initial?.onlyFavorite))
-  const [onlyUnattempted, setOnlyUnattempted] = useState(false)
+  const [onlyUnattempted, setOnlyUnattempted] = useState(Boolean(initial?.onlyUnattempted))
   const [favorite, setFavorite] = useState(false)
   const [mode, setMode] = useState<PracticeSelection['mode']>(
     initial?.mode ?? (review ? 'review' : 'adaptive')
@@ -119,6 +160,14 @@ function Trainer({
       return true
     }
   })
+  const [materialSplit, setMaterialSplit] = useState<boolean>(() => {
+    try {
+      return window.localStorage.getItem('tizhou:practice-material-split') !== '0'
+    } catch {
+      return true
+    }
+  })
+  const [showFormulaCard, setShowFormulaCard] = useState(false)
   const startedAt = useRef(Date.now())
   const currentQuestionIdRef = useRef('')
   const activeSessionIdRef = useRef('')
@@ -140,15 +189,24 @@ function Trainer({
       .catch(() => setFacets({ years: [], regions: [], papers: [] }))
   }, [review, subject])
 
-  // 会话恢复只在挂载时查一次：与科目下拉解耦，调整筛选不应触发未完成会话的重查
+  // 会话恢复只在挂载时查一次；若带 questionId 或 resumeActive 则按需直达训练
   useEffect(() => {
+    if (!review && initial?.questionId) {
+      void startSession({
+        mode: 'sequence',
+        count: 1,
+        feedbackMode: 'immediate',
+        questionIds: [initial.questionId]
+      })
+      return
+    }
     void invoke<PracticeSession | undefined>({
       method: 'practice.session.active',
       params: { mode: review ? 'review' : 'practice' }
     })
       .then((active) => {
         if (active) {
-          if (review) {
+          if (review || initial?.resumeActive) {
             restoreSession(active)
             void reloadSessionResults(active)
           } else setPendingSession(active)
@@ -162,7 +220,7 @@ function Trainer({
         if (review) void startSession({ mode: 'review', count: 50, feedbackMode: 'immediate' })
         else setLoading(false)
       })
-  }, [review])
+  }, [review, initial?.questionId, initial?.resumeActive])
 
   const current = questions[index]
   currentQuestionIdRef.current = current?.id ?? ''
@@ -377,7 +435,11 @@ function Trainer({
       setAiExplanation('')
       setWrongCause('')
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : '选题失败')
+      const msg = cause instanceof Error ? cause.message : '选题失败'
+      // 错题复习页 0 到期时展示干净空态，不再叠加多余的红条报错
+      if (!(review && msg.includes('没有可用题目'))) {
+        setError(msg)
+      }
       setQuestions([])
     } finally {
       setLoading(false)
@@ -495,8 +557,11 @@ function Trainer({
         }
       }
     } catch (cause) {
+      const msg = cause instanceof Error ? cause.message : '提交失败'
       if (currentQuestionIdRef.current === submittedQuestionId) {
-        setError(cause instanceof Error ? cause.message : '提交失败')
+        setError(msg)
+      } else {
+        showToast(`上一题提交失败：${msg}`)
       }
     } finally {
       setLoading(false)
@@ -934,84 +999,185 @@ function Trainer({
             {current.paper && <span className="pill">{current.paper}</span>}
             {uncertain && <span className="pill warning">待复查</span>}
           </div>
-          <ReadingTypographyBar
-            typography={reading.typography}
-            onUpdate={reading.update}
-            onStepScale={reading.stepScale}
-            onResetScale={reading.resetScale}
-          />
-        </div>
-        <div
-          ref={reading.surfaceRef}
-          className="question-reading-surface"
-          data-reading-font={reading.typography.font}
-          style={reading.surfaceStyle}
-        >
-          {current.material && (
-            <div className="answer-panel">
-              <strong>给定材料</strong>
-              <MarkdownContent content={current.material} sourceFilePath={current.filePath} />
-            </div>
-          )}
-          <MarkdownContent
-            className="question-stem"
-            content={current.stem}
-            sourceFilePath={current.filePath}
-          />
-          {current.type === 'essay' ? (
-            <Textarea
-              resize="vertical"
-              rows={8}
-              value={essayAnswer}
-              onChange={(_, data) => setEssayAnswer(data.value)}
-              placeholder="写下你的作答要点"
-              disabled={locked}
+          <div className="question-top-tools">
+            {current.material && (
+              <Button
+                size="small"
+                appearance={materialSplit ? 'secondary' : 'subtle'}
+                icon={<ColumnsIcon />}
+                title="切换材料左右分栏 / 上下排布"
+                onClick={() => {
+                  setMaterialSplit((value) => {
+                    const nextValue = !value
+                    try {
+                      window.localStorage.setItem(
+                        'tizhou:practice-material-split',
+                        nextValue ? '1' : '0'
+                      )
+                    } catch {
+                      /* 忽略 */
+                    }
+                    return nextValue
+                  })
+                }}
+              >
+                {materialSplit ? '分栏对照' : '上下排布'}
+              </Button>
+            )}
+            <Button
+              size="small"
+              appearance={showFormulaCard ? 'secondary' : 'subtle'}
+              icon={<CalculatorIcon />}
+              title="展开/收起行测速算与百化分速查卡"
+              onClick={() => setShowFormulaCard((value) => !value)}
+            >
+              速查卡
+            </Button>
+            <ReadingTypographyBar
+              typography={reading.typography}
+              onUpdate={reading.update}
+              onStepScale={reading.stepScale}
+              onResetScale={reading.resetScale}
             />
-          ) : (
-            <div className="options">
-              {current.options.map((option) => {
-                const eliminated = !locked && currentEliminated.includes(option.key)
-                return (
-                  <button
-                    type="button"
-                    key={option.key}
-                    title={locked ? undefined : '左键选择 · 右键排除干扰项'}
-                    className={`option-button ${
-                      result
-                        ? current.answer.includes(option.key)
-                          ? 'correct'
-                          : selected.includes(option.key)
-                            ? 'wrong'
-                            : 'dimmed'
-                        : selected.includes(option.key)
-                          ? 'selected'
-                          : eliminated
-                            ? 'is-eliminated'
-                            : ''
-                    }`}
-                    onClick={() => choose(option.key)}
-                    onContextMenu={(event) => toggleEliminate(option.key, event)}
-                    disabled={locked}
-                  >
-                    <span className="option-key">{option.key}</span>
-                    <OptionContent option={option} sourceFilePath={current.filePath} />
-                  </button>
-                )
-              })}
-            </div>
-          )}
-          {result && (
-            <div className="answer-panel">
-              <h3 className={result.correct ? 'positive' : 'negative'}>
-                {result.correct ? '回答正确' : '回答错误'}
-              </h3>
-              <p>参考答案：{result.expected.join('、')}</p>
-              <MarkdownContent content={result.explanation} sourceFilePath={current.filePath} />
-              {result.nextReviewAt && <p className="muted">已安排下一次间隔复习。</p>}
-              {result.mastered && <p className="positive">稳定答对，已标记为掌握。</p>}
-            </div>
-          )}
+          </div>
         </div>
+        {showFormulaCard && (
+          <div className="formula-cheat-card">
+            <div className="formula-cheat-col">
+              <strong>常用百化分速查</strong>
+              <div className="baiguafen-grid">
+                {BAIGUAFEN_TABLE.map(([frac, pct]) => (
+                  <span key={frac} className="baiguafen-chip">
+                    <b>{frac}</b> = {pct}
+                  </span>
+                ))}
+              </div>
+            </div>
+            <div className="formula-cheat-col">
+              <strong>资料分析高频公式</strong>
+              <ul className="formula-list">
+                {FORMULA_HINTS.map((item) => (
+                  <li key={item.name}>
+                    <b>{item.name}：</b>
+                    <span>{item.expr}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        )}
+        {(() => {
+          // 识别同材料连题组（同 groupId 或同材料文本），在左栏提供小题快切条
+          const siblingIndices: number[] = []
+          if (current.material) {
+            questions.forEach((q, qIdx) => {
+              const sameGroup =
+                (current.groupId && q.groupId && q.groupId === current.groupId) ||
+                (q.material && q.material === current.material)
+              if (sameGroup) siblingIndices.push(qIdx)
+            })
+          }
+          const useSplit = Boolean(current.material && materialSplit)
+          const questionBody = (
+            <div className="material-split-right">
+              <MarkdownContent
+                className="question-stem"
+                content={current.stem}
+                sourceFilePath={current.filePath}
+              />
+              {current.type === 'essay' ? (
+                <Textarea
+                  resize="vertical"
+                  rows={8}
+                  value={essayAnswer}
+                  onChange={(_, data) => setEssayAnswer(data.value)}
+                  placeholder="写下你的作答要点"
+                  disabled={locked}
+                />
+              ) : (
+                <div className="options">
+                  {current.options.map((option) => {
+                    const eliminated = !locked && currentEliminated.includes(option.key)
+                    return (
+                      <button
+                        type="button"
+                        key={option.key}
+                        title={locked ? undefined : '左键选择 · 右键排除干扰项'}
+                        className={`option-button ${
+                          result
+                            ? current.answer.includes(option.key)
+                              ? 'correct'
+                              : selected.includes(option.key)
+                                ? 'wrong'
+                                : 'dimmed'
+                            : selected.includes(option.key)
+                              ? 'selected'
+                              : eliminated
+                                ? 'is-eliminated'
+                                : ''
+                        }`}
+                        onClick={() => choose(option.key)}
+                        onContextMenu={(event) => toggleEliminate(option.key, event)}
+                        disabled={locked}
+                      >
+                        <span className="option-key">{option.key}</span>
+                        <OptionContent option={option} sourceFilePath={current.filePath} />
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+              {result && (
+                <div className="answer-panel">
+                  <h3 className={result.correct ? 'positive' : 'negative'}>
+                    {result.correct ? '回答正确' : '回答错误'}
+                  </h3>
+                  <p>参考答案：{result.expected.join('、')}</p>
+                  <MarkdownContent content={result.explanation} sourceFilePath={current.filePath} />
+                  {result.nextReviewAt && <p className="muted">已安排下一次间隔复习。</p>}
+                  {result.mastered && <p className="positive">稳定答对，已标记为掌握。</p>}
+                </div>
+              )}
+            </div>
+          )
+          return (
+            <div
+              ref={reading.surfaceRef}
+              className={`question-reading-surface${useSplit ? ' material-split-layout' : ''}`}
+              data-reading-font={reading.typography.font}
+              style={reading.surfaceStyle}
+            >
+              {current.material && (
+                <div className={useSplit ? 'material-split-left' : 'answer-panel'}>
+                  <div className="material-split-head">
+                    <strong>给定材料</strong>
+                    {siblingIndices.length > 1 && (
+                      <div className="material-sibling-tabs">
+                        {siblingIndices.map((qIdx, order) => {
+                          const sib = questions[qIdx]!
+                          const sibRec = answeredMap.get(sib.id)
+                          return (
+                            <button
+                              key={sib.id}
+                              type="button"
+                              disabled={loading}
+                              className={`material-sibling-tab${qIdx === index ? ' is-active' : ''}${sibRec ? (sibRec.result.correct ? ' is-correct' : ' is-wrong') : ''}`}
+                              onClick={() => void jumpTo(qIdx)}
+                            >
+                              第 {order + 1} 问
+                            </button>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </div>
+                  <MarkdownContent content={current.material} sourceFilePath={current.filePath} />
+                </div>
+              )}
+              {questionBody}
+            </div>
+          )
+        })()}
         <div className="question-footer">
           <div className="button-row">
             {index > 0 && (
@@ -1154,11 +1320,31 @@ function Trainer({
         {result && (ai.hasApiKey || ai.provider === 'ollama' || ai.provider === 'lmstudio') && (
           <Section title="AI 深讲" description="白名单上下文：当前题、材料、你的答案与官方解析。">
             {aiExplanation ? (
-              <MarkdownContent content={aiExplanation} />
+              <>
+                <MarkdownContent content={aiExplanation} />
+                <Button
+                  size="small"
+                  appearance="subtle"
+                  icon={<RobotIcon />}
+                  style={{ marginTop: 10 }}
+                  onClick={() => navigate(`/ai?questionId=${encodeURIComponent(current.id)}`)}
+                >
+                  带本题去 AI 助教继续追问
+                </Button>
+              </>
             ) : (
-              <Button disabled={aiBusy} onClick={() => void askAiAboutCurrent()}>
-                {aiBusy ? '正在分析' : '解释本题易错点'}
-              </Button>
+              <div className="button-row">
+                <Button disabled={aiBusy} onClick={() => void askAiAboutCurrent()}>
+                  {aiBusy ? '正在分析' : '解释本题易错点'}
+                </Button>
+                <Button
+                  appearance="subtle"
+                  icon={<RobotIcon />}
+                  onClick={() => navigate(`/ai?questionId=${encodeURIComponent(current.id)}`)}
+                >
+                  去助教追问
+                </Button>
+              </div>
             )}
           </Section>
         )}
@@ -1175,6 +1361,9 @@ export function PracticePage(): React.JSX.Element {
   const category = searchParams.get('category') ?? undefined
   const onlyWrong = searchParams.get('onlyWrong') === '1'
   const onlyFavorite = searchParams.get('onlyFavorite') === '1'
+  const onlyUnattempted = searchParams.get('onlyUnattempted') === '1'
+  const questionId = searchParams.get('questionId') ?? undefined
+  const resumeActive = searchParams.get('resumeActive') === '1'
   const subjectParam = searchParams.get('subject')
   const subject =
     subjectParam === 'xingce' || subjectParam === 'shenlun' || subjectParam === 'common'
@@ -1183,13 +1372,24 @@ export function PracticePage(): React.JSX.Element {
         : subjectParam
       : undefined
   const initial: TrainerInitial | undefined =
-    mode || count || category || onlyWrong || onlyFavorite || subject !== undefined
+    mode ||
+    count ||
+    category ||
+    onlyWrong ||
+    onlyFavorite ||
+    onlyUnattempted ||
+    questionId ||
+    resumeActive ||
+    subject !== undefined
       ? {
           mode: mode ?? undefined,
           count,
           category,
           onlyWrong,
           onlyFavorite,
+          onlyUnattempted,
+          questionId,
+          resumeActive,
           feedbackMode: 'immediate',
           subject: subject ?? (onlyWrong || onlyFavorite ? '' : 'xingce')
         }
@@ -1199,7 +1399,7 @@ export function PracticePage(): React.JSX.Element {
       <PageHeader
         eyebrow="训练 · 专项练习"
         title="专项练习"
-        description="支持会话恢复、内容快照、即时或汇总解析、键盘选项和自适应选题。"
+        description="支持会话恢复、内容快照、分栏材料对照、速查卡、键盘选项和自适应选题。"
       />
       {recommended && (
         <div className="answer-panel" style={{ marginBottom: 14 }}>
@@ -1209,13 +1409,14 @@ export function PracticePage(): React.JSX.Element {
           </p>
         </div>
       )}
-      <Trainer initial={initial} />
+      <Trainer key={questionId ?? (resumeActive ? 'resume' : 'default')} initial={initial} />
     </div>
   )
 }
 
 function QuestionLibraryView({ tab }: { tab: 'wrong' | 'favorite' | 'notes' }): React.JSX.Element {
   const navigate = useNavigate()
+  const showToast = useAppStore((state) => state.showToast)
   const [items, setItems] = useState<QuestionLibraryItem[]>()
   const [categories, setCategories] = useState<Category[]>([])
   const [category, setCategory] = useState('')
@@ -1224,6 +1425,8 @@ function QuestionLibraryView({ tab }: { tab: 'wrong' | 'favorite' | 'notes' }): 
   const [expandedId, setExpandedId] = useState('')
   const [noteDrafts, setNoteDrafts] = useState<Record<string, string>>({})
   const [savingNoteId, setSavingNoteId] = useState('')
+  const [exportIncludeAnswers, setExportIncludeAnswers] = useState(true)
+  const [exporting, setExporting] = useState(false)
   const [error, setError] = useState('')
 
   useEffect(() => {
@@ -1321,6 +1524,31 @@ function QuestionLibraryView({ tab }: { tab: 'wrong' | 'favorite' | 'notes' }): 
         ? '练习时点击「收藏」即可把好题、高频易错题收进收藏夹。'
         : '在专项练习右侧「本题笔记」记录做题心得后，会集中汇总在这里方便考前速览。'
 
+  async function exportLibrary(format: 'markdown' | 'html'): Promise<void> {
+    if (!items?.length || exporting) return
+    setExporting(true)
+    setError('')
+    try {
+      const target = await invoke<string | undefined>({
+        method: 'questions.library.export',
+        params: {
+          tab,
+          category: category || undefined,
+          wrongCause: tab === 'wrong' && wrongCause ? wrongCause : undefined,
+          query: query.trim() || undefined,
+          includeAnswers: exportIncludeAnswers,
+          includeNotes: true,
+          format
+        }
+      })
+      if (target) showToast(`已导出：${target}`)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : '导出失败')
+    } finally {
+      setExporting(false)
+    }
+  }
+
   return (
     <Section
       title={tab === 'wrong' ? '错题本' : tab === 'favorite' ? '我的收藏' : '我的笔记'}
@@ -1330,19 +1558,46 @@ function QuestionLibraryView({ tab }: { tab: 'wrong' | 'favorite' | 'notes' }): 
           : '正在读取…'
       }
       actions={
-        tab !== 'notes' && items && items.length > 0 ? (
-          <Button
-            appearance="primary"
-            size="small"
-            onClick={() => {
-              const params = new URLSearchParams()
-              params.set(tab === 'wrong' ? 'onlyWrong' : 'onlyFavorite', '1')
-              if (category) params.set('category', category)
-              navigate(`/practice?${params.toString()}`)
-            }}
-          >
-            {tab === 'wrong' ? '针对当前筛选练错题' : '针对当前筛选练收藏'}
-          </Button>
+        items && items.length > 0 ? (
+          <div className="button-row library-export-bar">
+            <Checkbox
+              label="导出含答案"
+              checked={exportIncludeAnswers}
+              onChange={(_, data) => setExportIncludeAnswers(Boolean(data.checked))}
+            />
+            <Button
+              size="small"
+              appearance="subtle"
+              icon={<ExportIcon />}
+              disabled={exporting}
+              onClick={() => void exportLibrary('markdown')}
+            >
+              导出 MD
+            </Button>
+            <Button
+              size="small"
+              appearance="subtle"
+              icon={<PrinterIcon />}
+              disabled={exporting}
+              onClick={() => void exportLibrary('html')}
+            >
+              打印版 HTML
+            </Button>
+            {tab !== 'notes' && (
+              <Button
+                appearance="primary"
+                size="small"
+                onClick={() => {
+                  const params = new URLSearchParams()
+                  params.set(tab === 'wrong' ? 'onlyWrong' : 'onlyFavorite', '1')
+                  if (category) params.set('category', category)
+                  navigate(`/practice?${params.toString()}`)
+                }}
+              >
+                {tab === 'wrong' ? '针对当前筛选练错题' : '针对当前筛选练收藏'}
+              </Button>
+            )}
+          </div>
         ) : undefined
       }
     >
@@ -1405,6 +1660,14 @@ function QuestionLibraryView({ tab }: { tab: 'wrong' | 'favorite' | 'notes' }): 
                     {q.year && <span className="pill">{q.year}</span>}
                   </div>
                   <div className="button-row">
+                    <Button
+                      size="small"
+                      appearance="subtle"
+                      icon={<RobotIcon />}
+                      onClick={() => navigate(`/ai?questionId=${encodeURIComponent(q.id)}`)}
+                    >
+                      AI 追问
+                    </Button>
                     <Button
                       size="small"
                       appearance={item.favorite ? 'secondary' : 'subtle'}
