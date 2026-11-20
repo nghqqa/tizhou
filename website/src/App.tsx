@@ -307,6 +307,20 @@ function FlowTabs({ onZoom }: { onZoom: (zoom: ZoomState) => void }): React.JSX.
 
 export function App(): React.JSX.Element {
   const [zoom, setZoom] = useState<ZoomState | null>(null)
+  const [copiedCmd, setCopiedCmd] = useState(false)
+
+  function copyChecksumCommand(): void {
+    void navigator.clipboard
+      ?.writeText(release.asset.checksumCommand)
+      .then(() => {
+        setCopiedCmd(true)
+        window.setTimeout(() => setCopiedCmd(false), 2000)
+      })
+      .catch(() => {
+        /* 忽略受限环境剪贴板写入失败 */
+      })
+  }
+
   return (
     <div className="site">
       <header className="site-header">
@@ -368,13 +382,32 @@ export function App(): React.JSX.Element {
                 </a>
               </div>
               <p className="hero-meta">
-                全量文件与 {release.asset.checksumFile} 见{' '}
-                <a href={release.releasePages.cnb}>CNB Releases 页</a>，校验命令{' '}
-                <code>{release.asset.checksumCommand}</code>
+                全量文件与{' '}
+                <a href={release.checksumUrls.cnb}>{release.asset.checksumFile}（国内源）</a> /{' '}
+                <a href={release.checksumUrls.github}>GitHub 源</a> 同步公开，v{release.version} ·{' '}
+                {release.platform} · {release.license}
               </p>
-              <p className="hero-meta muted">
-                v{release.version} · {release.platform} · {release.license}
-              </p>
+              <details className="hero-trust">
+                <summary>首次安装遇 Windows 蓝色安全提示？查看放行步骤与 SHA-256 核验方法</summary>
+                <div className="hero-trust-body">
+                  <p>
+                    题舟是个人维护的 MIT 开源软件，暂未购置商业代码签名证书。下载后首次运行若出现
+                    Windows SmartScreen 提示「未知发布者」，点击「<strong>更多信息</strong>」再选 「
+                    <strong>仍要运行</strong>」即可，仅需放行一次。
+                  </p>
+                  <p>
+                    如需核验安装包完整性，在安装包所在目录打开终端执行下方命令，并与官方{' '}
+                    <a href={release.checksumUrls.cnb}>{release.asset.checksumFile}</a>{' '}
+                    中的哈希逐字比对：
+                  </p>
+                  <div className="checksum-row">
+                    <code>{release.asset.checksumCommand}</code>
+                    <button type="button" className="copy-cmd-btn" onClick={copyChecksumCommand}>
+                      {copiedCmd ? '已复制' : '复制命令'}
+                    </button>
+                  </div>
+                </div>
+              </details>
             </div>
             <ShotFrame
               src={shot('01-dashboard')}
@@ -479,9 +512,16 @@ export function App(): React.JSX.Element {
                 <span className="smartbox-chip accent">选择「仍要运行」</span>
               </div>
               <p className="smartbox-note">
-                只需放行一次；安装包在发布页附带 SHA256SUMS.txt，可用{' '}
-                <code>{release.asset.checksumCommand}</code> 对照校验。
+                只需放行一次。下载后可对照官方{' '}
+                <a href={release.checksumUrls.cnb}>{release.asset.checksumFile}（CNB）</a> 或{' '}
+                <a href={release.checksumUrls.github}>GitHub 校验文件</a> 核验哈希：
               </p>
+              <div className="checksum-row">
+                <code>{release.asset.checksumCommand}</code>
+                <button type="button" className="copy-cmd-btn" onClick={copyChecksumCommand}>
+                  {copiedCmd ? '已复制' : '复制命令'}
+                </button>
+              </div>
             </div>
             <p className="start-note">
               完整配置（可选）：知识库工坊安装转换引擎（约 200 MB，含 OCR 模型）→ 选择题本目录导入 →

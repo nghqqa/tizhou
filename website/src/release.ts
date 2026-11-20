@@ -16,6 +16,10 @@ export const release = {
   directDownload: {
     url: 'https://cnb.cool/nghqqa/tizhou/-/releases/download/v1.0.28/tizhou-setup-1.0.28.exe'
   },
+  checksumUrls: {
+    cnb: 'https://cnb.cool/nghqqa/tizhou/-/releases/download/v1.0.28/SHA256SUMS.txt',
+    github: 'https://github.com/nghqqa/tizhou/releases/download/v1.0.28/SHA256SUMS.txt'
+  },
   releasePages: {
     cnb: 'https://cnb.cool/nghqqa/tizhou/-/releases',
     github: 'https://github.com/nghqqa/tizhou/releases/latest'
