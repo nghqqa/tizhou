@@ -584,14 +584,23 @@ describe('DatabaseService local-date statistics and exam edge cases', () => {
     expect(notes.map((item) => item.question.id)).toEqual([q3!.id])
     expect(notes[0]!.note).toBe('关键口诀：逆否等价')
 
-    // 目标考试名称与日期校验
+    // LIKE 通配符按字面量匹配，不把 % 当作全量通配
+    expect(database.listQuestionLibrary({ tab: 'notes', query: '100%' })).toHaveLength(0)
+    // limit 为 NaN 时回退默认值且非法 tab 显式抛错
+    expect(database.listQuestionLibrary({ tab: 'notes', limit: Number.NaN })).toHaveLength(1)
+    expect(() => database.listQuestionLibrary({ tab: 'invalid' as 'wrong' })).toThrow(
+      '不支持的题单类型'
+    )
+
+    // 目标考试名称与日期校验（含非法日历日期拦截）
     const saved = database.saveAppSettings({
       examGoalName: '  2027 国考  ',
       examGoalDate: '2026-12-01'
     })
     expect(saved.examGoalName).toBe('2027 国考')
     expect(saved.examGoalDate).toBe('2026-12-01')
-    const invalid = database.saveAppSettings({ examGoalDate: 'bad-date' })
-    expect(invalid.examGoalDate).toBe('')
+    expect(database.saveAppSettings({ examGoalDate: 'bad-date' }).examGoalDate).toBe('')
+    expect(database.saveAppSettings({ examGoalDate: '2026-02-31' }).examGoalDate).toBe('')
+    expect(database.saveAppSettings({ examGoalDate: '2026-13-45' }).examGoalDate).toBe('')
   })
 })

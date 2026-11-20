@@ -7,7 +7,7 @@ import { invoke } from '../api'
 import { MarkdownContent } from '../components/MarkdownContent'
 import { ReadingTypographyBar, useReadingTypography } from '../components/ReadingTypographyControl'
 import { EmptyState, ErrorState, LoadingState, PageHeader, Section } from '../components/ui'
-import { extractMarkdownHeadings, extractSearchSnippet } from '../services/study-helpers'
+import { extractSearchSnippet } from '../services/study-helpers'
 
 interface KnowledgePageProps {
   subject: Subject
@@ -42,24 +42,35 @@ export function KnowledgePage({ subject, kind }: KnowledgePageProps): React.JSX.
     )
   }, [documents, query])
   const selected = filtered.find((item) => item.id === selectedId) ?? filtered[0]
-  const headings = useMemo(
-    () => (selected ? extractMarkdownHeadings(selected.content) : []),
-    [selected?.id, selected?.content]
-  )
   const contentRef = useRef<HTMLElement>(null)
+  const [headings, setHeadings] = useState<
+    Array<{ level: 2 | 3; text: string; element: HTMLElement }>
+  >([])
   useEffect(() => {
     // 切换文档后内容区回到顶部，避免停留在上一篇的滚动位置
-    contentRef.current?.scrollTo({ top: 0 })
-  }, [selected?.id])
-
-  function scrollToHeading(headingIndex: number): void {
     const container = contentRef.current
-    if (!container) return
-    const nodes = container.querySelectorAll('.markdown h2, .markdown h3')
-    const target = nodes[headingIndex]
-    if (target instanceof HTMLElement) {
-      target.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    container?.scrollTo({ top: 0 })
+    if (!container || !selected) {
+      setHeadings([])
+      return
     }
+    // 直接从已渲染 DOM 采集 h2/h3 节点，消除 ATX / Setext / HTML 标题 / 引用块标题的下标错位
+    const collected: Array<{ level: 2 | 3; text: string; element: HTMLElement }> = []
+    for (const node of container.querySelectorAll('.markdown h2, .markdown h3')) {
+      if (!(node instanceof HTMLElement)) continue
+      const text = (node.textContent ?? '').replace(/\s+/g, ' ').trim()
+      if (!text) continue
+      collected.push({
+        level: node.tagName === 'H3' ? 3 : 2,
+        text,
+        element: node
+      })
+    }
+    setHeadings(collected)
+  }, [selected?.id, selected?.content])
+
+  function scrollToHeading(element: HTMLElement): void {
+    element.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }
   const title = `${subject === 'xingce' ? '行测' : '申论'}${kind === 'knowledge' ? '知识' : '方法'}中心`
   if (error)
@@ -130,12 +141,12 @@ export function KnowledgePage({ subject, kind }: KnowledgePageProps): React.JSX.
                   <nav className="doc-toc" aria-label="文档目录">
                     <span className="doc-toc-label">目录</span>
                     <div className="doc-toc-items">
-                      {headings.map((heading) => (
+                      {headings.map((heading, headingIndex) => (
                         <button
-                          key={`${heading.index}-${heading.text}`}
+                          key={`${headingIndex}-${heading.text}`}
                           type="button"
                           className={`doc-toc-item${heading.level === 3 ? ' is-sub' : ''}`}
-                          onClick={() => scrollToHeading(heading.index)}
+                          onClick={() => scrollToHeading(heading.element)}
                         >
                           {heading.text}
                         </button>

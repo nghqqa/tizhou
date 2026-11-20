@@ -121,6 +121,7 @@ function Trainer({
   })
   const startedAt = useRef(Date.now())
   const currentQuestionIdRef = useRef('')
+  const activeSessionIdRef = useRef('')
 
   useEffect(() => {
     // 科目/分类元数据跟随筛选变化（科目筛选来自 URL 参数或下拉选择，空值与 common 视为不限）
@@ -165,6 +166,7 @@ function Trainer({
 
   const current = questions[index]
   currentQuestionIdRef.current = current?.id ?? ''
+  activeSessionIdRef.current = session?.id ?? ''
   const currentRecord = current
     ? sessionResults.find((item) => item.questionId === current.id)
     : undefined
@@ -194,11 +196,16 @@ function Trainer({
   function toggleEliminate(key: string, event: React.MouseEvent): void {
     event.preventDefault()
     if (!current || result || currentRecord) return
+    const alreadyEliminated = (eliminatedByQuestion[current.id] ?? []).includes(key)
     setEliminatedByQuestion((prev) => {
       const list = prev[current.id] ?? []
       const nextList = list.includes(key) ? list.filter((item) => item !== key) : [...list, key]
       return { ...prev, [current.id]: nextList }
     })
+    // 右键划除当前已选中的选项时同步取消选中，确保划除态即时可见
+    if (!alreadyEliminated && selected.includes(key)) {
+      setSelected((prev) => prev.filter((item) => item !== key))
+    }
   }
 
   useEffect(() => {
@@ -225,9 +232,10 @@ function Trainer({
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
-      // 焦点在表单控件上时不抢键盘：Select/Button 上的 Enter 属于控件本身（避免误提交）
+      // 焦点在表单控件上或提交在途时不抢键盘：避免误提交或提交中跳题串状态
       if (
         !current ||
+        loading ||
         event.target instanceof HTMLInputElement ||
         event.target instanceof HTMLTextAreaElement ||
         event.target instanceof HTMLSelectElement ||
@@ -264,6 +272,7 @@ function Trainer({
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [
     current,
+    loading,
     result,
     currentRecord,
     selected,
@@ -310,14 +319,23 @@ function Trainer({
           }
         }
       })
-      setSessionResults(rebuilt)
+      if (activeSessionIdRef.current !== active.id) return
+      setSessionResults((prev) => {
+        const merged = new Map<string, SessionResult>()
+        for (const item of rebuilt) merged.set(item.questionId, item)
+        // 保留恢复期间用户已经提交的新记录，避免被旧查询结果覆盖
+        for (const item of prev) merged.set(item.questionId, item)
+        return [...merged.values()]
+      })
       const currentId = active.questionIds[active.currentIndex]
-      const currentHit = rebuilt.find((item) => item.questionId === currentId)
-      if (currentHit) {
-        const snapshot = currentId ? active.questionSnapshots[currentId] : undefined
-        if (snapshot?.type === 'essay') setEssayAnswer(currentHit.answer[0] ?? '')
-        else setSelected(currentHit.answer)
-        if (active.feedbackMode === 'immediate') setResult(currentHit.result)
+      if (currentId && currentQuestionIdRef.current === currentId) {
+        const currentHit = rebuilt.find((item) => item.questionId === currentId)
+        if (currentHit) {
+          const snapshot = active.questionSnapshots[currentId]
+          if (snapshot?.type === 'essay') setEssayAnswer(currentHit.answer[0] ?? '')
+          else setSelected(currentHit.answer)
+          if (active.feedbackMode === 'immediate') setResult(currentHit.result)
+        }
       }
     } catch {
       // 拉取失败退化为内存态：不阻塞恢复本身
@@ -415,19 +433,21 @@ function Trainer({
   }
 
   async function submit(): Promise<void> {
-    if (!current) return
+    if (!current || loading) return
     const answer = current.type === 'essay' ? [essayAnswer.trim()] : selected
     if (!answer[0]) {
       setError('请先填写或选择答案')
       return
     }
+    const submittedQuestionId = current.id
+    const submittedSessionId = session?.id ?? ''
     setLoading(true)
     setError('')
     try {
       const response = await invoke<AttemptResult>({
         method: 'attempt.submit',
         params: {
-          questionId: current.id,
+          questionId: submittedQuestionId,
           answer,
           durationSeconds: Math.round((Date.now() - startedAt.current) / 1000),
           mode: review ? 'review' : 'practice',
@@ -436,12 +456,16 @@ function Trainer({
           reviewFeedback: review ? reviewFeedback : undefined
         }
       })
-      const updatedResults = [
-        ...sessionResults.filter((item) => item.questionId !== current.id),
-        { questionId: current.id, result: response, answer }
-      ]
-      setSessionResults(updatedResults)
       void refreshDashboard()
+      if (activeSessionIdRef.current !== submittedSessionId) return
+      const updatedResults = [
+        ...sessionResults.filter((item) => item.questionId !== submittedQuestionId),
+        { questionId: submittedQuestionId, result: response, answer }
+      ]
+      setSessionResults((prev) => [
+        ...prev.filter((item) => item.questionId !== submittedQuestionId),
+        { questionId: submittedQuestionId, result: response, answer }
+      ])
       if (feedbackMode === 'summary') {
         const answeredIds = new Set(updatedResults.map((item) => item.questionId))
         let nextUnanswered = -1
@@ -457,20 +481,23 @@ function Trainer({
           if (session)
             await invoke({ method: 'practice.session.complete', params: { id: session.id } })
           setSummaryComplete(true)
-        } else {
+        } else if (currentQuestionIdRef.current === submittedQuestionId) {
           await jumpTo(nextUnanswered, updatedResults)
         }
-      } else {
+      } else if (currentQuestionIdRef.current === submittedQuestionId) {
         setResult(response)
-        setSimilar(
-          await invoke<Question[]>({
-            method: 'questions.similar',
-            params: { id: current.id, limit: 3 }
-          })
-        )
+        const similarList = await invoke<Question[]>({
+          method: 'questions.similar',
+          params: { id: submittedQuestionId, limit: 3 }
+        })
+        if (currentQuestionIdRef.current === submittedQuestionId) {
+          setSimilar(similarList)
+        }
       }
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : '提交失败')
+      if (currentQuestionIdRef.current === submittedQuestionId) {
+        setError(cause instanceof Error ? cause.message : '提交失败')
+      }
     } finally {
       setLoading(false)
     }
@@ -991,6 +1018,7 @@ function Trainer({
               <Button
                 appearance="subtle"
                 icon={<ArrowLeftIcon />}
+                disabled={loading}
                 onClick={() => void jumpTo(index - 1)}
               >
                 上一题
@@ -1048,6 +1076,7 @@ function Trainer({
                   className={`question-number${statusClass}${isUncertain ? ' is-uncertain' : ''}`}
                   size="small"
                   appearance={questionIndex === index ? 'primary' : rec ? 'secondary' : 'subtle'}
+                  disabled={loading}
                   onClick={() => void jumpTo(questionIndex)}
                 >
                   {questionIndex + 1}
@@ -1342,9 +1371,10 @@ function QuestionLibraryView({ tab }: { tab: 'wrong' | 'favorite' | 'notes' }): 
               <option value="知识缺口">知识缺口</option>
               <option value="概念混淆">概念混淆</option>
               <option value="审题失误">审题失误</option>
-              <option value="计算粗心">计算粗心</option>
-              <option value="策略过慢">策略过慢</option>
-              <option value="时间失控">时间失控</option>
+              <option value="计算失误">计算失误</option>
+              <option value="时间压力">时间压力</option>
+              <option value="猜测">猜测</option>
+              <option value="未知">未知</option>
               <option value="未标注">未标注</option>
             </Select>
           </Field>

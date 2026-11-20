@@ -135,6 +135,87 @@ describe('启动、导航与全局功能', () => {
     expect(latest).toContain('更新源：GitHub')
   })
 
+  itE2E(
+    '专项练习新交互（只练未做/计时/右键排除/答题卡跳题/笔记）与错题复习 4 Tab',
+    async (page) => {
+      await page.getByRole('link', { name: '专项练习' }).click()
+      await page.getByRole('button', { name: '生成训练' }).waitFor({ timeout: 30_000 })
+      await page.getByLabel('只练未做').check()
+      await page.getByRole('button', { name: '生成训练' }).click()
+
+      // 单题计时器可见且点击可切换显隐
+      const timer = page.locator('.practice-timer')
+      await timer.waitFor({ timeout: 30_000 })
+      await timer.click()
+      expect(await timer.textContent()).toContain('计时已隐藏')
+      await timer.click()
+      expect(await timer.textContent()).toMatch(/\d{2}:\d{2}/)
+
+      // 右键划除首个选项 → 验证划除态；左键点击该选项 → 验证选中并自动取消划除
+      const firstOption = page.locator('.options .option-button').first()
+      await firstOption.waitFor({ timeout: 15_000 })
+      await firstOption.click({ button: 'right' })
+      expect(await firstOption.getAttribute('class')).toContain('is-eliminated')
+      await firstOption.click()
+      const afterSelectClass = (await firstOption.getAttribute('class')) ?? ''
+      expect(afterSelectClass).toContain('selected')
+      expect(afterSelectClass).not.toContain('is-eliminated')
+      // 已选中项再次右键：同步取消选中并显示划除态
+      await firstOption.click({ button: 'right' })
+      const afterReEliminate = (await firstOption.getAttribute('class')) ?? ''
+      expect(afterReEliminate).toContain('is-eliminated')
+      expect(afterReEliminate).not.toContain('selected')
+      await firstOption.click()
+
+      // 答题卡跳题到第 2 题，再点「上一题」回第 1 题
+      const sheetButtons = page.locator('.question-grid .question-number')
+      if ((await sheetButtons.count()) >= 2) {
+        await sheetButtons.nth(1).click()
+        await page.getByText(/第 2 题/).waitFor({ timeout: 15_000 })
+        await page.getByRole('button', { name: '上一题' }).click()
+        await page.getByText(/第 1 题/).waitFor({ timeout: 15_000 })
+      }
+
+      // 提交第 1 题并保存笔记，验证错题复习 4 Tab 中「我的笔记」可见
+      await firstOption.click()
+      await page.getByRole('button', { name: '提交答案' }).click()
+      await page.getByRole('button', { name: /下一题|完成本组/ }).waitFor({ timeout: 15_000 })
+      await page.getByPlaceholder('记录方法、陷阱或复盘结论').fill('E2E 复盘笔记关键字_TIZHOU27')
+      await page.getByRole('button', { name: '保存笔记' }).click()
+      await new Promise((resolve) => setTimeout(resolve, 400))
+
+      await page.getByRole('link', { name: '错题复习' }).click()
+      await page.getByRole('tab', { name: '错题本' }).waitFor({ timeout: 15_000 })
+      await page.getByRole('tab', { name: '我的收藏' }).click()
+      await page.getByRole('tab', { name: '我的笔记' }).click()
+      await page.getByText('E2E 复盘笔记关键字_TIZHOU27').waitFor({ timeout: 15_000 })
+    }
+  )
+
+  itE2E('首页目标考试倒计时行内设置与知识中心全文检索/目录', async (page) => {
+    await page.getByRole('link', { name: '今日工作台' }).click()
+    const goalTrigger = page.locator('.dash-countdown-pill')
+    await goalTrigger.waitFor({ timeout: 15_000 })
+    await goalTrigger.click()
+    await page.getByPlaceholder('考试名称（如 2027 国考）').fill('2027国考E2E')
+    await page.locator('.dash-countdown-form input[type="date"]').fill('2027-11-28')
+    await page.locator('.dash-countdown-form').getByRole('button', { name: '保存' }).click()
+    await page.getByText(/距 2027国考E2E 还有 \d+ 天/).waitFor({ timeout: 15_000 })
+
+    // 知识中心全文检索与目录渲染
+    await page.getByRole('link', { name: '行测知识' }).click()
+    const searchInput = page.getByPlaceholder('标题、摘要、标签或正文关键词')
+    await searchInput.waitFor({ timeout: 15_000 })
+    await page.locator('.doc-reading-body').waitFor({ timeout: 15_000 })
+    const tocItems = page.locator('.doc-toc-item')
+    if ((await tocItems.count()) >= 2) {
+      await tocItems.nth(1).click()
+    }
+    await searchInput.fill('增长')
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    await searchInput.fill('')
+  })
+
   itE2E('页面渲染崩溃：错误边界显示，侧栏仍可用，可重新加载', async (page) => {
     await page.getByRole('link', { name: '今日工作台' }).click()
     await page.getByTestId('e2e-crash').click()

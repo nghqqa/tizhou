@@ -29,6 +29,27 @@ import { EmptyState, ErrorState, LoadingState, PageHeader, Section } from '../co
 import { EssaySaveController, ExamAnswerSaveController } from '../services/exam-essay-save'
 import { useAppStore } from '../store'
 
+const EXAM_UNCERTAIN_PREFIX = 'tizhou:exam-uncertain:'
+
+/** 清理已结束或弃考模考遗留的本地待查标记，仅保留当前进行中的场次 */
+function pruneStaleExamUncertainKeys(activeExamId?: string): void {
+  try {
+    const keepKey = activeExamId ? `${EXAM_UNCERTAIN_PREFIX}${activeExamId}` : ''
+    const staleKeys: string[] = []
+    for (let i = 0; i < window.localStorage.length; i += 1) {
+      const key = window.localStorage.key(i)
+      if (key && key.startsWith(EXAM_UNCERTAIN_PREFIX) && key !== keepKey) {
+        staleKeys.push(key)
+      }
+    }
+    for (const key of staleKeys) {
+      window.localStorage.removeItem(key)
+    }
+  } catch {
+    /* 忽略受限存储环境失败 */
+  }
+}
+
 export function ExamHomePage(): React.JSX.Element {
   const navigate = useNavigate()
   const data = useAppStore((state) => state.data)!
@@ -47,7 +68,10 @@ export function ExamHomePage(): React.JSX.Element {
   const [paperChoice, setPaperChoice] = useState('')
   useEffect(() => {
     void invoke<ExamSession[]>({ method: 'exam.history' })
-      .then(setHistory)
+      .then((items) => {
+        setHistory(items)
+        pruneStaleExamUncertainKeys(items.find((item) => item.status === 'active')?.id)
+      })
       .catch(() => setHistory([]))
     void invoke<QuestionFacets>({ method: 'vault.facets', params: { subject: 'xingce' } })
       .then(setFacets)
@@ -388,11 +412,12 @@ export function ExamRunPage(): React.JSX.Element {
   useEffect(() => {
     void invoke<ExamSession | undefined>({ method: 'exam.active' })
       .then((active) => {
+        pruneStaleExamUncertainKeys(active?.id)
         if (!active) return
         setExam(active)
         setSeconds(remainingSeconds(active))
         try {
-          const savedUncertain = window.localStorage.getItem(`tizhou:exam-uncertain:${active.id}`)
+          const savedUncertain = window.localStorage.getItem(`${EXAM_UNCERTAIN_PREFIX}${active.id}`)
           if (savedUncertain) {
             const parsed = JSON.parse(savedUncertain)
             if (Array.isArray(parsed)) setUncertainIds(parsed.map(String))
@@ -442,7 +467,8 @@ export function ExamRunPage(): React.JSX.Element {
 
   function toggleEliminate(key: string, event: React.MouseEvent): void {
     event.preventDefault()
-    if (!current) return
+    // 已选中的选项不进入划除态，避免出现“内部已划除但界面仍显示选中”的无反馈状态
+    if (!current || currentAnswer.includes(key)) return
     setEliminatedByQuestion((prev) => {
       const list = prev[current.id] ?? []
       const nextList = list.includes(key) ? list.filter((item) => item !== key) : [...list, key]

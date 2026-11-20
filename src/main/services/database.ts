@@ -53,6 +53,15 @@ export function localDateKeyOf(value: string | Date): string {
   return `${year}-${month}-${day}`
 }
 
+/** 严格校验证实存在的公历日期 `YYYY-MM-DD`（拦截 `2026-02-31`、`2026-13-45` 等伪日期） */
+function isValidCalendarDate(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
+  const [y, m, d] = value.split('-').map(Number)
+  if (!y || !m || !d) return false
+  const date = new Date(y, m - 1, d)
+  return date.getFullYear() === y && date.getMonth() === m - 1 && date.getDate() === d
+}
+
 /** listQuestions 族共用过滤条件（渲染层 QuestionFilter 的主进程宽松版） */
 interface QuestionListFilter {
   subject?: string
@@ -401,7 +410,7 @@ export class DatabaseService {
       typeof settings.examGoalName === 'string' ? settings.examGoalName.trim().slice(0, 40) : ''
     const rawGoalDate =
       typeof settings.examGoalDate === 'string' ? settings.examGoalDate.trim() : ''
-    settings.examGoalDate = /^\d{4}-\d{2}-\d{2}$/.test(rawGoalDate) ? rawGoalDate : ''
+    settings.examGoalDate = isValidCalendarDate(rawGoalDate) ? rawGoalDate : ''
     this.setSetting('app_settings', settings)
     return settings
   }
@@ -716,6 +725,9 @@ export class DatabaseService {
     query?: string
     limit?: number
   }): QuestionLibraryItem[] {
+    if (params.tab !== 'wrong' && params.tab !== 'favorite' && params.tab !== 'notes') {
+      throw new Error('不支持的题单类型')
+    }
     const where = ['v.active = 1']
     const values: SqlValue[] = []
     let joinSql = ''
@@ -755,13 +767,15 @@ export class DatabaseService {
       values.push(params.category.trim())
     }
     if (params.query?.trim()) {
-      const keyword = `%${params.query.trim()}%`
+      const escaped = params.query.trim().replace(/[\\%_]/g, '\\$&')
+      const keyword = `%${escaped}%`
       where.push(
-        "(q.stem LIKE ? OR q.explanation LIKE ? OR q.tags_json LIKE ? OR COALESCE(n.content, '') LIKE ?)"
+        "(q.stem LIKE ? ESCAPE '\\' OR q.explanation LIKE ? ESCAPE '\\' OR q.tags_json LIKE ? ESCAPE '\\' OR COALESCE(n.content, '') LIKE ? ESCAPE '\\')"
       )
       values.push(keyword, keyword, keyword, keyword)
     }
-    const limit = Math.max(1, Math.min(500, Math.round(params.limit ?? 200)))
+    const rawLimit = Number.isFinite(params.limit) ? Number(params.limit) : 200
+    const limit = Math.max(1, Math.min(500, Math.round(rawLimit)))
     const rows = this.db
       .prepare(
         `SELECT q.*,

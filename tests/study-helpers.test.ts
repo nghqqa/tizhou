@@ -17,6 +17,26 @@ describe('study-helpers（申论字数识别、文档目录/正文检索、考�
       max: 1000,
       label: '800–1000 字'
     })
+    expect(extractWordLimit('请写一篇文章，字数 800–1000 字。')).toEqual({
+      min: 800,
+      max: 1000,
+      label: '800–1000 字'
+    })
+    expect(extractWordLimit('自拟题目写一篇议论文，不少于1000字，不超过1200字。')).toEqual({
+      min: 1000,
+      max: 1200,
+      label: '1000–1200 字'
+    })
+    expect(extractWordLimit('要求：不超过1200字，不少于800字。')).toEqual({
+      min: 800,
+      max: 1200,
+      label: '800–1200 字'
+    })
+    expect(extractWordLimit('要求：300字以上，500字以内。')).toEqual({
+      min: 300,
+      max: 500,
+      label: '300–500 字'
+    })
     expect(extractWordLimit('自拟题目写一篇议论文，不少于1000字。')).toEqual({
       min: 1000,
       label: '≥ 1000 字'
