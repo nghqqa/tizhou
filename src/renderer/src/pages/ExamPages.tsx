@@ -298,7 +298,7 @@ export function ExamHomePage(): React.JSX.Element {
                     <td>{exam.subject === 'xingce' ? '行测' : '申论'}</td>
                     <td>
                       {exam.status === 'active'
-                        ? `已答 ${Object.keys(exam.answers).length}/${exam.questionIds.length}`
+                        ? `已答 ${Object.values(exam.answers).filter((a) => a.answer.some((v) => v.trim())).length}/${exam.questionIds.length}`
                         : '已交卷'}
                     </td>
                     <td>{exam.score === undefined ? '暂未评分' : `${exam.score} 分`}</td>

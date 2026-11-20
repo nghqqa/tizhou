@@ -333,6 +333,8 @@ export function CommandPalette({
         className="command-palette"
         onClick={(event) => event.stopPropagation()}
         onKeyDown={(event) => {
+          // 输入法组合态（中文打词选字阶段）不拦截按键，避免按 Enter 确认候选词时误触发跳转
+          if (event.nativeEvent.isComposing || event.keyCode === 229) return
           if (event.key === 'Escape') {
             event.preventDefault()
             onClose()

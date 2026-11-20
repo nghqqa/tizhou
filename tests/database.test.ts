@@ -620,6 +620,13 @@ describe('DatabaseService local-date statistics and exam edge cases', () => {
     database.setFavorite(q1!.id, true)
     database.saveNote(q1!.id, '模考复盘笔记')
     database.setWrongQuestionCause(q1!.id, '时间压力')
+    // 再次答错且未填写新错因时，保留既有错因标注不被空值冲掉
+    database.submitAttempt({
+      questionId: q1!.id,
+      answer: ['Z'],
+      durationSeconds: 10,
+      mode: 'practice'
+    })
 
     const meta = database.getQuestionsUserMeta([q1!.id, q2!.id])
     expect(meta[q1!.id]).toEqual({

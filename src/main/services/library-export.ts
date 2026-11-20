@@ -58,7 +58,7 @@ export function renderQuestionLibraryMarkdown(
 
   const lines: string[] = [
     '---',
-    `title: ${title}`,
+    `title: ${JSON.stringify(title.replace(/[\r\n]+/g, ' ').trim())}`,
     `date: ${dateText}`,
     `count: ${items.length}`,
     `includeAnswers: ${params.includeAnswers}`,

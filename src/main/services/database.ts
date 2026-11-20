@@ -1347,7 +1347,7 @@ export class DatabaseService {
             wrong_count = wrong_questions.wrong_count + 1,
             correct_streak = 0,
             mastered = 0,
-            last_wrong_cause = excluded.last_wrong_cause,
+            last_wrong_cause = COALESCE(NULLIF(trim(excluded.last_wrong_cause), ''), wrong_questions.last_wrong_cause),
             last_attempt_at = excluded.last_attempt_at`
         )
         .run(

@@ -59,15 +59,18 @@ export function ExamResultPage(): React.JSX.Element {
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState<ReviewFilter>('all')
   const [userMeta, setUserMeta] = useState<Record<string, QuestionUserMeta>>({})
+  const [userMetaLoaded, setUserMetaLoaded] = useState(false)
   const [noteDrafts, setNoteDrafts] = useState<Record<string, string>>({})
   const [openNoteIds, setOpenNoteIds] = useState<Record<string, boolean>>({})
   const [savingNoteId, setSavingNoteId] = useState('')
   const [redoBusy, setRedoBusy] = useState(false)
+  const [pendingScrollId, setPendingScrollId] = useState<string | null>(null)
 
   useEffect(() => {
     if (!id) return
     let cancelled = false
     setLoading(true)
+    setUserMetaLoaded(false)
     void invoke<ExamSession | null>({ method: 'exam.get', params: { examId: id } })
       .then((result) => {
         if (cancelled) return
@@ -88,9 +91,10 @@ export function ExamResultPage(): React.JSX.Element {
               drafts[qId] = item.note
             }
             setNoteDrafts(drafts)
+            setUserMetaLoaded(true)
           })
           .catch(() => {
-            /* 元数据拉取失败不阻塞复盘主视图 */
+            /* 元数据拉取失败时不置 loaded，避免空草稿误覆盖库中已有笔记 */
           })
       })
       .catch((cause) => {
@@ -244,17 +248,23 @@ export function ExamResultPage(): React.JSX.Element {
     }
   }
 
-  function jumpToQuestion(questionId: string, isCorrect: boolean): void {
-    const doScroll = (): void => {
-      const target = document.getElementById(`exam-review-q-${questionId}`)
-      if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  useEffect(() => {
+    if (!pendingScrollId) return
+    const target = document.getElementById(`exam-review-q-${pendingScrollId}`)
+    if (target) {
+      target.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      setPendingScrollId(null)
     }
+  }, [pendingScrollId, filter, filteredItems.length])
+
+  function jumpToQuestion(questionId: string, isCorrect: boolean): void {
     if (filter === 'wrong-unanswered' && isCorrect) {
       setFilter('all')
-      window.setTimeout(doScroll, 40)
-    } else {
-      doScroll()
+      setPendingScrollId(questionId)
+      return
     }
+    const target = document.getElementById(`exam-review-q-${questionId}`)
+    if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }
 
   if (loading)
@@ -385,7 +395,13 @@ export function ExamResultPage(): React.JSX.Element {
                       {item.totalDuration > 0 && (
                         <>
                           {' · '}总耗时 {formatDurationBrief(item.totalDuration)} · 均题{' '}
-                          <span className={item.avgDuration > 75 ? 'warning' : undefined}>
+                          <span
+                            className={
+                              exam.subject !== 'shenlun' && item.avgDuration > 75
+                                ? 'warning'
+                                : undefined
+                            }
+                          >
                             {item.avgDuration}秒
                           </span>
                         </>
@@ -411,7 +427,7 @@ export function ExamResultPage(): React.JSX.Element {
         <div style={{ marginTop: 16 }}>
           <Section
             title="题号快速定位"
-            description="绿底为答对、红底为答错/未答；点击题号直接定位到对应解析。"
+            description="绿底为答对、红底为答错、灰底为未作答；点击题号直接定位到对应解析。"
           >
             <div className="exam-review-jumpbar">
               {reviewItems.map((item) => (
@@ -599,11 +615,15 @@ export function ExamResultPage(): React.JSX.Element {
                           size="small"
                           appearance="secondary"
                           icon={<NotePencilIcon />}
-                          disabled={savingNoteId === item.question.id}
+                          disabled={!userMetaLoaded || savingNoteId === item.question.id}
                           style={{ marginTop: 8 }}
                           onClick={() => void saveNote(item.question.id)}
                         >
-                          {savingNoteId === item.question.id ? '保存中…' : '保存笔记'}
+                          {savingNoteId === item.question.id
+                            ? '保存中…'
+                            : userMetaLoaded
+                              ? '保存笔记'
+                              : '加载中…'}
                         </Button>
                       </div>
                     )}

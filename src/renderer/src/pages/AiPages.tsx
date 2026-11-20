@@ -163,6 +163,8 @@ export function AiPage(): React.JSX.Element {
     setMessages(conv.messages)
     setError('')
     setShowContextDetail(false)
+    // 切换会话时立即清空上一会话的原题背景，避免异步拉取期间旧题上下文串入新会话
+    setContextQuestion(null)
     if (conv.questionId) {
       void invoke<Question | undefined>({
         method: 'questions.get',
@@ -174,8 +176,6 @@ export function AiPage(): React.JSX.Element {
         .catch(() => {
           if (activeConvIdRef.current === conv.id) setContextQuestion(null)
         })
-    } else {
-      setContextQuestion(null)
     }
   }
 
