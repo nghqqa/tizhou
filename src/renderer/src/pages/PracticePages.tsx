@@ -30,6 +30,7 @@ import { FEATURE_PROMPTS, taskDataEnvelope } from '@shared/prompts'
 import { invoke } from '../api'
 import { MarkdownContent } from '../components/MarkdownContent'
 import { OptionContent } from '../components/OptionContent'
+import { ReadingTypographyBar, useReadingTypography } from '../components/ReadingTypographyControl'
 import { EmptyState, ErrorState, LoadingState, PageHeader, Section } from '../components/ui'
 import { useAppStore } from '../store'
 
@@ -93,6 +94,7 @@ function Trainer({
   const [similar, setSimilar] = useState<Question[]>([])
   const [aiExplanation, setAiExplanation] = useState('')
   const [aiBusy, setAiBusy] = useState(false)
+  const reading = useReadingTypography()
   const [wrongCause, setWrongCause] = useState('')
   const [reviewFeedback, setReviewFeedback] = useState<'forgot' | 'hard' | 'normal' | 'easy'>(
     'normal'
@@ -720,79 +722,94 @@ function Trainer({
           </span>
         </div>
         <ProgressBar value={(index + 1) / questions.length} />
-        <div className="question-meta" style={{ marginTop: 18 }}>
-          <span className="pill">
-            {current.type === 'single'
-              ? '单选题'
-              : current.type === 'multiple'
-                ? '多选题'
-                : current.type === 'judge'
-                  ? '判断题'
-                  : '主观题'}
-          </span>
-          <span className="pill">{current.source}</span>
-          {current.year && <span className="pill">{current.year}</span>}
-          {current.region && <span className="pill">{current.region}</span>}
-          {current.paper && <span className="pill">{current.paper}</span>}
-          {uncertain && <span className="pill warning">待复查</span>}
-        </div>
-        {current.material && (
-          <div className="answer-panel">
-            <strong>给定材料</strong>
-            <MarkdownContent content={current.material} sourceFilePath={current.filePath} />
+        <div className="question-top-bar">
+          <div className="question-meta">
+            <span className="pill">
+              {current.type === 'single'
+                ? '单选题'
+                : current.type === 'multiple'
+                  ? '多选题'
+                  : current.type === 'judge'
+                    ? '判断题'
+                    : '主观题'}
+            </span>
+            <span className="pill">{current.source}</span>
+            {current.year && <span className="pill">{current.year}</span>}
+            {current.region && <span className="pill">{current.region}</span>}
+            {current.paper && <span className="pill">{current.paper}</span>}
+            {uncertain && <span className="pill warning">待复查</span>}
           </div>
-        )}
-        <MarkdownContent
-          className="question-stem"
-          content={current.stem}
-          sourceFilePath={current.filePath}
-        />
-        {current.type === 'essay' ? (
-          <Textarea
-            resize="vertical"
-            rows={8}
-            value={essayAnswer}
-            onChange={(_, data) => setEssayAnswer(data.value)}
-            placeholder="写下你的作答要点"
-            disabled={Boolean(result)}
+          <ReadingTypographyBar
+            typography={reading.typography}
+            onUpdate={reading.update}
+            onStepScale={reading.stepScale}
+            onResetScale={reading.resetScale}
           />
-        ) : (
-          <div className="options">
-            {current.options.map((option) => (
-              <button
-                type="button"
-                key={option.key}
-                className={`option-button ${
-                  result
-                    ? current.answer.includes(option.key)
-                      ? 'correct'
+        </div>
+        <div
+          ref={reading.surfaceRef}
+          className="question-reading-surface"
+          data-reading-font={reading.typography.font}
+          style={reading.surfaceStyle}
+        >
+          {current.material && (
+            <div className="answer-panel">
+              <strong>给定材料</strong>
+              <MarkdownContent content={current.material} sourceFilePath={current.filePath} />
+            </div>
+          )}
+          <MarkdownContent
+            className="question-stem"
+            content={current.stem}
+            sourceFilePath={current.filePath}
+          />
+          {current.type === 'essay' ? (
+            <Textarea
+              resize="vertical"
+              rows={8}
+              value={essayAnswer}
+              onChange={(_, data) => setEssayAnswer(data.value)}
+              placeholder="写下你的作答要点"
+              disabled={Boolean(result)}
+            />
+          ) : (
+            <div className="options">
+              {current.options.map((option) => (
+                <button
+                  type="button"
+                  key={option.key}
+                  className={`option-button ${
+                    result
+                      ? current.answer.includes(option.key)
+                        ? 'correct'
+                        : selected.includes(option.key)
+                          ? 'wrong'
+                          : 'dimmed'
                       : selected.includes(option.key)
-                        ? 'wrong'
-                        : 'dimmed'
-                    : selected.includes(option.key)
-                      ? 'selected'
-                      : ''
-                }`}
-                onClick={() => choose(option.key)}
-                disabled={Boolean(result)}
-              >
-                <span className="option-key">{option.key}</span>
-                <OptionContent option={option} sourceFilePath={current.filePath} />
-              </button>
-            ))}
-          </div>
-        )}
-        {result && (
-          <div className="answer-panel">
-            <h3 className={result.correct ? 'positive' : 'negative'}>
-              {result.correct ? '回答正确' : '回答错误'}
-            </h3>
-            <p>参考答案：{result.expected.join('、')}</p>
-            <MarkdownContent content={result.explanation} sourceFilePath={current.filePath} />
-            {result.nextReviewAt && <p className="muted">已安排下一次间隔复习。</p>}
-            {result.mastered && <p className="positive">稳定答对，已标记为掌握。</p>}
-          </div>
-        )}
+                        ? 'selected'
+                        : ''
+                  }`}
+                  onClick={() => choose(option.key)}
+                  disabled={Boolean(result)}
+                >
+                  <span className="option-key">{option.key}</span>
+                  <OptionContent option={option} sourceFilePath={current.filePath} />
+                </button>
+              ))}
+            </div>
+          )}
+          {result && (
+            <div className="answer-panel">
+              <h3 className={result.correct ? 'positive' : 'negative'}>
+                {result.correct ? '回答正确' : '回答错误'}
+              </h3>
+              <p>参考答案：{result.expected.join('、')}</p>
+              <MarkdownContent content={result.explanation} sourceFilePath={current.filePath} />
+              {result.nextReviewAt && <p className="muted">已安排下一次间隔复习。</p>}
+              {result.mastered && <p className="positive">稳定答对，已标记为掌握。</p>}
+            </div>
+          )}
+        </div>
         <div className="question-footer">
           <div className="button-row">
             <Button

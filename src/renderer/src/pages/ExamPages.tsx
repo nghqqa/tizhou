@@ -18,6 +18,7 @@ import { useNavigate } from 'react-router-dom'
 import { formatDate, formatFullDate, invoke } from '../api'
 import { MarkdownContent } from '../components/MarkdownContent'
 import { OptionContent } from '../components/OptionContent'
+import { ReadingTypographyBar, useReadingTypography } from '../components/ReadingTypographyControl'
 import { EmptyState, ErrorState, LoadingState, PageHeader, Section } from '../components/ui'
 import { EssaySaveController, ExamAnswerSaveController } from '../services/exam-essay-save'
 import { useAppStore } from '../store'
@@ -321,6 +322,7 @@ export function ExamRunPage(): React.JSX.Element {
   )
   const [essayText, setEssayText] = useState('')
   const [saveBlocked, setSaveBlocked] = useState(false)
+  const reading = useReadingTypography()
   const essayTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const mountedRef = useRef(true)
   // 客观题答案保存控制器：串行化 + 同题去重 + 失败保留 + 交卷前 drain
@@ -576,74 +578,89 @@ export function ExamRunPage(): React.JSX.Element {
             <span>已答 {answered} 题</span>
           </div>
           <ProgressBar value={answered / exam.questionIds.length} />
-          <div className="question-meta" style={{ marginTop: 18 }}>
-            <span className="pill">{current.category}</span>
-            <span className="pill">难度 {current.difficulty}</span>
-            {current.year && <span className="pill">{current.year}</span>}
-            {current.region && <span className="pill">{current.region}</span>}
+          <div className="question-top-bar">
+            <div className="question-meta">
+              <span className="pill">{current.category}</span>
+              <span className="pill">难度 {current.difficulty}</span>
+              {current.year && <span className="pill">{current.year}</span>}
+              {current.region && <span className="pill">{current.region}</span>}
+            </div>
+            <ReadingTypographyBar
+              typography={reading.typography}
+              onUpdate={reading.update}
+              onStepScale={reading.stepScale}
+              onResetScale={reading.resetScale}
+            />
           </div>
-          {current.material && (
-            <div className="answer-panel">
-              <strong>给定材料</strong>
-              <MarkdownContent content={current.material} sourceFilePath={current.filePath} />
-            </div>
-          )}
-          <MarkdownContent
-            className="question-stem"
-            content={current.stem}
-            sourceFilePath={current.filePath}
-          />
-          {current.type === 'essay' ? (
-            <div>
-              <textarea
-                className="essay-editor"
-                data-testid="exam-essay-input"
-                aria-label="主观题作答输入"
-                value={essayText}
-                onChange={(event) => scheduleEssaySave(event.target.value)}
-              />
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 6 }}>
-                {saveStatus === 'saving' && (
-                  <span className="muted" style={{ fontSize: 11 }}>
-                    正在保存…
-                  </span>
-                )}
-                {saveStatus === 'saved' && (
-                  <span className="positive" style={{ fontSize: 11 }}>
-                    ✓ 已保存
-                  </span>
-                )}
-                {saveStatus === 'error' && !saveBlocked && (
-                  <span className="negative" style={{ fontSize: 11 }}>
-                    保存失败
-                  </span>
-                )}
-                {saveBlocked && (
-                  <span className="negative" style={{ fontSize: 11 }}>
-                    保存失败{' '}
-                    <Button size="small" appearance="secondary" onClick={() => void retrySave()}>
-                      重试保存
-                    </Button>
-                  </span>
-                )}
+          <div
+            ref={reading.surfaceRef}
+            className="question-reading-surface"
+            data-reading-font={reading.typography.font}
+            style={reading.surfaceStyle}
+          >
+            {current.material && (
+              <div className="answer-panel">
+                <strong>给定材料</strong>
+                <MarkdownContent content={current.material} sourceFilePath={current.filePath} />
               </div>
-            </div>
-          ) : (
-            <div className="options">
-              {current.options.map((option) => (
-                <button
-                  type="button"
-                  key={option.key}
-                  className={`option-button ${currentAnswer.includes(option.key) ? 'selected' : ''}`}
-                  data-testid={`exam-option-${option.key}`}
-                  onClick={() => void choose(option.key)}
-                >
-                  <span className="option-key">{option.key}</span>
-                  <OptionContent option={option} sourceFilePath={current.filePath} />
-                </button>
-              ))}
-            </div>
-          )}
+            )}
+            <MarkdownContent
+              className="question-stem"
+              content={current.stem}
+              sourceFilePath={current.filePath}
+            />
+            {current.type === 'essay' ? (
+              <div>
+                <textarea
+                  className="essay-editor"
+                  data-testid="exam-essay-input"
+                  aria-label="主观题作答输入"
+                  value={essayText}
+                  onChange={(event) => scheduleEssaySave(event.target.value)}
+                />
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 6 }}>
+                  {saveStatus === 'saving' && (
+                    <span className="muted" style={{ fontSize: 11 }}>
+                      正在保存…
+                    </span>
+                  )}
+                  {saveStatus === 'saved' && (
+                    <span className="positive" style={{ fontSize: 11 }}>
+                      ✓ 已保存
+                    </span>
+                  )}
+                  {saveStatus === 'error' && !saveBlocked && (
+                    <span className="negative" style={{ fontSize: 11 }}>
+                      保存失败
+                    </span>
+                  )}
+                  {saveBlocked && (
+                    <span className="negative" style={{ fontSize: 11 }}>
+                      保存失败{' '}
+                      <Button size="small" appearance="secondary" onClick={() => void retrySave()}>
+                        重试保存
+                      </Button>
+                    </span>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="options">
+                {current.options.map((option) => (
+                  <button
+                    type="button"
+                    key={option.key}
+                    className={`option-button ${currentAnswer.includes(option.key) ? 'selected' : ''}`}
+                    data-testid={`exam-option-${option.key}`}
+                    onClick={() => void choose(option.key)}
+                  >
+                    <span className="option-key">{option.key}</span>
+                    <OptionContent option={option} sourceFilePath={current.filePath} />
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
           <div className="question-footer">
             <Button
               icon={<ArrowLeftIcon />}
