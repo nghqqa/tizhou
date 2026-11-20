@@ -598,26 +598,43 @@ async function stage2BuildAndVerify(ctx) {
   }
 }
 
+/**
+ * 查询本地 tag 指向的 commit SHA（经 `^{commit}` 解引用，兼容附注 tag 与轻量 tag）。
+ * 不存在时返回 null。
+ */
+export function resolveLocalTagCommit(tagName, cwd = ROOT) {
+  const existing = spawnSync(
+    'git',
+    ['rev-parse', '-q', '--verify', `refs/tags/${tagName}^{commit}`],
+    {
+      cwd,
+      encoding: 'utf8'
+    }
+  )
+  if (existing.status === 0 && existing.stdout.trim()) {
+    return existing.stdout.trim()
+  }
+  return null
+}
+
+/** 校验本地 tag 状态：不存在返回 'missing'，已指向 head 返回 'matches'，指向其他 commit 直接抛错 */
+export function assertLocalTagTarget(tagName, head, cwd = ROOT) {
+  const target = resolveLocalTagCommit(tagName, cwd)
+  if (!target) return 'missing'
+  if (target !== head) {
+    throw new Error(
+      `本地 tag ${tagName} 已存在但指向 ${target}（HEAD 为 ${head}），中止——请人工核对后删除错位 tag`
+    )
+  }
+  return 'matches'
+}
+
 /** Stage 3 幂等 tag + 双端推送 + CI 门禁 */
 async function stage3TagPushAndCI(ctx) {
   banner(3, 'Tag、双端推送与 CI 门禁')
   const tagName = `v${ctx.version}`
   const head = run('git', ['rev-parse', 'HEAD']).trim()
-  // 解引用到 ^{commit}：附注 tag 的 refs/tags/v* 返回 tag 对象 SHA，需解引用才能与 HEAD 比对
-  const existing = spawnSync(
-    'git',
-    ['rev-parse', '-q', '--verify', `refs/tags/${tagName}^{commit}`],
-    {
-      cwd: ROOT,
-      encoding: 'utf8'
-    }
-  )
-  if (existing.status === 0 && existing.stdout.trim()) {
-    if (existing.stdout.trim() !== head) {
-      throw new Error(
-        `本地 tag ${tagName} 已存在但指向 ${existing.stdout.trim()}（HEAD 为 ${head}），中止——请人工核对后删除错位 tag`
-      )
-    }
+  if (assertLocalTagTarget(tagName, head, ROOT) === 'matches') {
     log(`✓ 本地 tag ${tagName} 已存在且指向 HEAD`)
   } else {
     run('git', ['tag', '-a', tagName, '-m', `题舟 ${tagName}`])

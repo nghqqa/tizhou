@@ -270,7 +270,8 @@ function stripTocSetTitleRuns(lines: string[]): TocStrippedLines {
     lastRow = entry.row
   }
 
-  // 簇 A（至少 2 个紧凑标题）是目录副本当且仅当：其后所有簇合计至少重现了一半（且 ≥2 个）套号。
+  // 簇 A（至少 2 个紧凑标题）是目录副本当且仅当：其后所有簇合计重现了至少一半的本簇套号，
+  // 或覆盖了后文全部套号的至少一半（应对合订总目录套数远超当前分册正文套数的场景），且至少 2 套重现。
   // 正文套标题彼此相隔上百行、各自形成长度 1 的孤立簇，若只与单个后文簇比较会永远漏判目录。
   const poisonedClusters = new Set<number>()
   for (let a = 0; a < clusters.length - 1; a += 1) {
@@ -280,7 +281,11 @@ function stripTocSetTitleRuns(lines: string[]): TocStrippedLines {
       for (const item of clusters[b]!.rows) laterSets.add(item.set)
     }
     const shared = clusters[a]!.rows.filter((item) => laterSets.has(item.set)).length
-    if (shared >= Math.max(2, Math.floor(clusters[a]!.rows.length / 2))) {
+    const threshold = Math.max(
+      2,
+      Math.min(Math.floor(clusters[a]!.rows.length / 2), Math.ceil(laterSets.size / 2))
+    )
+    if (shared >= threshold) {
       poisonedClusters.add(a)
     }
   }

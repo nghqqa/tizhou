@@ -3,6 +3,7 @@
 // verify-only 版本解耦前置校验、本地 dist 多版本残留归属判定。
 // 流水线的 git/gh/远端写入分支不在单测覆盖内（由 --dry-run/--verify-only 实跑验证）。
 import { describe, expect, it } from 'vitest'
+import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -11,6 +12,7 @@ import {
   applyReleaseTsReplacement,
   assertInsideDir,
   assertLatestYmlConsistency,
+  assertLocalTagTarget,
   assertNoStrayRootSha256Sums,
   assertRangeResponse,
   assertReleaseMetadata,
@@ -19,6 +21,7 @@ import {
   parseContentRangeTotal,
   parseLatestYml,
   parseSha256SumsText,
+  resolveLocalTagCommit,
   verifyLocalDistCore,
   verifySha256SumsContent
 } from '../scripts/release.mjs'
@@ -584,5 +587,39 @@ describe('本地 dist 归属判定（verifyLocalDistCore）', () => {
       const ok = await verifyLocalDistCore(pathsFor(dir, exeName), ctx, { writeSums: false })
       expect(ok).toBe(false)
     })
+  })
+})
+
+describe('本地 tag 解引用校验（^{commit}）', () => {
+  it('附注 tag 正确解引用为 commit SHA 并与 HEAD 比对，错位时抛错', () => {
+    const repo = join(tmpdir(), `tizhou-tag-test-${randomUUID()}`)
+    mkdirSync(repo, { recursive: true })
+    const git = (args: string[]) =>
+      execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim()
+    try {
+      git(['init'])
+      git(['config', 'user.email', 'test@tizhou.local'])
+      git(['config', 'user.name', 'Test'])
+      writeFileSync(join(repo, 'a.txt'), 'v1\n', 'utf8')
+      git(['add', 'a.txt'])
+      git(['commit', '-m', 'c1'])
+      const c1 = git(['rev-parse', 'HEAD'])
+      // 创建附注 tag：其对象 SHA 与 commit SHA 不同
+      git(['tag', '-a', 'v1.0.22', '-m', '题舟 v1.0.22'])
+      const rawTagObj = git(['rev-parse', 'refs/tags/v1.0.22'])
+      expect(rawTagObj).not.toBe(c1)
+      expect(resolveLocalTagCommit('v1.0.22', repo)).toBe(c1)
+      expect(assertLocalTagTarget('v1.0.22', c1, repo)).toBe('matches')
+      expect(assertLocalTagTarget('v1.0.99', c1, repo)).toBe('missing')
+
+      // 新增一次提交后，旧附注 tag 指向 c1 != HEAD，必须报错拦截
+      writeFileSync(join(repo, 'a.txt'), 'v2\n', 'utf8')
+      git(['add', 'a.txt'])
+      git(['commit', '-m', 'c2'])
+      const c2 = git(['rev-parse', 'HEAD'])
+      expect(() => assertLocalTagTarget('v1.0.22', c2, repo)).toThrow(/已存在但指向/)
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
+    }
   })
 })

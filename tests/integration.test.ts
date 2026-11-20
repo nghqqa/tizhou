@@ -299,6 +299,8 @@ img[150:220, 50:300] = [235, 170, 170]   # 浅粉水印
 img[300:340, 50:300] = [25, 25, 25]      # 深黑印刷字
 img[360:400, 50:300] = [40, 130, 235]    # 蓝色标题/重点字
 img[420:460, 50:300] = [230, 80, 60]     # 亮红重点字
+img[480:520, 50:300] = [140, 180, 230]   # 中饱和浅蓝印刷标题
+img[530:570, 50:300] = [235, 140, 120]   # 中饱和浅红印刷重点字
 out = mod.preprocess_for_ocr(img)
 assert out.shape == img.shape and out.dtype == np.uint8
 assert int(out[80, 150].min()) == 255
@@ -307,6 +309,9 @@ assert int(out[320, 150].max()) < 40
 # 蓝字与亮红字不得被漂白或严重漂淡
 assert int(out[380, 150, 0]) < 80 and int(out[380, 150, 2]) > 180
 assert int(out[440, 150, 0]) > 180 and int(out[440, 150, 2]) < 100
+# 中饱和浅蓝/浅红标题不得被水印漂白置白，保留可辨色彩对比度
+assert int(out[500, 150, 0]) <= 150 and int(out[500, 150, 2]) >= 210
+assert int(out[550, 150, 0]) >= 210 and int(out[550, 150, 2]) <= 135
 assert mod.RENDER_DPI >= 260
 `
     execFileSync(VENV_PYTHON, ['-c', script], { timeout: 30000 })
@@ -344,6 +349,59 @@ assert removed2 == 3
 assert 'qr0.png' not in new_md2 and 'qr1.png' not in new_md2 and 'qr2.png' not in new_md2
 assert 'top_q1.png' in new_md2 and 'top_q2.png' in new_md2
 assert regions2[3]['type'] == 'image' and regions2[4]['type'] == 'image'
+
+# 场景3：提供真实图片目录时，同槽位跨 4 页的不同内容题图（视觉不同源）绝不被误删，
+# 同槽位跨 4 页的相同页眉 Logo（允许微偏移）正常剔除
+import tempfile, numpy as np
+from pathlib import Path
+from PIL import Image
+
+with tempfile.TemporaryDirectory() as td:
+  img_dir = Path(td)
+  # 4 张视觉完全不同的题干几何小图，落在相同页顶左槽位
+  for idx in range(4):
+    canvas = np.full((64, 64), 255, dtype=np.uint8)
+    if idx == 0:
+      canvas[8:28, 8:56] = 20
+    elif idx == 1:
+      canvas[36:56, 8:56] = 20
+    elif idx == 2:
+      canvas[8:56, 8:26] = 20
+    else:
+      canvas[8:56, 38:56] = 20
+    Image.fromarray(canvas, mode='L').save(img_dir / f'q_{idx}.png')
+  # 4 张相同页眉 Logo（带 1px 微偏移），落在相同页顶右槽位
+  base_logo = np.full((64, 64), 255, dtype=np.uint8)
+  base_logo[12:52, 12:24] = 30
+  base_logo[12:24, 12:52] = 30
+  base_logo[36:52, 36:52] = 30
+  for idx in range(4):
+    shifted = np.roll(base_logo, shift=(idx % 2, (idx // 2) % 2), axis=(0, 1))
+    Image.fromarray(shifted, mode='L').save(img_dir / f'logo_{idx}.png')
+  regions3 = []
+  for idx in range(4):
+    regions3.append({'type': 'image', 'page': idx, 'bbox': [60, 20, 220, 110], 'imgPath': f'images/q_{idx}.png', 'text': ''})
+    regions3.append({'type': 'image', 'page': idx, 'bbox': [820, 18, 910, 108], 'imgPath': f'images/logo_{idx}.png', 'text': ''})
+  md3 = '\\n'.join(f'![]({r["imgPath"]})' for r in regions3)
+  new_md3, removed3, _ = mod.strip_edge_noise(md3, regions3, images_dir=img_dir)
+  assert removed3 == 4
+  for idx in range(4):
+    assert f'q_{idx}.png' in new_md3
+    assert f'logo_{idx}.png' not in new_md3
+    assert regions3[idx * 2]['type'] == 'image'
+    assert regions3[idx * 2 + 1]['type'] == 'discarded'
+
+# 场景4：无图片目录的 20 页长文档中，偶发 3 页落在同槽位（<25% 占比）不整簇误删
+regions4 = [
+  {'type': 'image', 'page': 0, 'bbox': [60, 20, 220, 110], 'imgPath': 'images/p0.png', 'text': ''},
+  {'type': 'image', 'page': 6, 'bbox': [62, 22, 222, 112], 'imgPath': 'images/p6.png', 'text': ''},
+  {'type': 'image', 'page': 12, 'bbox': [58, 19, 218, 109], 'imgPath': 'images/p12.png', 'text': ''},
+  {'type': 'text', 'page': 19, 'bbox': [60, 300, 900, 360], 'text': '末页正文'},
+]
+md4 = '\\n'.join(f'![]({r["imgPath"]})' for r in regions4 if r['type'] == 'image')
+new_md4, removed4, _ = mod.strip_edge_noise(md4, regions4)
+assert removed4 == 0
+assert 'p0.png' in new_md4 and 'p6.png' in new_md4 and 'p12.png' in new_md4
 `
     execFileSync(VENV_PYTHON, ['-c', script], { timeout: 30000 })
   })

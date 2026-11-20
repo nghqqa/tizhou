@@ -65,13 +65,16 @@ export function ReportsPage(): React.JSX.Element {
       .catch((cause) => setError(cause instanceof Error ? cause.message : '报告生成失败'))
   }, [range])
   const essaySummary = useMemo(() => {
+    if (report?.essaySummary && report.essaySummary.count > 0) {
+      return report.essaySummary
+    }
     if (!essayRecords.length) return null
     const uniquePrompts = new Set(essayRecords.map((item) => item.promptId)).size
     const scores = essayRecords.map((item) => item.evaluation.score)
     const average = Math.round(scores.reduce((sum, score) => sum + score, 0) / scores.length)
     const best = Math.max(...scores)
     return { count: essayRecords.length, uniquePrompts, average, best }
-  }, [essayRecords])
+  }, [report?.essaySummary, essayRecords])
   return (
     <div className="page">
       <PageHeader
@@ -113,7 +116,7 @@ export function ReportsPage(): React.JSX.Element {
       {error && <ErrorState message={error} />}
       {!report ? (
         <LoadingState label="正在聚合训练记录" />
-      ) : report.totalAttempts === 0 && essayRecords.length === 0 ? (
+      ) : report.totalAttempts === 0 && !essaySummary && essayRecords.length === 0 ? (
         <EmptyState
           title="还没有可分析的作答"
           description="完成一组练习或申论评估后，这里会显示模块正确率、用时趋势、错因分布与申论做题记录。"
@@ -256,7 +259,12 @@ export function ReportsPage(): React.JSX.Element {
           {essaySummary && (
             <Section
               title="申论作答记录"
-              description={`累计评估 ${essaySummary.count} 次 · 覆盖 ${essaySummary.uniquePrompts} 题 · 平均 ${essaySummary.average} 分 · 最高 ${essaySummary.best} 分`}
+              description={
+                `累计评估 ${essaySummary.count} 次 · 覆盖 ${essaySummary.uniquePrompts} 题 · 平均 ${essaySummary.average} 分 · 最高 ${essaySummary.best} 分` +
+                (essaySummary.count > essayRecords.length
+                  ? `（下表展示最近 ${essayRecords.length} 条明细）`
+                  : '')
+              }
             >
               <table className="report-table">
                 <thead>

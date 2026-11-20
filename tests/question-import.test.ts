@@ -1900,6 +1900,50 @@ describe('stripTocSetTitleRuns（目录套标题过滤与套号对齐）', () =>
     expect(solutions.get('16-1')?.answer).toBe('C')
   })
 
+  it('合订总目录套数超过本册正文 2 倍（如总目录 1-30 套，本册正文仅 21-30 套）时仍正确剔除目录', () => {
+    const tocLines: string[] = ['目录']
+    for (let setNo = 1; setNo <= 30; setNo += 1) {
+      tocLines.push(`练习题 ${String(setNo).padStart(2, '0')} 套`)
+      tocLines.push(String(setNo * 10).padStart(3, '0'))
+    }
+    const bodySolutionLines: string[] = []
+    const bodyQuestionLines: string[] = []
+    for (let setNo = 21; setNo <= 30; setNo += 1) {
+      const stem = `第${setNo}套唯一题干：关于基层治理数字化转型的表述中，哪一项最符合文意？`
+      bodySolutionLines.push(
+        `练习题${setNo}`,
+        `1. ${stem}`,
+        '【参考答案】A',
+        '【实战解析】选 A。',
+        ...fillers
+      )
+      bodyQuestionLines.push(
+        `练习题${setNo}`,
+        `1. ${stem}`,
+        'A. 强化数据协同共享',
+        'B. 忽视一线实际需求',
+        'C. 扩大纸质台账规模',
+        'D. 弱化公共服务能力'
+      )
+    }
+    const solutions = parseSolutionBook([...tocLines, ...bodySolutionLines])
+    expect([...solutions.keys()]).toEqual(Array.from({ length: 10 }, (_, idx) => `${21 + idx}-1`))
+    const merged = mergeDirectQuestions(
+      parseQuestionBook(bodyQuestionLines),
+      solutions,
+      new Map(),
+      {
+        subject: 'xingce',
+        category: '片段阅读',
+        sourceFile: '片段阅读下册-题本.pdf',
+        tags: []
+      }
+    )
+    expect(merged.aborted).toBe(false)
+    expect(merged.skippedMisaligned).toBe(0)
+    expect(merged.items).toHaveLength(10)
+  })
+
   it('无后文重复证据的紧凑小夹具不被误判为目录删光', () => {
     const solutions = parseSolutionBook([
       '练习题01',

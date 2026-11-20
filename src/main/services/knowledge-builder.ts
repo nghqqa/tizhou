@@ -106,7 +106,7 @@ import {
 const STRUCTURED_PACKAGE = 'rapid-doc==0.9.10'
 // OCR worker 预处理/过滤策略版本：修改渲染 DPI、去水印预处理或页眉剔除策略时递增，
 // 让旧转换缓存自然失效，避免已导过的 PDF 重导时命中旧结果
-const OCR_WORKER_POLICY_VERSION = 'p2'
+export const OCR_WORKER_POLICY_VERSION = 'p3'
 import {
   directQuestionMarkdown,
   directSignature,
@@ -168,6 +168,13 @@ const OCR_PACKAGES = [
   'onnxruntime>=1.20',
   'pypdfium2>=4.30,<7'
 ]
+
+/** 构造转换缓存的 converter 键（拼接 OCR worker 策略版本，策略升级时自然绕过旧缓存） */
+export function buildConversionConverterKey(mode: 'structured' | 'ocr' | 'markitdown'): string {
+  if (mode === 'structured') return `structured@${STRUCTURED_PACKAGE}+${OCR_WORKER_POLICY_VERSION}`
+  if (mode === 'ocr') return `ocr@${OCR_PACKAGES.join('+')}+${OCR_WORKER_POLICY_VERSION}`
+  return `markitdown@${MARKITDOWN_VERSION}`
+}
 
 interface CandidateItem {
   kind: 'question' | 'document'
@@ -1648,13 +1655,13 @@ export class KnowledgeBuilderService {
             !/解析|答案/.test(basename(file.relativePath))
           const useOcr = engine.ocrAvailable && isPdfFile(file.relativePath)
           let structuredOk: boolean | undefined = true
-          const structuredConverterKey = `structured@${STRUCTURED_PACKAGE}+${OCR_WORKER_POLICY_VERSION}`
-          const ocrConverterKey = `ocr@${OCR_PACKAGES.join('+')}+${OCR_WORKER_POLICY_VERSION}`
+          const structuredConverterKey = buildConversionConverterKey('structured')
+          const ocrConverterKey = buildConversionConverterKey('ocr')
           const converter = useStructured
             ? structuredConverterKey
             : useOcr
               ? ocrConverterKey
-              : `markitdown@${MARKITDOWN_VERSION}`
+              : buildConversionConverterKey('markitdown')
           // 兜底回退 OCR 时改用 ocr@ 键缓存，structured@ 键留待重试
           let effectiveConverter = converter
           let ocrQuality: OcrQualityReport | undefined

@@ -2325,7 +2325,7 @@ a {
 .page-solution .essay-editor {
   min-height: min(56vh, 620px);
 }
-.page-solution .answer-panel {
+.page-solution .essay-col .answer-panel {
   margin-top: 0;
 }
 .solution-nav-bar {
@@ -2410,6 +2410,23 @@ a {
   -webkit-line-clamp: 4;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+.solution-history-preview.is-expanded {
+  display: block;
+  -webkit-line-clamp: unset;
+  overflow: visible;
+}
+.solution-history-expand {
+  margin-top: 6px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--tz-vermillion);
+  font-size: 12px;
+  cursor: pointer;
+}
+.solution-history-expand:hover {
+  text-decoration: underline;
 }
 /* 条目容器由 button 改为 div[role=button]（消除按钮嵌套），补焦点可见性 */
 .builder-artifact:focus-visible {

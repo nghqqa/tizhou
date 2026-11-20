@@ -510,6 +510,13 @@ export interface DashboardData {
   activity: Array<{ date: string; attempts: number; accuracy: number }>
 }
 
+export interface ConstructedAttemptSummary {
+  count: number
+  uniquePrompts: number
+  average: number
+  best: number
+}
+
 export interface ReportData {
   range: '7d' | '30d' | 'all'
   totalAttempts: number
@@ -525,6 +532,7 @@ export interface ReportData {
   }>
   dailyStats: Array<{ date: string; attempts: number; accuracy: number; minutes: number }>
   wrongCauses: Array<{ cause: string; count: number }>
+  essaySummary?: ConstructedAttemptSummary
 }
 
 export type AiProvider =

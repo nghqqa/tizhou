@@ -1395,6 +1395,44 @@ export class DatabaseService {
     return records
   }
 
+  getConstructedAttemptSummary(
+    range: ReportData['range'] = 'all'
+  ): NonNullable<ReportData['essaySummary']> {
+    const clauses: string[] = []
+    const values: Array<string | number> = []
+    if (range !== 'all') {
+      const cutoff = range === '7d' ? addDays(-7) : addDays(-30)
+      clauses.push('created_at >= ?')
+      values.push(cutoff)
+    }
+    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''
+    const rows = this.db
+      .prepare(`SELECT prompt_id, evaluation_json FROM constructed_attempts ${where}`)
+      .all(...values) as Row[]
+    const prompts = new Set<string>()
+    let count = 0
+    let sum = 0
+    let best = 0
+    for (const row of rows) {
+      try {
+        const evaluation = JSON.parse(String(row.evaluation_json)) as ConstructedEvaluation
+        if (!evaluation || typeof evaluation.score !== 'number') continue
+        count += 1
+        sum += evaluation.score
+        if (count === 1 || evaluation.score > best) best = evaluation.score
+        prompts.add(String(row.prompt_id))
+      } catch {
+        /* 跳过损坏的历史评估 JSON */
+      }
+    }
+    return {
+      count,
+      uniquePrompts: prompts.size,
+      average: count ? Math.round(sum / count) : 0,
+      best
+    }
+  }
+
   getDashboard(): DashboardData {
     const settings = this.getAppSettings()
     const today = dateKey()
@@ -1552,7 +1590,8 @@ export class DatabaseService {
       wrongCauses: causeRows.map((row) => ({
         cause: String(row.cause),
         count: numberValue(row.count)
-      }))
+      })),
+      essaySummary: this.getConstructedAttemptSummary(range)
     }
   }
 

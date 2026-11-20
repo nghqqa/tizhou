@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 import shutil
 import sys
@@ -79,11 +80,14 @@ def preprocess_for_ocr(rgb: np.ndarray) -> np.ndarray:
     if rgb.ndim != 3 or rgb.shape[2] != 3 or rgb.size == 0:
         return rgb
     arr = rgb.astype(np.float32)
+    min_ch = arr.min(axis=2)
+    max_ch = arr.max(axis=2)
     lum = 0.299 * arr[:, :, 0] + 0.587 * arr[:, :, 1] + 0.114 * arr[:, :, 2]
-    sat = arr.max(axis=2) - arr.min(axis=2)
-    # 仅针对高亮度、中低饱和度的浅彩水印（淡红/淡蓝斜纹）抬高其等效亮度以便一并漂白；
-    # 保护蓝/红高饱和彩色印刷文字（lum 偏低或 sat 偏高），避免误漂淡正文重点字。
-    is_pale_color_watermark = (sat > 25.0) & (sat <= 120.0) & (lum > 155.0)
+    sat = max_ch - min_ch
+    # 仅针对高亮度、低中饱和且三通道整体偏浅（min_ch >= 160）的浅彩水印（淡红/淡蓝斜纹）
+    # 抬高其等效亮度以便一并漂白；保护中饱和浅彩印刷标题（如褪色蓝 [140,180,230]）与高饱和红/蓝重点字。
+    is_pale_color_watermark = (sat > 25.0) & (sat <= 75.0) & (lum > 180.0) & (min_ch >= 160.0)
+    is_colored_ink = (sat > 45.0) & (~is_pale_color_watermark)
     eff_lum = np.where(is_pale_color_watermark, np.minimum(255.0, lum + sat * 0.45), lum)
     # 下采样计算背景亮度分位数，耗时从 ~800ms 降至 <50ms
     sample = eff_lum[::4, ::4]
@@ -96,10 +100,12 @@ def preprocess_for_ocr(rgb: np.ndarray) -> np.ndarray:
     target_lum = np.clip((eff_lum - black_pt) * scale, 0.0, 255.0)
     ratio = np.where(lum > 1.0, target_lum / np.maximum(lum, 1.0), 1.0)
     ratio = np.clip(ratio, 0.65, 1.6)
+    # 彩色印刷文字不向上漂淡、不被置白，确保浅蓝/浅红标题在 OCR 识字通道中完整保留
+    ratio = np.where(is_colored_ink, np.minimum(ratio, 1.0), ratio)
     out = np.empty_like(arr)
     for c in range(3):
         out[:, :, c] = np.clip(arr[:, :, c] * ratio, 0.0, 255.0)
-    out[eff_lum >= white_pt] = 255.0
+    out[(eff_lum >= white_pt) & (~is_colored_ink)] = 255.0
     return out.astype(np.uint8)
 
 
@@ -286,7 +292,53 @@ def edge_noise_strings(regions: list) -> set:
     return noise
 
 
-def strip_edge_noise(markdown: str, regions: list) -> tuple[str, int, list]:
+def _load_image_signature(img_path: Path) -> np.ndarray | None:
+    if not img_path.is_file():
+        return None
+    try:
+        from PIL import Image
+        resample = getattr(getattr(Image, 'Resampling', Image), 'BILINEAR')
+        with Image.open(img_path) as im:
+            gray = im.convert('L').resize((16, 16), resample)
+            return np.asarray(gray, dtype=np.float32)
+    except Exception:
+        return None
+
+
+def _images_visually_similar(sig_a: np.ndarray, sig_b: np.ndarray) -> bool:
+    """判断两张页顶候选小图是否视觉同源（容忍 1 格微偏移，排除同槽位不同内容题图）。"""
+    std_a = float(sig_a.std())
+    std_b = float(sig_b.std())
+    if std_a < 5.0 and std_b < 5.0:
+        return abs(float(sig_a.mean()) - float(sig_b.mean())) <= 15.0
+    if std_a < 5.0 or std_b < 5.0:
+        return False
+    if abs(float(sig_a.mean()) - float(sig_b.mean())) > 35.0:
+        return False
+    core_a = sig_a[1:15, 1:15]
+    da = core_a - core_a.mean()
+    na = float(np.linalg.norm(da))
+    if na < 1e-3:
+        return False
+    best_corr = -1.0
+    for dy in (-1, 0, 1):
+        for dx in (-1, 0, 1):
+            patch_b = sig_b[1 + dy:15 + dy, 1 + dx:15 + dx]
+            db = patch_b - patch_b.mean()
+            nb = float(np.linalg.norm(db))
+            if nb < 1e-3:
+                continue
+            corr = float(np.sum(da * db)) / (na * nb)
+            if corr > best_corr:
+                best_corr = corr
+    return best_corr >= 0.78
+
+
+def strip_edge_noise(
+    markdown: str,
+    regions: list,
+    images_dir: Path | None = None,
+) -> tuple[str, int, list]:
     """从 markdown 中剥离边缘噪声文本与跨页重复的页眉小图，返回（新文本，剥离次数，样本）。"""
     removed = 0
     samples = []
@@ -297,9 +349,10 @@ def strip_edge_noise(markdown: str, regions: list) -> tuple[str, int, list]:
             removed += occurrences
             samples.append(text)
     # 跨页顶部边缘带（y1<155，高<130，宽<420）且落在同一位置/尺寸簇重复出现的小图多为页眉 Logo 或二维码；
-    # 使用容差聚类（而非硬网格取整）避免扫描微偏移跨边界分裂，同时不误删图推/正文偶发落在页顶的独立小图。
+    # 使用容差聚类 + 视觉指纹校验（有图片文件时要求视觉同源）+ 按总页数比例设频次门槛，
+    # 既能容忍扫描微偏移，也不误删同槽位多页出现的不同题干/图推内容小图。
     total_pages = max((int(r.get('page', 0)) for r in regions), default=-1) + 1
-    min_repeat_pages = 2 if total_pages <= 3 else 3
+    min_repeat_pages = 2 if total_pages <= 3 else max(3, math.ceil(total_pages * 0.25))
     clusters: list[dict] = []
     for r in regions:
         bbox = r.get('bbox') or []
@@ -311,17 +364,24 @@ def strip_edge_noise(markdown: str, regions: list) -> tuple[str, int, list]:
         if not (y1 < 155 and 0 < h < 130 and 0 < w < 420):
             continue
         page = int(r.get('page', 0))
+        sig = _load_image_signature(images_dir / Path(r['imgPath']).name) if images_dir else None
         matched = None
         for cluster in clusters:
             rx0, ry0, rw, rh = cluster['ref']
-            if abs(x0 - rx0) <= 35 and abs(y0 - ry0) <= 25 and abs(w - rw) <= 35 and abs(h - rh) <= 25:
-                matched = cluster
-                break
+            if not (abs(x0 - rx0) <= 35 and abs(y0 - ry0) <= 25 and abs(w - rw) <= 35 and abs(h - rh) <= 25):
+                continue
+            if sig is not None and cluster['sig'] is not None:
+                if not _images_visually_similar(cluster['sig'], sig):
+                    continue
+            matched = cluster
+            break
         if matched is None:
-            clusters.append({'ref': (x0, y0, w, h), 'pages': {page}, 'items': [r]})
+            clusters.append({'ref': (x0, y0, w, h), 'sig': sig, 'pages': {page}, 'items': [r]})
         else:
             matched['pages'].add(page)
             matched['items'].append(r)
+            if matched['sig'] is None and sig is not None:
+                matched['sig'] = sig
     for cluster in clusters:
         if len(cluster['pages']) < min_repeat_pages:
             continue
@@ -356,14 +416,14 @@ def run_structured(source: Path, output: Path) -> int:
     result = doc(str(source))
     markdown = normalize_rapiddoc_markdown(result.markdown)
     regions, region_pages = extract_regions(result)
-    markdown, removed_noise, noise_samples = strip_edge_noise(markdown, regions)
-    output.write_text(markdown, encoding='utf-8')
-    # RapidDoc 把图片写进 <output_dir>/<源名>/auto/images/，而 markdown 里的引用是
-    # images/<hash>.png（相对输出目录）——把散落的图片收拢到 images/，使引用与文件对齐
+    # 先把 RapidDoc 散落在 <output_dir>/<源名>/auto/images/ 的图片收拢到 images/，
+    # 使 strip_edge_noise 能对页顶候选小图做视觉同源校验，同时让 markdown 引用与磁盘文件对齐
     for pattern in ('*/auto/images/*', '*/images/*'):
         for scattered in parent.glob(pattern):
             if scattered.is_file():
                 shutil.copy2(str(scattered), str(images_dir / scattered.name))
+    markdown, removed_noise, noise_samples = strip_edge_noise(markdown, regions, images_dir=images_dir)
+    output.write_text(markdown, encoding='utf-8')
     # 版面块清单随图片归档走缓存（命中时随 images/ 一起恢复），图推绑定与质量评估依赖
     table_regions = sum(1 for r in regions if r['type'] == 'table')
     image_regions = sum(1 for r in regions if r['type'] == 'image' and r['imgPath'])

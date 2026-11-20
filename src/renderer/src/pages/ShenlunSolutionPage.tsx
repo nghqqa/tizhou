@@ -43,7 +43,11 @@ export function ShenlunSolutionPage(): React.JSX.Element {
   const [saving, setSaving] = useState(false)
   const [evaluating, setEvaluating] = useState(false)
   const [error, setError] = useState('')
+  const [expandedHistoryIds, setExpandedHistoryIds] = useState<Record<string, boolean>>({})
   const saveTimer = useRef<number | undefined>(undefined)
+  const activePromptIdRef = useRef(promptId)
+  activePromptIdRef.current = promptId
+  const pendingDraftRef = useRef<{ promptId: string; title: string; content: string } | null>(null)
 
   // 按题汇总已评估状态（最新得分与提交次数）
   const statusByPrompt = useMemo(() => {
@@ -99,14 +103,16 @@ export function ShenlunSolutionPage(): React.JSX.Element {
 
   // 响应 URL 参数跳转（例如从学习报告「申论作答记录」点进复盘）
   useEffect(() => {
-    if (requestedPromptId) {
+    if (!requestedPromptId) return
+    void flushPendingDraft(false).then(() => {
       setOnlyUnattempted(false)
       setPromptId(requestedPromptId)
-    }
+    })
   }, [requestedPromptId])
 
   // 关键词搜索（防抖）：题目多时不再静默截断在前 200 题，可按关键词定位目标题
   useEffect(() => {
+    let cancelled = false
     const timer = window.setTimeout(() => {
       void invoke<Question[]>({
         method: 'vault.search',
@@ -117,29 +123,44 @@ export function ShenlunSolutionPage(): React.JSX.Element {
           query: keyword.trim() || undefined
         }
       })
-        .then((items) => {
+        .then(async (items) => {
+          if (cancelled) return
+          const previous = activePromptIdRef.current
+          const nextId =
+            requestedPromptId && items.some((item) => item.id === requestedPromptId)
+              ? requestedPromptId
+              : previous && items.some((item) => item.id === previous)
+                ? previous
+                : (items[0]?.id ?? '')
+          if (nextId !== previous) {
+            await flushPendingDraft(false)
+            if (cancelled) return
+          }
           setPrompts(items)
-          setPromptId((previous) => {
-            if (requestedPromptId && items.some((item) => item.id === requestedPromptId)) {
-              return requestedPromptId
-            }
-            return previous && items.some((item) => item.id === previous)
-              ? previous
-              : (items[0]?.id ?? '')
-          })
+          setPromptId(nextId)
         })
-        .catch((cause) => setError(cause instanceof Error ? cause.message : '申论题目读取失败'))
+        .catch((cause) => {
+          if (!cancelled) setError(cause instanceof Error ? cause.message : '申论题目读取失败')
+        })
     }, 300)
-    return () => window.clearTimeout(timer)
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
   }, [keyword, requestedPromptId])
 
-  // 开启「只看未做」导致当前题不在可见列表中时，自动切到第一道未做题
+  // 开启「只看未做」导致当前题不在可见列表中时，先落盘草稿再自动切到第一道未做题
   useEffect(() => {
+    if (evaluating) return
     if (!visiblePrompts || !visiblePrompts.length) return
     if (!visiblePrompts.some((item) => item.id === promptId)) {
-      setPromptId(visiblePrompts[0]!.id)
+      const nextId = visiblePrompts[0]!.id
+      const previousId = promptId
+      void flushPendingDraft(false).then(() => {
+        setPromptId((currentId) => (currentId === previousId ? nextId : currentId))
+      })
     }
-  }, [visiblePrompts, promptId])
+  }, [visiblePrompts, promptId, evaluating])
 
   // 切换题目时加载草稿与本题历次评估记录（自动回显最近一次评估）
   useEffect(() => {
@@ -149,6 +170,7 @@ export function ShenlunSolutionPage(): React.JSX.Element {
     setEvaluation(undefined)
     setSelectedHistoryId('')
     setPromptHistory([])
+    setExpandedHistoryIds({})
     void Promise.all([
       invoke<ConstructedDraft | undefined>({
         method: 'draft.get',
@@ -172,75 +194,134 @@ export function ShenlunSolutionPage(): React.JSX.Element {
     }
   }, [promptId])
 
+  // 卸载前兜底冲刷未落盘草稿，避免刚输入即离开页面丢失
   useEffect(() => {
-    if (!promptId) return
-    window.clearTimeout(saveTimer.current)
-    saveTimer.current = window.setTimeout(() => {
-      void saveDraft(false)
-    }, 1200)
-    return () => window.clearTimeout(saveTimer.current)
-  }, [content, promptId])
+    return () => {
+      window.clearTimeout(saveTimer.current)
+      if (pendingDraftRef.current) {
+        void persistDraftSnapshot(pendingDraftRef.current, false)
+      }
+    }
+  }, [])
 
-  async function saveDraft(showState = true): Promise<void> {
-    if (!promptId || !current) return
+  async function persistDraftSnapshot(
+    snapshot: { promptId: string; title: string; content: string },
+    showState = false
+  ): Promise<void> {
     if (showState) setSaving(true)
     try {
       await invoke({
         method: 'draft.save',
-        params: { id: `draft-${promptId}`, promptId, title: current.stem.slice(0, 40), content }
+        params: {
+          id: `draft-${snapshot.promptId}`,
+          promptId: snapshot.promptId,
+          title: snapshot.title,
+          content: snapshot.content
+        }
       })
+      if (pendingDraftRef.current === snapshot) {
+        pendingDraftRef.current = null
+      }
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : '草稿保存失败')
+      if (activePromptIdRef.current === snapshot.promptId) {
+        setError(cause instanceof Error ? cause.message : '草稿保存失败')
+      }
     } finally {
       if (showState) setSaving(false)
     }
   }
 
-  async function switchPrompt(nextId: string): Promise<void> {
-    if (!nextId || nextId === promptId) return
+  async function flushPendingDraft(showState = false): Promise<void> {
     window.clearTimeout(saveTimer.current)
-    await saveDraft(false)
+    const pending = pendingDraftRef.current
+    if (pending) {
+      await persistDraftSnapshot(pending, showState)
+      return
+    }
+    if (showState && promptId && current) {
+      await persistDraftSnapshot({ promptId, title: current.stem.slice(0, 40), content }, true)
+    }
+  }
+
+  function updateDraftContent(nextContent: string): void {
+    setContent(nextContent)
+    if (!promptId || !current) return
+    const snapshot = { promptId, title: current.stem.slice(0, 40), content: nextContent }
+    pendingDraftRef.current = snapshot
+    window.clearTimeout(saveTimer.current)
+    saveTimer.current = window.setTimeout(() => {
+      void persistDraftSnapshot(snapshot, false)
+    }, 1200)
+  }
+
+  async function saveDraft(showState = true): Promise<void> {
+    await flushPendingDraft(showState)
+  }
+
+  async function switchPrompt(nextId: string): Promise<void> {
+    if (!nextId || nextId === promptId || evaluating) return
+    await flushPendingDraft(false)
     setPromptId(nextId)
     if (requestedPromptId) {
       setSearchParams({}, { replace: true })
     }
   }
 
+  async function toggleOnlyUnattempted(): Promise<void> {
+    if (evaluating) return
+    await flushPendingDraft(false)
+    setOnlyUnattempted((value) => !value)
+  }
+
   async function goAdjacent(delta: -1 | 1): Promise<void> {
-    if (!visiblePrompts || currentIndex < 0) return
+    if (!visiblePrompts || currentIndex < 0 || evaluating) return
     const target = visiblePrompts[currentIndex + delta]
     if (target) await switchPrompt(target.id)
   }
 
   async function evaluate(): Promise<void> {
     if (!current) return
+    const targetPromptId = current.id
+    const targetTitle = current.stem.slice(0, 40)
+    const targetContent = content
     setEvaluating(true)
     setError('')
     try {
-      await saveDraft(false)
+      await flushPendingDraft(false)
+      await persistDraftSnapshot(
+        { promptId: targetPromptId, title: targetTitle, content: targetContent },
+        false
+      )
       const result = await invoke<ConstructedEvaluation>({
         method: 'constructed.evaluate',
-        params: { promptId: current.id, title: current.stem.slice(0, 40), content }
+        params: { promptId: targetPromptId, title: targetTitle, content: targetContent }
       })
-      setEvaluation(result)
-      setSelectedHistoryId(result.id)
       const [history] = await Promise.all([
-        invoke<ConstructedAttemptRecord[]>({
-          method: 'constructed.history',
-          params: { promptId: current.id, limit: 50 }
-        }).catch(() => [] as ConstructedAttemptRecord[]),
+        activePromptIdRef.current === targetPromptId
+          ? invoke<ConstructedAttemptRecord[]>({
+              method: 'constructed.history',
+              params: { promptId: targetPromptId, limit: 50 }
+            }).catch(() => [] as ConstructedAttemptRecord[])
+          : Promise.resolve(null),
         refreshAllHistory()
       ])
-      setPromptHistory(history)
+      if (activePromptIdRef.current === targetPromptId) {
+        setEvaluation(result)
+        setSelectedHistoryId(result.id)
+        if (history) setPromptHistory(history)
+      }
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : '评估失败')
+      if (activePromptIdRef.current === targetPromptId) {
+        setError(cause instanceof Error ? cause.message : '评估失败')
+      }
     } finally {
       setEvaluating(false)
     }
   }
 
   function loadHistoryDraft(record: ConstructedAttemptRecord): void {
-    setContent(record.content)
+    if (evaluating || record.promptId !== promptId) return
+    updateDraftContent(record.content)
     setEvaluation(record.evaluation)
     setSelectedHistoryId(record.id)
     setView('write')
@@ -297,6 +378,7 @@ export function ShenlunSolutionPage(): React.JSX.Element {
           <Field className="grow" label="搜索题目">
             <Input
               value={keyword}
+              disabled={evaluating}
               onChange={(_, data) => setKeyword(data.value)}
               placeholder="按题干关键词过滤"
             />
@@ -304,7 +386,7 @@ export function ShenlunSolutionPage(): React.JSX.Element {
           <Field className="grow" label="选择题目">
             <Select
               value={promptId}
-              disabled={!totalVisible}
+              disabled={evaluating || !totalVisible}
               onChange={(_, data) => void switchPrompt(data.value)}
             >
               {(visiblePrompts ?? []).map((prompt) => {
@@ -335,7 +417,8 @@ export function ShenlunSolutionPage(): React.JSX.Element {
             <Button
               size="small"
               appearance={onlyUnattempted ? 'primary' : 'outline'}
-              onClick={() => setOnlyUnattempted((value) => !value)}
+              disabled={evaluating}
+              onClick={() => void toggleOnlyUnattempted()}
             >
               {onlyUnattempted ? '显示全部题目' : '只看未做'}
             </Button>
@@ -343,7 +426,7 @@ export function ShenlunSolutionPage(): React.JSX.Element {
               <Button
                 size="small"
                 icon={<ArrowLeftIcon />}
-                disabled={!hasPrev}
+                disabled={evaluating || !hasPrev}
                 onClick={() => void goAdjacent(-1)}
               >
                 上一题
@@ -357,7 +440,7 @@ export function ShenlunSolutionPage(): React.JSX.Element {
                 size="small"
                 icon={<ArrowRightIcon />}
                 iconPosition="after"
-                disabled={!hasNext}
+                disabled={evaluating || !hasNext}
                 onClick={() => void goAdjacent(1)}
               >
                 下一题
@@ -401,7 +484,7 @@ export function ShenlunSolutionPage(): React.JSX.Element {
                   data-testid="shenlun-draft-input"
                   aria-label="申论作答草稿"
                   value={content}
-                  onChange={(event) => setContent(event.target.value)}
+                  onChange={(event) => updateDraftContent(event.target.value)}
                   placeholder="建议先列要点，再组织成完整答案。草稿会在停止输入后自动保存。"
                 />
               ) : view === 'reference' ? (
@@ -421,7 +504,10 @@ export function ShenlunSolutionPage(): React.JSX.Element {
                     <div className="solution-history-list">
                       {promptHistory.map((record, index) => {
                         const active = record.id === selectedHistoryId
+                        const trimmed = record.content.trim()
                         const wordCount = record.content.replace(/\s/g, '').length
+                        const canExpand = trimmed.length > 140 || trimmed.split('\n').length > 4
+                        const expanded = Boolean(expandedHistoryIds[record.id])
                         return (
                           <div
                             key={record.id}
@@ -449,14 +535,34 @@ export function ShenlunSolutionPage(): React.JSX.Element {
                                 >
                                   {active ? '查看中' : '查看点评'}
                                 </Button>
-                                <Button size="small" onClick={() => loadHistoryDraft(record)}>
+                                <Button
+                                  size="small"
+                                  disabled={evaluating}
+                                  onClick={() => loadHistoryDraft(record)}
+                                >
                                   载入修改
                                 </Button>
                               </div>
                             </div>
-                            <p className="solution-history-preview">
-                              {record.content.trim() || '（空作答）'}
+                            <p
+                              className={`solution-history-preview${expanded ? ' is-expanded' : ''}`}
+                            >
+                              {trimmed || '（空作答）'}
                             </p>
+                            {canExpand && (
+                              <button
+                                type="button"
+                                className="solution-history-expand"
+                                onClick={() =>
+                                  setExpandedHistoryIds((prev) => ({
+                                    ...prev,
+                                    [record.id]: !prev[record.id]
+                                  }))
+                                }
+                              >
+                                {expanded ? '收起全文' : '展开全文'}
+                              </button>
+                            )}
                           </div>
                         )
                       })}

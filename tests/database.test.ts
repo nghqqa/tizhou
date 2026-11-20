@@ -457,4 +457,76 @@ describe('DatabaseService local-date statistics and exam edge cases', () => {
     const recent30d = database.listConstructedAttempts({ range: '30d' })
     expect(recent30d.map((item) => item.id)).toEqual(['eval-a'])
   })
+
+  it('getReport.essaySummary 按全量范围聚合申论统计，不受 100 条明细上限截断', () => {
+    const nowIso = new Date().toISOString()
+    const oldIso = new Date(Date.now() - 45 * 24 * 60 * 60 * 1000).toISOString()
+    // 写入 105 条近 30 天记录（超过学习报告明细列表的 limit: 100），覆盖 5 道题，分数 60..90 分布
+    let scoreSum = 0
+    for (let index = 0; index < 105; index += 1) {
+      const score = index === 0 ? 96 : 60 + (index % 20)
+      scoreSum += score
+      const promptId = `essay-p-${index % 5}`
+      database.saveConstructedAttempt({
+        id: `essay-eval-${index}`,
+        promptId,
+        title: `申论题 ${index % 5}`,
+        content: `第 ${index} 次作答内容`,
+        evaluation: {
+          id: `essay-eval-${index}`,
+          promptId,
+          score,
+          dimensions: [{ name: '要点覆盖', score, comment: 'ok' }],
+          summary: 'ok',
+          suggestions: [],
+          createdAt: nowIso,
+          provider: 'local-rule'
+        },
+        createdAt: nowIso
+      })
+    }
+    // 写入 1 条 45 天前的记录与 1 条损坏 JSON
+    database.saveConstructedAttempt({
+      id: 'essay-eval-old',
+      promptId: 'essay-p-old',
+      title: '旧申论题',
+      content: '旧作答',
+      evaluation: {
+        id: 'essay-eval-old',
+        promptId: 'essay-p-old',
+        score: 99,
+        dimensions: [{ name: '要点覆盖', score: 99, comment: 'ok' }],
+        summary: 'ok',
+        suggestions: [],
+        createdAt: oldIso,
+        provider: 'local-rule'
+      },
+      createdAt: oldIso
+    })
+    const db = (
+      database as unknown as {
+        db: { prepare: (sql: string) => { run: (...v: unknown[]) => unknown } }
+      }
+    ).db
+    db.prepare(
+      'INSERT INTO constructed_attempts(id, prompt_id, title, content, evaluation_json, created_at) VALUES (?, ?, ?, ?, ?, ?)'
+    ).run('essay-eval-corrupt', 'essay-p-0', '坏记录', '内容', '{broken', nowIso)
+
+    // 明细接口按 limit=100 截断，但报告汇总统计应精确覆盖全部 105 条有效记录
+    expect(database.listConstructedAttempts({ range: '30d', limit: 100 })).toHaveLength(100)
+    const report30d = database.getReport('30d')
+    expect(report30d.essaySummary).toEqual({
+      count: 105,
+      uniquePrompts: 5,
+      average: Math.round(scoreSum / 105),
+      best: 96
+    })
+    const reportAll = database.getReport('all')
+    expect(reportAll.essaySummary).toEqual({
+      count: 106,
+      uniquePrompts: 6,
+      average: Math.round((scoreSum + 99) / 106),
+      best: 99
+    })
+  })
 })

@@ -11,6 +11,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { ConversionCache } from '../src/main/services/conversion-cache'
+import {
+  buildConversionConverterKey,
+  OCR_WORKER_POLICY_VERSION
+} from '../src/main/services/knowledge-builder'
 
 const temporaryDirectories: string[] = []
 
@@ -237,5 +241,55 @@ describe('缓存统计与清空', () => {
     // 全量清空
     expect(cache.clear().removed).toBe(1)
     expect(cache.stats().entries).toHaveLength(0)
+  })
+
+  it('转换缓存键拼接 OCR_WORKER_POLICY_VERSION，策略版本升级后旧缓存自然未命中', async () => {
+    const structuredKey = buildConversionConverterKey('structured')
+    const ocrKey = buildConversionConverterKey('ocr')
+    const markitdownKey = buildConversionConverterKey('markitdown')
+    expect(structuredKey).toMatch(new RegExp(`^structured@.+\\+${OCR_WORKER_POLICY_VERSION}$`))
+    expect(ocrKey).toMatch(new RegExp(`^ocr@.+\\+${OCR_WORKER_POLICY_VERSION}$`))
+    expect(markitdownKey).toMatch(/^markitdown@/)
+
+    const cacheDirectory = temporaryDirectory('tizhou-ccache-policy-')
+    const sourceDirectory = temporaryDirectory('tizhou-ccache-policy-src-')
+    const rawDirectory = temporaryDirectory('tizhou-ccache-policy-raw-')
+    const imagesDirectory = temporaryDirectory('tizhou-ccache-policy-img-')
+    const sourcePath = join(sourceDirectory, '真题.pdf')
+    const rawPath = join(rawDirectory, 'out.md')
+    writeFileSync(sourcePath, 'PDF-BYTES-POLICY')
+    writeFileSync(rawPath, '# 旧策略转换结果', 'utf8')
+    writeFileSync(join(imagesDirectory, '_regions.json'), '{}', 'utf8')
+
+    const cache = new ConversionCache(cacheDirectory)
+    const structuredQuality = {
+      totalPages: 1,
+      textLayerPages: 0,
+      ocrPages: 1,
+      emptyPages: 0,
+      ocrLineCount: 0,
+      lowConfidenceLines: 0,
+      removedPageNumbers: 0,
+      warnings: [],
+      structured: true
+    }
+    // 以旧策略键写入缓存
+    await cache.store(
+      sourcePath,
+      'structured@rapid-doc==0.9.10+p1',
+      rawPath,
+      structuredQuality,
+      imagesDirectory
+    )
+    // 当前策略键查询必须未命中，确保新 OCR 预处理与页眉过滤策略生效
+    expect(await cache.fetch(sourcePath, structuredKey)).toBeUndefined()
+    // 写入当前策略键后可正常命中
+    await cache.store(sourcePath, structuredKey, rawPath, structuredQuality, imagesDirectory)
+    expect(await cache.fetch(sourcePath, structuredKey)).toBeDefined()
+    // OCR 通道同理：旧策略键不命中，新策略键命中
+    await cache.store(sourcePath, 'ocr@rapidocr==3.9.2+p1', rawPath)
+    expect(await cache.fetch(sourcePath, ocrKey)).toBeUndefined()
+    await cache.store(sourcePath, ocrKey, rawPath)
+    expect(await cache.fetch(sourcePath, ocrKey)).toBeDefined()
   })
 })
