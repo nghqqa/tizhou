@@ -304,6 +304,7 @@ export interface QuestionFilter {
   query?: string
   onlyWrong?: boolean
   onlyFavorite?: boolean
+  onlyUnattempted?: boolean
   limit?: number
 }
 
@@ -358,6 +359,18 @@ export interface ReviewItem {
   wrongCount: number
   correctStreak: number
   lastWrongCause?: string
+}
+
+export interface QuestionLibraryItem {
+  question: Question
+  wrongCount: number
+  correctStreak: number
+  lastWrongCause?: string
+  lastAttemptAt?: string
+  dueAt?: string
+  favorite: boolean
+  note: string
+  noteUpdatedAt?: string
 }
 
 export interface ExamConfig {
@@ -700,6 +713,8 @@ export interface AppSettings {
   reduceMotion: boolean
   autoBackup: boolean
   backupRetention: number
+  examGoalName?: string
+  examGoalDate?: string
 }
 
 export interface BootstrapData {
@@ -811,6 +826,16 @@ export type WorkbenchRequest =
       params: { subject?: Subject | 'common'; kind?: KnowledgeDocument['kind']; query?: string }
     }
   | { method: 'questions.get'; params: { id: string } }
+  | {
+      method: 'questions.library'
+      params: {
+        tab: 'wrong' | 'favorite' | 'notes'
+        category?: string
+        wrongCause?: string
+        query?: string
+        limit?: number
+      }
+    }
   | { method: 'practice.select'; params: PracticeSelection }
   | { method: 'practice.session.start'; params: PracticeSelection }
   | { method: 'practice.session.active'; params: { mode: 'practice' | 'review' } }

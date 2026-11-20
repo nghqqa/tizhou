@@ -883,6 +883,13 @@ a {
 .option-button.dimmed {
   opacity: 0.45;
 }
+.option-button.is-eliminated {
+  opacity: 0.48;
+  border-style: dashed;
+}
+.option-button.is-eliminated .option-content {
+  text-decoration: line-through;
+}
 .option-button .markdown {
   max-width: none;
   line-height: 1.6;
@@ -991,11 +998,42 @@ a {
 }
 .progress-text {
   display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   justify-content: space-between;
+  gap: 8px;
   margin-bottom: 6px;
   color: var(--tz-ink-3);
   font-size: var(--tz-text-xs);
   font-variant-numeric: tabular-nums;
+}
+.progress-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+.practice-timer {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 7px;
+  border: 1px solid var(--tz-border);
+  border-radius: 999px;
+  background: var(--tz-surface-2);
+  color: var(--tz-ink-2);
+  font-size: var(--tz-text-xs);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.practice-timer:hover {
+  border-color: var(--tz-border-strong);
+  color: var(--tz-ink);
+}
+.practice-timer.is-overtime {
+  color: var(--tz-amber);
+  background: var(--tz-amber-bg);
+  border-color: color-mix(in srgb, var(--tz-amber) 35%, transparent);
+  font-weight: 600;
 }
 .question-grid {
   display: grid;
@@ -1003,7 +1041,28 @@ a {
   gap: 5px;
 }
 .question-number {
+  position: relative;
   min-width: 0 !important;
+}
+.question-number.is-correct {
+  color: var(--tz-pine);
+  background: var(--tz-pine-bg);
+  border-color: color-mix(in srgb, var(--tz-pine) 35%, transparent);
+}
+.question-number.is-wrong {
+  color: var(--tz-vermillion);
+  background: var(--tz-vermillion-bg);
+  border-color: var(--tz-vermillion-border);
+}
+.question-number.is-uncertain::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--tz-amber);
 }
 
 .essay-editor {
@@ -2634,4 +2693,163 @@ a {
 }
 .builder-artifact-select p {
   margin: 4px 0 0;
+}
+
+/* ── 错题本 / 收藏夹 / 笔记库全景视图 ── */
+.review-tabs {
+  margin-bottom: 14px;
+  border-bottom: 1px solid var(--tz-border);
+}
+.library-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.library-card {
+  padding: 14px 16px;
+  border: 1px solid var(--tz-border);
+  border-radius: var(--tz-radius-lg);
+  background: var(--tz-surface);
+}
+.library-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  margin-bottom: 10px;
+}
+.library-stem .markdown {
+  max-width: none;
+  font-size: var(--tz-text-md);
+}
+.library-note-preview {
+  margin: 8px 0 0;
+  padding: 6px 10px;
+  border-left: 2px solid var(--tz-amber);
+  background: var(--tz-amber-bg);
+  border-radius: 0 var(--tz-radius) var(--tz-radius) 0;
+  font-size: var(--tz-text-sm);
+  color: var(--tz-ink-2);
+  white-space: pre-wrap;
+}
+.library-note-box {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--tz-border);
+}
+
+/* ── 知识中心：自由放缩工具条 + 目录跳转 + 全文搜索摘要 ── */
+.doc-header-bar {
+  display: flex;
+  justify-content: flex-end;
+  padding-bottom: 12px;
+  margin-bottom: 14px;
+  border-bottom: 1px solid var(--tz-border);
+}
+.doc-toc {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 12px;
+  padding: 10px 14px;
+  margin-bottom: 16px;
+  border: 1px solid var(--tz-border);
+  border-radius: var(--tz-radius);
+  background: var(--tz-surface-2);
+}
+.doc-toc-label {
+  font-size: var(--tz-text-xs);
+  font-weight: 700;
+  color: var(--tz-ink-3);
+  flex-shrink: 0;
+}
+.doc-toc-items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
+.doc-toc-item {
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  color: var(--tz-ink-2);
+  font-size: var(--tz-text-sm);
+  cursor: pointer;
+  text-align: left;
+}
+.doc-toc-item.is-sub {
+  color: var(--tz-ink-3);
+  font-size: var(--tz-text-xs);
+}
+.doc-toc-item:hover {
+  color: var(--tz-vermillion);
+  text-decoration: underline;
+}
+.doc-snippet {
+  color: var(--tz-vermillion-deep) !important;
+}
+.doc-reading-body .markdown {
+  font-size: calc(var(--tz-text-md) * var(--tz-read-scale, 1));
+}
+.doc-reading-body .markdown h1 {
+  font-size: calc(var(--tz-text-2xl) * var(--tz-read-scale, 1));
+}
+.doc-reading-body .markdown h2 {
+  font-size: calc(var(--tz-text-xl) * var(--tz-read-scale, 1));
+}
+.doc-reading-body .markdown h3 {
+  font-size: calc(var(--tz-text-lg) * var(--tz-read-scale, 1));
+}
+
+/* ── 申论字数限制预警胶囊 ── */
+.pill.is-over-limit {
+  color: var(--tz-vermillion);
+  background: var(--tz-vermillion-bg);
+  border: 1px solid var(--tz-vermillion-border);
+  font-weight: 600;
+}
+.pill.is-under-limit {
+  color: var(--tz-amber);
+  background: var(--tz-amber-bg);
+  border: 1px solid color-mix(in srgb, var(--tz-amber) 35%, transparent);
+}
+
+/* ── 今日工作台：目标考试倒计时 ── */
+.dash-countdown-row {
+  margin-top: 8px;
+}
+.dash-countdown-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border: 1px solid var(--tz-vermillion-border);
+  border-radius: 999px;
+  background: var(--tz-vermillion-bg);
+  color: var(--tz-vermillion);
+  font-size: var(--tz-text-xs);
+  font-weight: 600;
+  cursor: pointer;
+}
+.dash-countdown-pill.is-unset {
+  border-color: var(--tz-border);
+  background: var(--tz-surface-2);
+  color: var(--tz-ink-3);
+  font-weight: 500;
+}
+.dash-countdown-pill.is-unset:hover {
+  color: var(--tz-ink);
+  border-color: var(--tz-border-strong);
+}
+.dash-countdown-pill.is-today {
+  background: var(--tz-vermillion);
+  color: #fbf9f4;
+  border-color: var(--tz-vermillion);
+}
+.dash-countdown-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
 }

@@ -541,4 +541,57 @@ describe('DatabaseService local-date statistics and exam edge cases', () => {
     expect(database.listQuestionsForPool()).toHaveLength(8)
     expect(database.listQuestionsForPool({ limit: 3 })).toHaveLength(3)
   })
+
+  it('onlyUnattempted 过滤掉已有作答记录的题目', () => {
+    const first = database.listQuestions()[0]!
+    expect(database.listQuestions({ onlyUnattempted: true })).toHaveLength(8)
+    database.submitAttempt({
+      questionId: first.id,
+      answer: first.answer,
+      durationSeconds: 12,
+      mode: 'practice'
+    })
+    const remaining = database.listQuestions({ onlyUnattempted: true })
+    expect(remaining).toHaveLength(7)
+    expect(remaining.some((item) => item.id === first.id)).toBe(false)
+    expect(database.listQuestionsForPool({ onlyUnattempted: true })).toHaveLength(7)
+  })
+
+  it('listQuestionLibrary 支持错题本/收藏夹/笔记库全景查询与多维过滤，examGoal 设置合法校验', () => {
+    const [q1, q2, q3] = database.listQuestions()
+    // q1 答错带错因，q2 收藏，q3 写笔记
+    database.submitAttempt({
+      questionId: q1!.id,
+      answer: ['Z'],
+      durationSeconds: 20,
+      mode: 'practice',
+      wrongCause: '审题失误'
+    })
+    database.setFavorite(q2!.id, true)
+    database.saveNote(q3!.id, '关键口诀：逆否等价')
+
+    const wrongAll = database.listQuestionLibrary({ tab: 'wrong' })
+    expect(wrongAll.map((item) => item.question.id)).toEqual([q1!.id])
+    expect(wrongAll[0]!.lastWrongCause).toBe('审题失误')
+    expect(database.listQuestionLibrary({ tab: 'wrong', wrongCause: '审题失误' })).toHaveLength(1)
+    expect(database.listQuestionLibrary({ tab: 'wrong', wrongCause: '计算粗心' })).toHaveLength(0)
+
+    const favs = database.listQuestionLibrary({ tab: 'favorite' })
+    expect(favs.map((item) => item.question.id)).toEqual([q2!.id])
+    expect(favs[0]!.favorite).toBe(true)
+
+    const notes = database.listQuestionLibrary({ tab: 'notes', query: '逆否等价' })
+    expect(notes.map((item) => item.question.id)).toEqual([q3!.id])
+    expect(notes[0]!.note).toBe('关键口诀：逆否等价')
+
+    // 目标考试名称与日期校验
+    const saved = database.saveAppSettings({
+      examGoalName: '  2027 国考  ',
+      examGoalDate: '2026-12-01'
+    })
+    expect(saved.examGoalName).toBe('2027 国考')
+    expect(saved.examGoalDate).toBe('2026-12-01')
+    const invalid = database.saveAppSettings({ examGoalDate: 'bad-date' })
+    expect(invalid.examGoalDate).toBe('')
+  })
 })

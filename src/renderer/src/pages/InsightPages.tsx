@@ -39,6 +39,7 @@ export function ReportsPage(): React.JSX.Element {
   const [range, setRange] = useState<ReportData['range']>('30d')
   const [report, setReport] = useState<ReportData>()
   const [essayRecords, setEssayRecords] = useState<ConstructedAttemptRecord[]>([])
+  const [essayRecordsFailed, setEssayRecordsFailed] = useState(false)
   const [error, setError] = useState('')
   async function exportToObsidian(): Promise<void> {
     try {
@@ -50,17 +51,21 @@ export function ReportsPage(): React.JSX.Element {
   }
   useEffect(() => {
     setReport(undefined)
+    setEssayRecordsFailed(false)
     setError('')
     void Promise.all([
       invoke<ReportData>({ method: 'reports.get', params: { range } }),
       invoke<ConstructedAttemptRecord[]>({
         method: 'constructed.history',
         params: { range, limit: 100 }
-      }).catch(() => [] as ConstructedAttemptRecord[])
+      })
+        .then((rows) => ({ rows, failed: false }))
+        .catch(() => ({ rows: [] as ConstructedAttemptRecord[], failed: true }))
     ])
-      .then(([reportData, history]) => {
+      .then(([reportData, historyResult]) => {
         setReport(reportData)
-        setEssayRecords(history)
+        setEssayRecords(historyResult.rows)
+        setEssayRecordsFailed(historyResult.failed)
       })
       .catch((cause) => setError(cause instanceof Error ? cause.message : '报告生成失败'))
   }, [range])
@@ -261,9 +266,11 @@ export function ReportsPage(): React.JSX.Element {
               title="申论作答记录"
               description={
                 `累计评估 ${essaySummary.count} 次 · 覆盖 ${essaySummary.uniquePrompts} 题 · 平均 ${essaySummary.average} 分 · 最高 ${essaySummary.best} 分` +
-                (essaySummary.count > essayRecords.length
-                  ? `（下表展示最近 ${essayRecords.length} 条明细）`
-                  : '')
+                (essayRecordsFailed
+                  ? '（明细列表加载失败，上方汇总统计不受影响）'
+                  : essaySummary.count > essayRecords.length
+                    ? `（下表展示最近 ${essayRecords.length} 条明细）`
+                    : '')
               }
             >
               <table className="report-table">

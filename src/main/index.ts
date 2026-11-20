@@ -457,6 +457,8 @@ async function initialize(): Promise<void> {
         return database!.listDocuments(request.params)
       case 'questions.get':
         return database!.getQuestion(request.params.id)
+      case 'questions.library':
+        return database!.listQuestionLibrary(request.params)
       case 'practice.select':
         return study.selectPractice(request.params)
       case 'practice.session.start': {

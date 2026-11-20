@@ -11,6 +11,7 @@ import type {
 import { formatFullDate, invoke } from '../api'
 import { MarkdownContent } from '../components/MarkdownContent'
 import { EmptyState, ErrorState, LoadingState, PageHeader, Section } from '../components/ui'
+import { extractWordLimit } from '../services/study-helpers'
 
 // 下拉预览的优雅截断：压缩空白后在限长内回退到最近的句读，
 // 没有句读可退时才硬切，始终以省略号提示有下文
@@ -119,14 +120,14 @@ export function ShenlunSolutionPage(): React.JSX.Element {
     }
   }, [officialTypography])
 
-  // 响应 URL 参数跳转（例如从学习报告「申论作答记录」点进复盘）
+  // 响应 URL 参数跳转（例如从学习报告「申论作答记录」点进复盘），评估进行中忽略外部切题
   useEffect(() => {
-    if (!requestedPromptId) return
+    if (!requestedPromptId || evaluating) return
     void flushPendingDraft(false).then(() => {
       setOnlyUnattempted(false)
       setPromptId(requestedPromptId)
     })
-  }, [requestedPromptId])
+  }, [requestedPromptId, evaluating])
 
   // 关键词搜索（防抖）：题目多时不再静默截断在前 200 题，可按关键词定位目标题
   useEffect(() => {
@@ -212,13 +213,18 @@ export function ShenlunSolutionPage(): React.JSX.Element {
     }
   }, [promptId])
 
-  // 卸载前兜底冲刷未落盘草稿，避免刚输入即离开页面丢失
+  // 卸载与关闭窗口前兜底冲刷未落盘草稿，避免刚输入即离开页面或关闭应用丢失
   useEffect(() => {
-    return () => {
+    const flushNow = (): void => {
       window.clearTimeout(saveTimer.current)
       if (pendingDraftRef.current) {
         void persistDraftSnapshot(pendingDraftRef.current, false)
       }
+    }
+    window.addEventListener('beforeunload', flushNow)
+    return () => {
+      window.removeEventListener('beforeunload', flushNow)
+      flushNow()
     }
   }, [])
 
@@ -424,7 +430,20 @@ export function ShenlunSolutionPage(): React.JSX.Element {
           <div className="question-meta">
             {current && <span className="pill">{current.category}</span>}
             {current && <span className="pill">难度 {current.difficulty}</span>}
-            <span className="pill">{content.replace(/\s/g, '').length} 字</span>
+            {(() => {
+              const wordCount = content.replace(/\s/g, '').length
+              const limit = current ? extractWordLimit(current.stem) : null
+              const overLimit = Boolean(limit?.max && wordCount > limit.max)
+              const underLimit = Boolean(limit?.min && wordCount > 0 && wordCount < limit.min)
+              return (
+                <span
+                  className={`pill${overLimit ? ' is-over-limit' : underLimit ? ' is-under-limit' : ''}`}
+                  title={limit ? `已识别题干字数要求：${limit.label}` : undefined}
+                >
+                  {limit ? `${wordCount} / ${limit.label}` : `${wordCount} 字`}
+                </span>
+              )
+            })()}
             {currentStatus && (
               <span className="pill is-evaluated">
                 已评 {currentStatus.count} 次 · 最新 {currentStatus.latestScore} 分

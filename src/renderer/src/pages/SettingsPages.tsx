@@ -677,6 +677,20 @@ export function SettingsPage(): React.JSX.Element {
                 }
               />
             </Field>
+            <Field label="目标考试名称">
+              <Input
+                value={settings.examGoalName ?? ''}
+                onChange={(_, value) => setSettings({ ...settings, examGoalName: value.value })}
+                placeholder="如 2027 国考 / 省考"
+              />
+            </Field>
+            <Field label="目标考试日期">
+              <Input
+                type="date"
+                value={settings.examGoalDate ?? ''}
+                onChange={(_, value) => setSettings({ ...settings, examGoalDate: value.value })}
+              />
+            </Field>
           </div>
           <div className="data-row">
             <div>

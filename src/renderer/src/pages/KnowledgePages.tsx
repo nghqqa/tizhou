@@ -5,7 +5,9 @@ import { useNavigate } from 'react-router-dom'
 import type { KnowledgeDocument, Subject } from '@shared/contracts'
 import { invoke } from '../api'
 import { MarkdownContent } from '../components/MarkdownContent'
+import { ReadingTypographyBar, useReadingTypography } from '../components/ReadingTypographyControl'
 import { EmptyState, ErrorState, LoadingState, PageHeader, Section } from '../components/ui'
+import { extractMarkdownHeadings, extractSearchSnippet } from '../services/study-helpers'
 
 interface KnowledgePageProps {
   subject: Subject
@@ -18,6 +20,7 @@ export function KnowledgePage({ subject, kind }: KnowledgePageProps): React.JSX.
   const [selectedId, setSelectedId] = useState('')
   const [query, setQuery] = useState('')
   const [error, setError] = useState('')
+  const reading = useReadingTypography()
   useEffect(() => {
     setDocuments(undefined)
     setError('')
@@ -28,23 +31,36 @@ export function KnowledgePage({ subject, kind }: KnowledgePageProps): React.JSX.
       })
       .catch((cause) => setError(cause instanceof Error ? cause.message : '文档读取失败'))
   }, [subject, kind])
-  const filtered = useMemo(
-    () =>
-      documents?.filter(
-        (document) =>
-          !query.trim() ||
-          `${document.title}${document.summary}${document.tags.join('')}`
-            .toLowerCase()
-            .includes(query.trim().toLowerCase())
-      ) ?? [],
-    [documents, query]
-  )
+  const filtered = useMemo(() => {
+    const trimmed = query.trim().toLowerCase()
+    if (!documents) return []
+    if (!trimmed) return documents
+    return documents.filter((document) =>
+      `${document.title}\n${document.summary}\n${document.tags.join(' ')}\n${document.content}`
+        .toLowerCase()
+        .includes(trimmed)
+    )
+  }, [documents, query])
   const selected = filtered.find((item) => item.id === selectedId) ?? filtered[0]
+  const headings = useMemo(
+    () => (selected ? extractMarkdownHeadings(selected.content) : []),
+    [selected?.id, selected?.content]
+  )
   const contentRef = useRef<HTMLElement>(null)
   useEffect(() => {
     // 切换文档后内容区回到顶部，避免停留在上一篇的滚动位置
     contentRef.current?.scrollTo({ top: 0 })
   }, [selected?.id])
+
+  function scrollToHeading(headingIndex: number): void {
+    const container = contentRef.current
+    if (!container) return
+    const nodes = container.querySelectorAll('.markdown h2, .markdown h3')
+    const target = nodes[headingIndex]
+    if (target instanceof HTMLElement) {
+      target.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }
+  }
   const title = `${subject === 'xingce' ? '行测' : '申论'}${kind === 'knowledge' ? '知识' : '方法'}中心`
   if (error)
     return (
@@ -72,31 +88,70 @@ export function KnowledgePage({ subject, kind }: KnowledgePageProps): React.JSX.
       ) : (
         <Section className="document-layout">
           <div className="document-list">
-            <Field label="搜索文档">
+            <Field label="搜索文档（含正文）">
               <Input
                 value={query}
                 contentBefore={<MagnifyingGlassIcon />}
                 onChange={(_, data) => setQuery(data.value)}
-                placeholder="标题、摘要或标签"
+                placeholder="标题、摘要、标签或正文关键词"
               />
             </Field>
             <div style={{ marginTop: 12 }}>
-              {filtered.map((document) => (
-                <button
-                  type="button"
-                  className={`document-item ${selected?.id === document.id ? 'active' : ''}`}
-                  key={document.id}
-                  onClick={() => setSelectedId(document.id)}
-                >
-                  <strong>{document.title}</strong>
-                  <small>{document.summary}</small>
-                </button>
-              ))}
+              {filtered.map((document) => {
+                const snippet = query.trim() ? extractSearchSnippet(document.content, query) : null
+                return (
+                  <button
+                    type="button"
+                    className={`document-item ${selected?.id === document.id ? 'active' : ''}`}
+                    key={document.id}
+                    onClick={() => setSelectedId(document.id)}
+                  >
+                    <strong>{document.title}</strong>
+                    <small className={snippet ? 'doc-snippet' : undefined}>
+                      {snippet ?? document.summary}
+                    </small>
+                  </button>
+                )
+              })}
             </div>
           </div>
           <article className="document-content" ref={contentRef}>
             {selected ? (
-              <MarkdownContent content={selected.content} sourceFilePath={selected.filePath} />
+              <>
+                <div className="doc-header-bar">
+                  <ReadingTypographyBar
+                    typography={reading.typography}
+                    onUpdate={reading.update}
+                    onStepScale={reading.stepScale}
+                    onResetScale={reading.resetScale}
+                  />
+                </div>
+                {headings.length >= 2 && (
+                  <nav className="doc-toc" aria-label="文档目录">
+                    <span className="doc-toc-label">目录</span>
+                    <div className="doc-toc-items">
+                      {headings.map((heading) => (
+                        <button
+                          key={`${heading.index}-${heading.text}`}
+                          type="button"
+                          className={`doc-toc-item${heading.level === 3 ? ' is-sub' : ''}`}
+                          onClick={() => scrollToHeading(heading.index)}
+                        >
+                          {heading.text}
+                        </button>
+                      ))}
+                    </div>
+                  </nav>
+                )}
+                <div
+                  ref={reading.surfaceRef}
+                  className="question-reading-surface doc-reading-body"
+                  data-reading-font={reading.typography.font}
+                  style={reading.surfaceStyle}
+                >
+                  <MarkdownContent content={selected.content} sourceFilePath={selected.filePath} />
+                </div>
+              </>
             ) : (
               <EmptyState title="没有匹配文档" description="尝试缩短搜索词。" />
             )}

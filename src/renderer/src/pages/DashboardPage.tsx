@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Button, ProgressBar } from '@fluentui/react-components'
+import { Button, Input, ProgressBar } from '@fluentui/react-components'
 import {
   ArrowRightIcon,
   BrainIcon,
@@ -12,6 +12,7 @@ import {
 import { useNavigate } from 'react-router-dom'
 import { formatDate } from '../api'
 import { Section } from '../components/ui'
+import { computeExamCountdown } from '../services/study-helpers'
 import { useAppStore } from '../store'
 import type { DashboardData } from '@shared/contracts'
 
@@ -270,7 +271,12 @@ export function DashboardPage(): React.JSX.Element {
   const navigate = useNavigate()
   const data = useAppStore((state) => state.data)!
   const refresh = useAppStore((state) => state.refreshDashboard)
+  const updateSettings = useAppStore((state) => state.updateSettings)
   const dashboard = data.dashboard
+  const countdown = computeExamCountdown(data.settings.examGoalDate)
+  const [editingGoal, setEditingGoal] = useState(false)
+  const [goalNameDraft, setGoalNameDraft] = useState(data.settings.examGoalName ?? '')
+  const [goalDateDraft, setGoalDateDraft] = useState(data.settings.examGoalDate ?? '')
   // E2E 专用（窗口 query 携带 e2e=1 时出现）：触发一次渲染期异常，验证错误边界
   const e2eMode = new URLSearchParams(window.location.search).get('e2e') === '1'
   const [e2eCrash, setE2eCrash] = useState(false)
@@ -300,6 +306,71 @@ export function DashboardPage(): React.JSX.Element {
               ? `知识库 ${dashboard.totalQuestions} 道题 · 连续学习 ${dashboard.studyStreak} 天`
               : '先导入题库，再开始训练'}
           </p>
+          <div className="dash-countdown-row">
+            {editingGoal ? (
+              <div className="dash-countdown-form">
+                <Input
+                  size="small"
+                  value={goalNameDraft}
+                  onChange={(_, d) => setGoalNameDraft(d.value)}
+                  placeholder="考试名称（如 2027 国考）"
+                />
+                <Input
+                  size="small"
+                  type="date"
+                  value={goalDateDraft}
+                  onChange={(_, d) => setGoalDateDraft(d.value)}
+                />
+                <Button
+                  size="small"
+                  appearance="primary"
+                  onClick={() => {
+                    void updateSettings({
+                      examGoalName: goalNameDraft.trim(),
+                      examGoalDate: goalDateDraft.trim()
+                    })
+                    setEditingGoal(false)
+                  }}
+                >
+                  保存
+                </Button>
+                <Button size="small" appearance="subtle" onClick={() => setEditingGoal(false)}>
+                  取消
+                </Button>
+              </div>
+            ) : countdown ? (
+              <button
+                type="button"
+                className={`dash-countdown-pill${countdown.status === 'today' ? ' is-today' : ''}`}
+                title="点击修改目标考试倒计时"
+                onClick={() => {
+                  setGoalNameDraft(data.settings.examGoalName ?? '')
+                  setGoalDateDraft(data.settings.examGoalDate ?? '')
+                  setEditingGoal(true)
+                }}
+              >
+                <CalendarCheckIcon size={13} />
+                {countdown.status === 'upcoming'
+                  ? `距 ${data.settings.examGoalName || '目标考试'} 还有 ${countdown.daysLeft} 天`
+                  : countdown.status === 'today'
+                    ? `${data.settings.examGoalName || '目标考试'} · 就是今天`
+                    : `${data.settings.examGoalName || '目标考试'} 已过 ${Math.abs(countdown.daysLeft)} 天`}
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="dash-countdown-pill is-unset"
+                onClick={() => {
+                  setGoalNameDraft(data.settings.examGoalName ?? '')
+                  setGoalDateDraft(data.settings.examGoalDate ?? '')
+                  setEditingGoal(true)
+                }}
+              >
+                <CalendarCheckIcon size={13} />
+                设置目标考试倒计时
+              </button>
+            )}
+          </div>
         </div>
         <div className="dash-header-action">
           <Button

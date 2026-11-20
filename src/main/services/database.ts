@@ -22,6 +22,7 @@ import type {
   PracticeSession,
   Question,
   QuestionFacets,
+  QuestionLibraryItem,
   ReportData,
   ReviewItem,
   VaultIndexResult,
@@ -64,6 +65,7 @@ interface QuestionListFilter {
   query?: string
   onlyWrong?: boolean
   onlyFavorite?: boolean
+  onlyUnattempted?: boolean
   limit?: number
 }
 
@@ -395,6 +397,11 @@ export class DatabaseService {
       Math.min(300, Math.round(settings.defaultExamMinutes))
     )
     settings.backupRetention = Math.max(1, Math.min(100, Math.round(settings.backupRetention)))
+    settings.examGoalName =
+      typeof settings.examGoalName === 'string' ? settings.examGoalName.trim().slice(0, 40) : ''
+    const rawGoalDate =
+      typeof settings.examGoalDate === 'string' ? settings.examGoalDate.trim() : ''
+    settings.examGoalDate = /^\d{4}-\d{2}-\d{2}$/.test(rawGoalDate) ? rawGoalDate : ''
     this.setSetting('app_settings', settings)
     return settings
   }
@@ -691,12 +698,100 @@ export class DatabaseService {
       )
     if (filter.onlyFavorite)
       where.push('EXISTS (SELECT 1 FROM favorites f WHERE f.question_id = q.id)')
+    if (filter.onlyUnattempted)
+      where.push('NOT EXISTS (SELECT 1 FROM attempts a WHERE a.question_id = q.id)')
     return { where, values }
   }
 
   getQuestion(id: string): Question | undefined {
     const row = this.db.prepare('SELECT * FROM questions WHERE id = ?').get(id) as Row | undefined
     return row ? this.mapQuestion(row) : undefined
+  }
+
+  /** 错题本 / 收藏夹 / 笔记库全景查询：限定当前活动知识库，支持按模块、错因与关键词过滤 */
+  listQuestionLibrary(params: {
+    tab: 'wrong' | 'favorite' | 'notes'
+    category?: string
+    wrongCause?: string
+    query?: string
+    limit?: number
+  }): QuestionLibraryItem[] {
+    const where = ['v.active = 1']
+    const values: SqlValue[] = []
+    let joinSql = ''
+    let orderSql = ''
+    if (params.tab === 'wrong') {
+      joinSql = `
+        JOIN wrong_questions w ON w.question_id = q.id AND w.mastered = 0
+        LEFT JOIN review_tasks rt ON rt.question_id = q.id
+        LEFT JOIN favorites f ON f.question_id = q.id
+        LEFT JOIN user_notes n ON n.question_id = q.id`
+      orderSql = 'w.last_attempt_at DESC, w.wrong_count DESC'
+      if (params.wrongCause?.trim()) {
+        if (params.wrongCause.trim() === '未标注') {
+          where.push("(w.last_wrong_cause IS NULL OR trim(w.last_wrong_cause) = '')")
+        } else {
+          where.push('w.last_wrong_cause = ?')
+          values.push(params.wrongCause.trim())
+        }
+      }
+    } else if (params.tab === 'favorite') {
+      joinSql = `
+        JOIN favorites f ON f.question_id = q.id
+        LEFT JOIN wrong_questions w ON w.question_id = q.id
+        LEFT JOIN review_tasks rt ON rt.question_id = q.id
+        LEFT JOIN user_notes n ON n.question_id = q.id`
+      orderSql = 'f.created_at DESC'
+    } else {
+      joinSql = `
+        JOIN user_notes n ON n.question_id = q.id AND trim(n.content) != ''
+        LEFT JOIN wrong_questions w ON w.question_id = q.id
+        LEFT JOIN review_tasks rt ON rt.question_id = q.id
+        LEFT JOIN favorites f ON f.question_id = q.id`
+      orderSql = 'n.updated_at DESC'
+    }
+    if (params.category?.trim()) {
+      where.push('q.category = ?')
+      values.push(params.category.trim())
+    }
+    if (params.query?.trim()) {
+      const keyword = `%${params.query.trim()}%`
+      where.push(
+        "(q.stem LIKE ? OR q.explanation LIKE ? OR q.tags_json LIKE ? OR COALESCE(n.content, '') LIKE ?)"
+      )
+      values.push(keyword, keyword, keyword, keyword)
+    }
+    const limit = Math.max(1, Math.min(500, Math.round(params.limit ?? 200)))
+    const rows = this.db
+      .prepare(
+        `SELECT q.*,
+          COALESCE(w.wrong_count, 0) AS wrong_count,
+          COALESCE(w.correct_streak, 0) AS correct_streak,
+          w.last_wrong_cause AS last_wrong_cause,
+          w.last_attempt_at AS last_attempt_at,
+          rt.due_at AS due_at,
+          CASE WHEN f.question_id IS NOT NULL THEN 1 ELSE 0 END AS is_favorite,
+          COALESCE(n.content, '') AS note_content,
+          n.updated_at AS note_updated_at
+        FROM questions q
+        JOIN vault_registry v ON v.id = q.vault_id
+        ${joinSql}
+        WHERE ${where.join(' AND ')}
+        ORDER BY ${orderSql}
+        LIMIT ?`
+      )
+      .all(...values, limit) as Row[]
+    return rows.map((row) => ({
+      question: this.mapQuestion(row),
+      wrongCount: numberValue(row.wrong_count),
+      correctStreak: numberValue(row.correct_streak),
+      lastWrongCause: row.last_wrong_cause ? String(row.last_wrong_cause) : undefined,
+      lastAttemptAt: row.last_attempt_at ? String(row.last_attempt_at) : undefined,
+      dueAt: row.due_at ? String(row.due_at) : undefined,
+      favorite: Boolean(row.is_favorite),
+      note: String(row.note_content ?? ''),
+      noteUpdatedAt: row.note_updated_at ? String(row.note_updated_at) : undefined
+    }))
   }
 
   /** 整库题目一次取出（供快照与增量索引复用未变文件的记录） */

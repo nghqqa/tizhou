@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   Button,
   Checkbox,
@@ -7,11 +7,15 @@ import {
   Input,
   ProgressBar,
   Select,
+  Tab,
+  TabList,
   Textarea
 } from '@fluentui/react-components'
 import {
+  ArrowLeftIcon,
   BookmarkSimpleIcon,
   CheckIcon,
+  ClockIcon,
   FlagIcon,
   NotePencilIcon,
   SkipForwardIcon
@@ -23,11 +27,12 @@ import type {
   PracticeSession,
   Question,
   QuestionFacets,
+  QuestionLibraryItem,
   ReviewItem,
   Subject
 } from '@shared/contracts'
 import { FEATURE_PROMPTS, taskDataEnvelope } from '@shared/prompts'
-import { invoke } from '../api'
+import { formatDate, invoke } from '../api'
 import { MarkdownContent } from '../components/MarkdownContent'
 import { OptionContent } from '../components/OptionContent'
 import { ReadingTypographyBar, useReadingTypography } from '../components/ReadingTypographyControl'
@@ -52,6 +57,8 @@ interface TrainerInitial {
   category?: string
   feedbackMode?: 'immediate' | 'summary'
   subject?: '' | Subject
+  onlyWrong?: boolean
+  onlyFavorite?: boolean
 }
 
 function Trainer({
@@ -72,8 +79,9 @@ function Trainer({
   const [paper, setPaper] = useState('')
   const [difficulty, setDifficulty] = useState('')
   const [keyword, setKeyword] = useState('')
-  const [onlyWrong, setOnlyWrong] = useState(false)
-  const [onlyFavorite, setOnlyFavorite] = useState(false)
+  const [onlyWrong, setOnlyWrong] = useState(Boolean(initial?.onlyWrong))
+  const [onlyFavorite, setOnlyFavorite] = useState(Boolean(initial?.onlyFavorite))
+  const [onlyUnattempted, setOnlyUnattempted] = useState(false)
   const [favorite, setFavorite] = useState(false)
   const [mode, setMode] = useState<PracticeSelection['mode']>(
     initial?.mode ?? (review ? 'review' : 'adaptive')
@@ -102,7 +110,17 @@ function Trainer({
   const [note, setNote] = useState('')
   const [loading, setLoading] = useState(review)
   const [error, setError] = useState('')
+  const [eliminatedByQuestion, setEliminatedByQuestion] = useState<Record<string, string[]>>({})
+  const [elapsedSeconds, setElapsedSeconds] = useState(0)
+  const [showTimer, setShowTimer] = useState<boolean>(() => {
+    try {
+      return window.localStorage.getItem('tizhou:practice-show-timer') !== '0'
+    } catch {
+      return true
+    }
+  })
   const startedAt = useRef(Date.now())
+  const currentQuestionIdRef = useRef('')
 
   useEffect(() => {
     // 科目/分类元数据跟随筛选变化（科目筛选来自 URL 参数或下拉选择，空值与 common 视为不限）
@@ -131,7 +149,7 @@ function Trainer({
         if (active) {
           if (review) {
             restoreSession(active)
-            void reloadSummaryResults(active)
+            void reloadSessionResults(active)
           } else setPendingSession(active)
         } else if (review) {
           void startSession({ mode: 'review', count: 50, feedbackMode: 'immediate' })
@@ -146,15 +164,63 @@ function Trainer({
   }, [review])
 
   const current = questions[index]
+  currentQuestionIdRef.current = current?.id ?? ''
+  const currentRecord = current
+    ? sessionResults.find((item) => item.questionId === current.id)
+    : undefined
+  const currentEliminated = current ? (eliminatedByQuestion[current.id] ?? []) : []
+
+  useEffect(() => {
+    if (!current || result || currentRecord) return
+    setElapsedSeconds(Math.max(0, Math.floor((Date.now() - startedAt.current) / 1000)))
+    const timer = window.setInterval(() => {
+      setElapsedSeconds(Math.max(0, Math.floor((Date.now() - startedAt.current) / 1000)))
+    }, 1000)
+    return () => window.clearInterval(timer)
+  }, [current?.id, result, currentRecord])
+
+  function toggleTimerVisibility(): void {
+    setShowTimer((value) => {
+      const nextValue = !value
+      try {
+        window.localStorage.setItem('tizhou:practice-show-timer', nextValue ? '1' : '0')
+      } catch {
+        /* 忽略受限环境写入失败 */
+      }
+      return nextValue
+    })
+  }
+
+  function toggleEliminate(key: string, event: React.MouseEvent): void {
+    event.preventDefault()
+    if (!current || result || currentRecord) return
+    setEliminatedByQuestion((prev) => {
+      const list = prev[current.id] ?? []
+      const nextList = list.includes(key) ? list.filter((item) => item !== key) : [...list, key]
+      return { ...prev, [current.id]: nextList }
+    })
+  }
 
   useEffect(() => {
     if (!current) return
+    let cancelled = false
     void invoke<string>({ method: 'note.get', params: { questionId: current.id } })
-      .then(setNote)
-      .catch(() => setNote(''))
+      .then((value) => {
+        if (!cancelled) setNote(value)
+      })
+      .catch(() => {
+        if (!cancelled) setNote('')
+      })
     void invoke<boolean>({ method: 'favorite.get', params: { questionId: current.id } })
-      .then(setFavorite)
-      .catch(() => setFavorite(false))
+      .then((value) => {
+        if (!cancelled) setFavorite(value)
+      })
+      .catch(() => {
+        if (!cancelled) setFavorite(false)
+      })
+    return () => {
+      cancelled = true
+    }
   }, [current?.id])
 
   useEffect(() => {
@@ -168,19 +234,44 @@ function Trainer({
         event.target instanceof HTMLButtonElement
       )
         return
+      if (event.key === 'ArrowLeft' && index > 0) {
+        event.preventDefault()
+        void jumpTo(index - 1)
+        return
+      }
+      if (event.key === 'ArrowRight' && index + 1 < questions.length) {
+        event.preventDefault()
+        void jumpTo(index + 1)
+        return
+      }
       const optionIndex = /^[1-8]$/.test(event.key)
         ? Number(event.key) - 1
         : /^[a-h]$/i.test(event.key)
           ? event.key.toUpperCase().charCodeAt(0) - 65
           : -1
       const option = current.options[optionIndex]
-      if (option && !result) choose(option.key)
-      if (event.key === 'Enter' && !result && (selected.length || essayAnswer.trim())) void submit()
-      if (event.key.toLowerCase() === 'n' && result) void next()
+      if (option && !result && !currentRecord) choose(option.key)
+      if (
+        event.key === 'Enter' &&
+        !result &&
+        !currentRecord &&
+        (selected.length || essayAnswer.trim())
+      )
+        void submit()
+      if (event.key.toLowerCase() === 'n' && (result || currentRecord)) void next()
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [current, result, selected, essayAnswer])
+  }, [
+    current,
+    result,
+    currentRecord,
+    selected,
+    essayAnswer,
+    index,
+    questions.length,
+    sessionResults
+  ])
 
   function restoreSession(active: PracticeSession): void {
     const restored = active.questionIds
@@ -191,37 +282,45 @@ function Trainer({
     setQuestions(restored)
     setIndex(Math.min(active.currentIndex, Math.max(0, restored.length - 1)))
     setPendingSession(undefined)
+    setEliminatedByQuestion({})
     setLoading(false)
     startedAt.current = Date.now()
+    setElapsedSeconds(0)
   }
 
-  /** 汇总模式恢复：sessionResults 是内存态，重启后为空——从 attempts 重建已答记录，
-   *  使「整组汇总解析」在恢复会话后仍能看到历史作答的对错与所选选项 */
-  async function reloadSummaryResults(active: PracticeSession): Promise<void> {
-    if (active.feedbackMode !== 'summary') return
+  /** 会话恢复：从 attempts 重建本组已答记录，既支撑「整组汇总解析」恢复，
+   *  也让右侧「本组答题卡」在重启恢复后保留对错状态并支持回看 */
+  async function reloadSessionResults(active: PracticeSession): Promise<void> {
     try {
       const records = await invoke<
         Array<{ questionId: string; answer: string[]; correct: boolean }>
       >({ method: 'practice.session.results', params: { id: active.id } })
-      setSessionResults(
-        records.map((record) => {
-          const snapshot = active.questionSnapshots[record.questionId]
-          return {
-            questionId: record.questionId,
-            answer: record.answer,
-            result: {
-              attemptId: '',
-              correct: record.correct,
-              expected: snapshot?.answer ?? [],
-              explanation: snapshot?.explanation ?? '',
-              nextReviewAt: undefined,
-              mastered: false
-            }
+      const rebuilt: SessionResult[] = records.map((record) => {
+        const snapshot = active.questionSnapshots[record.questionId]
+        return {
+          questionId: record.questionId,
+          answer: record.answer,
+          result: {
+            attemptId: '',
+            correct: record.correct,
+            expected: snapshot?.answer ?? [],
+            explanation: snapshot?.explanation ?? '',
+            nextReviewAt: undefined,
+            mastered: false
           }
-        })
-      )
+        }
+      })
+      setSessionResults(rebuilt)
+      const currentId = active.questionIds[active.currentIndex]
+      const currentHit = rebuilt.find((item) => item.questionId === currentId)
+      if (currentHit) {
+        const snapshot = currentId ? active.questionSnapshots[currentId] : undefined
+        if (snapshot?.type === 'essay') setEssayAnswer(currentHit.answer[0] ?? '')
+        else setSelected(currentHit.answer)
+        if (active.feedbackMode === 'immediate') setResult(currentHit.result)
+      }
     } catch {
-      // 拉取失败退化为内存态：已答题在汇总页显示为未作答，不阻塞恢复本身
+      // 拉取失败退化为内存态：不阻塞恢复本身
     }
   }
 
@@ -242,7 +341,8 @@ function Trainer({
           difficulty: difficulty ? (Number(difficulty) as 1 | 2 | 3 | 4 | 5) : undefined,
           query: keyword.trim() || undefined,
           onlyWrong: onlyWrong || undefined,
-          onlyFavorite: onlyFavorite || undefined
+          onlyFavorite: onlyFavorite || undefined,
+          onlyUnattempted: onlyUnattempted || undefined
         }
       }
       const created = await invoke<PracticeSession>({
@@ -276,7 +376,14 @@ function Trainer({
   }
 
   function choose(key: string): void {
-    if (!current || result) return
+    if (!current || result || currentRecord) return
+    // 左键选中被划除的选项时自动取消划除态
+    if (currentEliminated.includes(key)) {
+      setEliminatedByQuestion((prev) => ({
+        ...prev,
+        [current.id]: (prev[current.id] ?? []).filter((item) => item !== key)
+      }))
+    }
     if (current.type === 'multiple') {
       setSelected((values) =>
         values.includes(key) ? values.filter((value) => value !== key) : [...values, key]
@@ -330,18 +437,28 @@ function Trainer({
         }
       })
       const updatedResults = [
-        ...sessionResults,
+        ...sessionResults.filter((item) => item.questionId !== current.id),
         { questionId: current.id, result: response, answer }
       ]
       setSessionResults(updatedResults)
       void refreshDashboard()
       if (feedbackMode === 'summary') {
-        if (index + 1 >= questions.length) {
+        const answeredIds = new Set(updatedResults.map((item) => item.questionId))
+        let nextUnanswered = -1
+        for (let offset = 1; offset <= questions.length; offset += 1) {
+          const candidate = (index + offset) % questions.length
+          const candidateQuestion = questions[candidate]
+          if (candidateQuestion && !answeredIds.has(candidateQuestion.id)) {
+            nextUnanswered = candidate
+            break
+          }
+        }
+        if (nextUnanswered === -1) {
           if (session)
             await invoke({ method: 'practice.session.complete', params: { id: session.id } })
           setSummaryComplete(true)
         } else {
-          await advance()
+          await jumpTo(nextUnanswered, updatedResults)
         }
       } else {
         setResult(response)
@@ -369,19 +486,42 @@ function Trainer({
     setAiExplanation('')
     setError('')
     startedAt.current = Date.now()
+    setElapsedSeconds(0)
   }
 
-  async function advance(): Promise<void> {
-    const nextIndex = index + 1
+  async function jumpTo(
+    targetIndex: number,
+    resultsPool: SessionResult[] = sessionResults
+  ): Promise<void> {
+    if (targetIndex < 0 || targetIndex >= questions.length) return
     if (session) {
       const updated = await invoke<PracticeSession>({
         method: 'practice.session.update',
-        params: { id: session.id, currentIndex: nextIndex }
+        params: { id: session.id, currentIndex: targetIndex }
       })
       setSession(updated)
     }
-    setIndex(nextIndex)
+    const target = questions[targetIndex]
+    const existing = target ? resultsPool.find((item) => item.questionId === target.id) : undefined
+    setIndex(targetIndex)
     resetQuestionState()
+    if (existing && target) {
+      if (target.type === 'essay') setEssayAnswer(existing.answer[0] ?? '')
+      else setSelected(existing.answer)
+      if (feedbackMode === 'immediate') {
+        setResult(existing.result)
+        void invoke<Question[]>({
+          method: 'questions.similar',
+          params: { id: target.id, limit: 3 }
+        })
+          .then((list) => {
+            if (currentQuestionIdRef.current === target.id) setSimilar(list)
+          })
+          .catch(() => {
+            if (currentQuestionIdRef.current === target.id) setSimilar([])
+          })
+      }
+    }
   }
 
   async function next(): Promise<void> {
@@ -390,10 +530,11 @@ function Trainer({
       setQuestions([])
       setSession(undefined)
       setSessionResults([])
+      setEliminatedByQuestion({})
       setIndex(0)
       return
     }
-    await advance()
+    await jumpTo(index + 1)
   }
 
   async function saveNote(): Promise<void> {
@@ -537,7 +678,7 @@ function Trainer({
               appearance="primary"
               onClick={() => {
                 restoreSession(pendingSession)
-                void reloadSummaryResults(pendingSession)
+                void reloadSessionResults(pendingSession)
               }}
             >
               继续上次训练
@@ -678,9 +819,22 @@ function Trainer({
           </Field>
           <div className="filter-toggles">
             <Checkbox
+              label="只练未做"
+              checked={onlyUnattempted}
+              onChange={(_, data) => {
+                const checked = Boolean(data.checked)
+                setOnlyUnattempted(checked)
+                if (checked) setOnlyWrong(false)
+              }}
+            />
+            <Checkbox
               label="只练错题"
               checked={onlyWrong}
-              onChange={(_, data) => setOnlyWrong(Boolean(data.checked))}
+              onChange={(_, data) => {
+                const checked = Boolean(data.checked)
+                setOnlyWrong(checked)
+                if (checked) setOnlyUnattempted(false)
+              }}
             />
             <Checkbox
               label="只练收藏"
@@ -709,6 +863,9 @@ function Trainer({
     )
 
   const uncertain = session?.uncertainIds.includes(current.id) ?? false
+  const timerText = `${String(Math.floor(elapsedSeconds / 60)).padStart(2, '0')}:${String(elapsedSeconds % 60).padStart(2, '0')}`
+  const answeredMap = new Map(sessionResults.map((item) => [item.questionId, item]))
+  const locked = Boolean(result || currentRecord)
   return (
     <div className="question-shell">
       <Section className="question-card">
@@ -717,8 +874,19 @@ function Trainer({
           <span>
             第 {index + 1} 题 / 共 {questions.length} 题
           </span>
-          <span>
-            {current.category} · 难度 {current.difficulty}
+          <span className="progress-right">
+            <span>
+              {current.category} · 难度 {current.difficulty}
+            </span>
+            <button
+              type="button"
+              className={`practice-timer${showTimer && elapsedSeconds >= 60 && !locked ? ' is-overtime' : ''}`}
+              title={showTimer ? '点击隐藏单题计时' : '点击显示单题计时'}
+              onClick={toggleTimerVisibility}
+            >
+              <ClockIcon size={12} />
+              {showTimer ? timerText : '计时已隐藏'}
+            </button>
           </span>
         </div>
         <ProgressBar value={(index + 1) / questions.length} />
@@ -770,32 +938,39 @@ function Trainer({
               value={essayAnswer}
               onChange={(_, data) => setEssayAnswer(data.value)}
               placeholder="写下你的作答要点"
-              disabled={Boolean(result)}
+              disabled={locked}
             />
           ) : (
             <div className="options">
-              {current.options.map((option) => (
-                <button
-                  type="button"
-                  key={option.key}
-                  className={`option-button ${
-                    result
-                      ? current.answer.includes(option.key)
-                        ? 'correct'
+              {current.options.map((option) => {
+                const eliminated = !locked && currentEliminated.includes(option.key)
+                return (
+                  <button
+                    type="button"
+                    key={option.key}
+                    title={locked ? undefined : '左键选择 · 右键排除干扰项'}
+                    className={`option-button ${
+                      result
+                        ? current.answer.includes(option.key)
+                          ? 'correct'
+                          : selected.includes(option.key)
+                            ? 'wrong'
+                            : 'dimmed'
                         : selected.includes(option.key)
-                          ? 'wrong'
-                          : 'dimmed'
-                      : selected.includes(option.key)
-                        ? 'selected'
-                        : ''
-                  }`}
-                  onClick={() => choose(option.key)}
-                  disabled={Boolean(result)}
-                >
-                  <span className="option-key">{option.key}</span>
-                  <OptionContent option={option} sourceFilePath={current.filePath} />
-                </button>
-              ))}
+                          ? 'selected'
+                          : eliminated
+                            ? 'is-eliminated'
+                            : ''
+                    }`}
+                    onClick={() => choose(option.key)}
+                    onContextMenu={(event) => toggleEliminate(option.key, event)}
+                    disabled={locked}
+                  >
+                    <span className="option-key">{option.key}</span>
+                    <OptionContent option={option} sourceFilePath={current.filePath} />
+                  </button>
+                )
+              })}
             </div>
           )}
           {result && (
@@ -812,6 +987,15 @@ function Trainer({
         </div>
         <div className="question-footer">
           <div className="button-row">
+            {index > 0 && (
+              <Button
+                appearance="subtle"
+                icon={<ArrowLeftIcon />}
+                onClick={() => void jumpTo(index - 1)}
+              >
+                上一题
+              </Button>
+            )}
             <Button
               appearance={favorite ? 'secondary' : 'subtle'}
               icon={<BookmarkSimpleIcon weight={favorite ? 'fill' : undefined} />}
@@ -827,7 +1011,7 @@ function Trainer({
               {uncertain ? '取消待查' : '不确定'}
             </Button>
           </div>
-          {result ? (
+          {locked ? (
             <Button appearance="primary" icon={<SkipForwardIcon />} onClick={() => void next()}>
               {index + 1 >= questions.length ? '完成本组' : '下一题'}
             </Button>
@@ -844,6 +1028,34 @@ function Trainer({
         </div>
       </Section>
       <div className="side-stack">
+        <Section
+          title="本组答题卡"
+          description={`已答 ${sessionResults.length} / ${questions.length} 题${session?.uncertainIds.length ? ` · ${session.uncertainIds.length} 题待查` : ''}`}
+        >
+          <div className="question-grid">
+            {questions.map((question, questionIndex) => {
+              const rec = answeredMap.get(question.id)
+              const isUncertain = session?.uncertainIds.includes(question.id) ?? false
+              const statusClass =
+                rec && feedbackMode === 'immediate'
+                  ? rec.result.correct
+                    ? ' is-correct'
+                    : ' is-wrong'
+                  : ''
+              return (
+                <Button
+                  key={question.id}
+                  className={`question-number${statusClass}${isUncertain ? ' is-uncertain' : ''}`}
+                  size="small"
+                  appearance={questionIndex === index ? 'primary' : rec ? 'secondary' : 'subtle'}
+                  onClick={() => void jumpTo(questionIndex)}
+                >
+                  {questionIndex + 1}
+                </Button>
+              )
+            })}
+          </div>
+        </Section>
         <Section title="错因标注" description="标注会进入报告，用于区分知识和操作问题。">
           <Field label="本题主要风险">
             <Select
@@ -932,6 +1144,8 @@ export function PracticePage(): React.JSX.Element {
   const mode = searchParams.get('mode') as PracticeSelection['mode'] | null
   const count = Number(searchParams.get('count')) || undefined
   const category = searchParams.get('category') ?? undefined
+  const onlyWrong = searchParams.get('onlyWrong') === '1'
+  const onlyFavorite = searchParams.get('onlyFavorite') === '1'
   const subjectParam = searchParams.get('subject')
   const subject =
     subjectParam === 'xingce' || subjectParam === 'shenlun' || subjectParam === 'common'
@@ -940,13 +1154,15 @@ export function PracticePage(): React.JSX.Element {
         : subjectParam
       : undefined
   const initial: TrainerInitial | undefined =
-    mode || count || category || subject !== undefined
+    mode || count || category || onlyWrong || onlyFavorite || subject !== undefined
       ? {
           mode: mode ?? undefined,
           count,
           category,
+          onlyWrong,
+          onlyFavorite,
           feedbackMode: 'immediate',
-          subject: subject ?? 'xingce'
+          subject: subject ?? (onlyWrong || onlyFavorite ? '' : 'xingce')
         }
       : undefined
   return (
@@ -969,8 +1185,285 @@ export function PracticePage(): React.JSX.Element {
   )
 }
 
+function QuestionLibraryView({ tab }: { tab: 'wrong' | 'favorite' | 'notes' }): React.JSX.Element {
+  const navigate = useNavigate()
+  const [items, setItems] = useState<QuestionLibraryItem[]>()
+  const [categories, setCategories] = useState<Category[]>([])
+  const [category, setCategory] = useState('')
+  const [wrongCause, setWrongCause] = useState('')
+  const [query, setQuery] = useState('')
+  const [expandedId, setExpandedId] = useState('')
+  const [noteDrafts, setNoteDrafts] = useState<Record<string, string>>({})
+  const [savingNoteId, setSavingNoteId] = useState('')
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    void invoke<Category[]>({ method: 'vault.categories', params: {} })
+      .then(setCategories)
+      .catch(() => setCategories([]))
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    const timer = window.setTimeout(() => {
+      setError('')
+      void invoke<QuestionLibraryItem[]>({
+        method: 'questions.library',
+        params: {
+          tab,
+          category: category || undefined,
+          wrongCause: tab === 'wrong' && wrongCause ? wrongCause : undefined,
+          query: query.trim() || undefined,
+          limit: 200
+        }
+      })
+        .then((rows) => {
+          if (cancelled) return
+          setItems(rows)
+          setNoteDrafts((prev) => {
+            const next = { ...prev }
+            for (const row of rows) {
+              if (!(row.question.id in next)) next[row.question.id] = row.note
+            }
+            return next
+          })
+        })
+        .catch((cause) => {
+          if (!cancelled) setError(cause instanceof Error ? cause.message : '题单读取失败')
+        })
+    }, 200)
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [tab, category, wrongCause, query])
+
+  async function toggleFavoriteItem(item: QuestionLibraryItem): Promise<void> {
+    const nextFav = !item.favorite
+    try {
+      await invoke({
+        method: 'favorite.set',
+        params: { questionId: item.question.id, favorite: nextFav }
+      })
+      setItems((prev) => {
+        if (!prev) return prev
+        if (tab === 'favorite' && !nextFav) {
+          return prev.filter((row) => row.question.id !== item.question.id)
+        }
+        return prev.map((row) =>
+          row.question.id === item.question.id ? { ...row, favorite: nextFav } : row
+        )
+      })
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : '收藏更新失败')
+    }
+  }
+
+  async function saveLibraryNote(questionId: string): Promise<void> {
+    const content = noteDrafts[questionId] ?? ''
+    setSavingNoteId(questionId)
+    setError('')
+    try {
+      await invoke({ method: 'note.save', params: { questionId, content } })
+      setItems((prev) => {
+        if (!prev) return prev
+        if (tab === 'notes' && !content.trim()) {
+          return prev.filter((row) => row.question.id !== questionId)
+        }
+        return prev.map((row) => (row.question.id === questionId ? { ...row, note: content } : row))
+      })
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : '笔记保存失败')
+    } finally {
+      setSavingNoteId('')
+    }
+  }
+
+  const emptyTitle =
+    tab === 'wrong'
+      ? '当前筛选下没有未掌握错题'
+      : tab === 'favorite'
+        ? '当前筛选下没有收藏题目'
+        : '还没有保存过题目笔记'
+  const emptyDescription =
+    tab === 'wrong'
+      ? '在专项练习或模考中答错的题目会自动收入错题本，连续稳定答对后移出。'
+      : tab === 'favorite'
+        ? '练习时点击「收藏」即可把好题、高频易错题收进收藏夹。'
+        : '在专项练习右侧「本题笔记」记录做题心得后，会集中汇总在这里方便考前速览。'
+
+  return (
+    <Section
+      title={tab === 'wrong' ? '错题本' : tab === 'favorite' ? '我的收藏' : '我的笔记'}
+      description={
+        items
+          ? `共找到 ${items.length} 道题目${items.length >= 200 ? '（仅展示前 200 条，可叠加筛选缩小范围）' : ''}`
+          : '正在读取…'
+      }
+      actions={
+        tab !== 'notes' && items && items.length > 0 ? (
+          <Button
+            appearance="primary"
+            size="small"
+            onClick={() => {
+              const params = new URLSearchParams()
+              params.set(tab === 'wrong' ? 'onlyWrong' : 'onlyFavorite', '1')
+              if (category) params.set('category', category)
+              navigate(`/practice?${params.toString()}`)
+            }}
+          >
+            {tab === 'wrong' ? '针对当前筛选练错题' : '针对当前筛选练收藏'}
+          </Button>
+        ) : undefined
+      }
+    >
+      <div className="toolbar">
+        <Field label="关键词" className="grow">
+          <Input
+            value={query}
+            onChange={(_, data) => setQuery(data.value)}
+            placeholder="搜索题干、解析、标签或笔记内容"
+          />
+        </Field>
+        <Field label="专项模块">
+          <Select value={category} onChange={(_, data) => setCategory(data.value)}>
+            <option value="">全部模块</option>
+            {categories.map((item) => (
+              <option key={item.name} value={item.name}>
+                {item.name}（{item.count}）
+              </option>
+            ))}
+          </Select>
+        </Field>
+        {tab === 'wrong' && (
+          <Field label="错因筛选">
+            <Select value={wrongCause} onChange={(_, data) => setWrongCause(data.value)}>
+              <option value="">全部错因</option>
+              <option value="知识缺口">知识缺口</option>
+              <option value="概念混淆">概念混淆</option>
+              <option value="审题失误">审题失误</option>
+              <option value="计算粗心">计算粗心</option>
+              <option value="策略过慢">策略过慢</option>
+              <option value="时间失控">时间失控</option>
+              <option value="未标注">未标注</option>
+            </Select>
+          </Field>
+        )}
+      </div>
+      {error && <ErrorState message={error} />}
+      {!items ? (
+        <LoadingState />
+      ) : items.length === 0 ? (
+        <EmptyState title={emptyTitle} description={emptyDescription} />
+      ) : (
+        <div className="library-list">
+          {items.map((item) => {
+            const q = item.question
+            const expanded = expandedId === q.id
+            const noteValue = noteDrafts[q.id] ?? item.note
+            return (
+              <div key={q.id} className="library-card">
+                <div className="library-card-head">
+                  <div className="question-meta" style={{ marginBottom: 0 }}>
+                    <span className="pill">{q.category}</span>
+                    <span className="pill">难度 {q.difficulty}</span>
+                    {item.wrongCount > 0 && (
+                      <span className="pill warning">错 {item.wrongCount} 次</span>
+                    )}
+                    {item.lastWrongCause && <span className="pill">{item.lastWrongCause}</span>}
+                    {item.dueAt && <span className="pill">复习 {formatDate(item.dueAt)}</span>}
+                    {q.year && <span className="pill">{q.year}</span>}
+                  </div>
+                  <div className="button-row">
+                    <Button
+                      size="small"
+                      appearance={item.favorite ? 'secondary' : 'subtle'}
+                      icon={<BookmarkSimpleIcon weight={item.favorite ? 'fill' : undefined} />}
+                      onClick={() => void toggleFavoriteItem(item)}
+                    >
+                      {item.favorite ? '已收藏' : '收藏'}
+                    </Button>
+                    <Button
+                      size="small"
+                      appearance="subtle"
+                      onClick={() => setExpandedId(expanded ? '' : q.id)}
+                    >
+                      {expanded ? '收起解析' : '展开解析与笔记'}
+                    </Button>
+                  </div>
+                </div>
+                <div className="library-stem">
+                  <MarkdownContent content={q.stem} sourceFilePath={q.filePath} />
+                </div>
+                {item.note && !expanded && (
+                  <p className="library-note-preview">笔记：{item.note}</p>
+                )}
+                {expanded && (
+                  <div className="answer-panel">
+                    {q.material && (
+                      <div style={{ marginBottom: 10 }}>
+                        <strong>给定材料</strong>
+                        <MarkdownContent content={q.material} sourceFilePath={q.filePath} />
+                      </div>
+                    )}
+                    {q.options.length > 0 && (
+                      <div className="review-options">
+                        {q.options.map((option) => {
+                          const isAnswer = q.answer.includes(option.key)
+                          return (
+                            <div
+                              key={option.key}
+                              className={`review-option ${isAnswer ? 'correct' : ''}`.trim()}
+                            >
+                              <span className="option-key">{option.key}</span>
+                              <OptionContent option={option} sourceFilePath={q.filePath} />
+                              <span className="muted">{isAnswer ? '参考答案' : ''}</span>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
+                    <p>
+                      <strong>参考答案：</strong>
+                      {q.answer.length ? q.answer.join('、') : '见下方参考解析'}
+                    </p>
+                    <MarkdownContent content={q.explanation} sourceFilePath={q.filePath} />
+                    <div className="library-note-box">
+                      <Field label="本题笔记">
+                        <Textarea
+                          rows={3}
+                          value={noteValue}
+                          onChange={(_, data) =>
+                            setNoteDrafts((prev) => ({ ...prev, [q.id]: data.value }))
+                          }
+                          placeholder="记录解题套路、陷阱或复盘结论"
+                        />
+                      </Field>
+                      <Button
+                        size="small"
+                        appearance="secondary"
+                        icon={<NotePencilIcon />}
+                        disabled={savingNoteId === q.id}
+                        style={{ marginTop: 8 }}
+                        onClick={() => void saveLibraryNote(q.id)}
+                      >
+                        {savingNoteId === q.id ? '保存中…' : '保存笔记'}
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </Section>
+  )
+}
+
 export function ReviewPage(): React.JSX.Element {
   const [due, setDue] = useState<ReviewItem[]>()
+  const [tab, setTab] = useState<'due' | 'wrong' | 'favorite' | 'notes'>('due')
   useEffect(() => {
     void invoke<ReviewItem[]>({ method: 'review.due', params: { limit: 500 } }).then(setDue)
   }, [])
@@ -981,11 +1474,21 @@ export function ReviewPage(): React.JSX.Element {
         title="错题复习"
         description={
           due
-            ? `${due.length} 道题已到期。忘记、困难、一般和熟练反馈会调整下一次复习间隔。`
+            ? `${due.length} 道题已到期。支持今日间隔复习，以及按错题本、收藏夹与笔记库全景检索复盘。`
             : '正在读取复习队列。'
         }
       />
-      <Trainer review />
+      <TabList
+        className="review-tabs"
+        selectedValue={tab}
+        onTabSelect={(_, data) => setTab(data.value as 'due' | 'wrong' | 'favorite' | 'notes')}
+      >
+        <Tab value="due">今日到期复习{due ? ` (${due.length})` : ''}</Tab>
+        <Tab value="wrong">错题本</Tab>
+        <Tab value="favorite">我的收藏</Tab>
+        <Tab value="notes">我的笔记</Tab>
+      </TabList>
+      {tab === 'due' ? <Trainer review /> : <QuestionLibraryView key={tab} tab={tab} />}
     </div>
   )
 }

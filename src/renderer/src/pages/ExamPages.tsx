@@ -12,7 +12,13 @@ import {
   ProgressBar,
   Select
 } from '@fluentui/react-components'
-import { ArrowLeftIcon, CheckCircleIcon, ClockIcon, ExamIcon } from '@phosphor-icons/react'
+import {
+  ArrowLeftIcon,
+  CheckCircleIcon,
+  ClockIcon,
+  ExamIcon,
+  FlagIcon
+} from '@phosphor-icons/react'
 import type { ExamSession, Question, QuestionFacets } from '@shared/contracts'
 import { useNavigate } from 'react-router-dom'
 import { formatDate, formatFullDate, invoke } from '../api'
@@ -322,6 +328,8 @@ export function ExamRunPage(): React.JSX.Element {
   )
   const [essayText, setEssayText] = useState('')
   const [saveBlocked, setSaveBlocked] = useState(false)
+  const [uncertainIds, setUncertainIds] = useState<string[]>([])
+  const [eliminatedByQuestion, setEliminatedByQuestion] = useState<Record<string, string[]>>({})
   const reading = useReadingTypography()
   const essayTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const mountedRef = useRef(true)
@@ -383,6 +391,15 @@ export function ExamRunPage(): React.JSX.Element {
         if (!active) return
         setExam(active)
         setSeconds(remainingSeconds(active))
+        try {
+          const savedUncertain = window.localStorage.getItem(`tizhou:exam-uncertain:${active.id}`)
+          if (savedUncertain) {
+            const parsed = JSON.parse(savedUncertain)
+            if (Array.isArray(parsed)) setUncertainIds(parsed.map(String))
+          }
+        } catch {
+          /* 忽略受限存储读取失败 */
+        }
         setQuestions(
           active.questionIds
             .map((id) => active.questionSnapshots[id])
@@ -403,11 +420,84 @@ export function ExamRunPage(): React.JSX.Element {
   const current = questions[index]
   const currentAnswer =
     current && exam?.answers[current.id]?.answer ? exam.answers[current.id]!.answer : []
+  const currentUncertain = current ? uncertainIds.includes(current.id) : false
+  const currentEliminated = current ? (eliminatedByQuestion[current.id] ?? []) : []
   const timeText = `${String(Math.floor(seconds / 3600)).padStart(2, '0')}:${String(Math.floor((seconds % 3600) / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`
   const title = useMemo(() => exam?.title ?? '模拟考试', [exam?.title])
 
+  function toggleUncertain(): void {
+    if (!exam || !current) return
+    setUncertainIds((prev) => {
+      const nextIds = prev.includes(current.id)
+        ? prev.filter((id) => id !== current.id)
+        : [...prev, current.id]
+      try {
+        window.localStorage.setItem(`tizhou:exam-uncertain:${exam.id}`, JSON.stringify(nextIds))
+      } catch {
+        /* 忽略受限存储写入失败 */
+      }
+      return nextIds
+    })
+  }
+
+  function toggleEliminate(key: string, event: React.MouseEvent): void {
+    event.preventDefault()
+    if (!current) return
+    setEliminatedByQuestion((prev) => {
+      const list = prev[current.id] ?? []
+      const nextList = list.includes(key) ? list.filter((item) => item !== key) : [...list, key]
+      return { ...prev, [current.id]: nextList }
+    })
+  }
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (
+        !current ||
+        confirmOpen ||
+        event.target instanceof HTMLInputElement ||
+        event.target instanceof HTMLTextAreaElement ||
+        event.target instanceof HTMLSelectElement ||
+        event.target instanceof HTMLButtonElement
+      )
+        return
+      if (event.key === 'ArrowLeft' && index > 0) {
+        event.preventDefault()
+        setIndex((value) => Math.max(0, value - 1))
+        return
+      }
+      if (event.key === 'ArrowRight' && index + 1 < questions.length) {
+        event.preventDefault()
+        setIndex((value) => Math.min(questions.length - 1, value + 1))
+        return
+      }
+      if (event.key.toLowerCase() === 'u') {
+        event.preventDefault()
+        toggleUncertain()
+        return
+      }
+      if (current.type !== 'essay') {
+        const optionIndex = /^[1-8]$/.test(event.key)
+          ? Number(event.key) - 1
+          : /^[a-h]$/i.test(event.key)
+            ? event.key.toUpperCase().charCodeAt(0) - 65
+            : -1
+        const option = current.options[optionIndex]
+        if (option) void choose(option.key)
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [current, confirmOpen, index, questions.length, currentAnswer, exam, uncertainIds])
+
   async function choose(key: string): Promise<void> {
     if (!exam || !current) return
+    if (currentEliminated.includes(key)) {
+      setEliminatedByQuestion((prev) => ({
+        ...prev,
+        [current.id]: (prev[current.id] ?? []).filter((item) => item !== key)
+      }))
+    }
     const answer =
       current.type === 'multiple'
         ? currentAnswer.includes(key)
@@ -466,6 +556,11 @@ export function ExamRunPage(): React.JSX.Element {
     setError('')
     try {
       await invoke({ method: 'exam.finish', params: { examId: exam.id } })
+      try {
+        window.localStorage.removeItem(`tizhou:exam-uncertain:${exam.id}`)
+      } catch {
+        /* 忽略 */
+      }
       await refresh()
       navigate(`/exam/result/${exam.id}`)
     } catch (cause) {
@@ -646,29 +741,44 @@ export function ExamRunPage(): React.JSX.Element {
               </div>
             ) : (
               <div className="options">
-                {current.options.map((option) => (
-                  <button
-                    type="button"
-                    key={option.key}
-                    className={`option-button ${currentAnswer.includes(option.key) ? 'selected' : ''}`}
-                    data-testid={`exam-option-${option.key}`}
-                    onClick={() => void choose(option.key)}
-                  >
-                    <span className="option-key">{option.key}</span>
-                    <OptionContent option={option} sourceFilePath={current.filePath} />
-                  </button>
-                ))}
+                {current.options.map((option) => {
+                  const isSelected = currentAnswer.includes(option.key)
+                  const isEliminated = !isSelected && currentEliminated.includes(option.key)
+                  return (
+                    <button
+                      type="button"
+                      key={option.key}
+                      title="左键选择 · 右键排除干扰项"
+                      className={`option-button ${isSelected ? 'selected' : isEliminated ? 'is-eliminated' : ''}`}
+                      data-testid={`exam-option-${option.key}`}
+                      onClick={() => void choose(option.key)}
+                      onContextMenu={(event) => toggleEliminate(option.key, event)}
+                    >
+                      <span className="option-key">{option.key}</span>
+                      <OptionContent option={option} sourceFilePath={current.filePath} />
+                    </button>
+                  )
+                })}
               </div>
             )}
           </div>
           <div className="question-footer">
-            <Button
-              icon={<ArrowLeftIcon />}
-              disabled={index === 0}
-              onClick={() => setIndex((value) => value - 1)}
-            >
-              上一题
-            </Button>
+            <div className="button-row">
+              <Button
+                icon={<ArrowLeftIcon />}
+                disabled={index === 0}
+                onClick={() => setIndex((value) => value - 1)}
+              >
+                上一题
+              </Button>
+              <Button
+                appearance={currentUncertain ? 'secondary' : 'subtle'}
+                icon={<FlagIcon />}
+                onClick={toggleUncertain}
+              >
+                {currentUncertain ? '取消待查' : '标记不确定'}
+              </Button>
+            </div>
             <Button
               appearance="primary"
               disabled={index === questions.length - 1}
@@ -678,11 +788,14 @@ export function ExamRunPage(): React.JSX.Element {
             </Button>
           </div>
         </Section>
-        <Section title="答题卡" description={`${answered}/${exam.questionIds.length} 已作答`}>
+        <Section
+          title="答题卡"
+          description={`${answered}/${exam.questionIds.length} 已作答${uncertainIds.length ? ` · ${uncertainIds.length} 题待查` : ''}`}
+        >
           <div className="question-grid">
             {questions.map((question, questionIndex) => (
               <Button
-                className="question-number"
+                className={`question-number${uncertainIds.includes(question.id) ? ' is-uncertain' : ''}`}
                 size="small"
                 appearance={
                   questionIndex === index
@@ -705,8 +818,9 @@ export function ExamRunPage(): React.JSX.Element {
           <DialogBody>
             <DialogTitle>确认交卷</DialogTitle>
             <DialogContent>
-              还有 {exam.questionIds.length - answered}{' '}
-              道题未作答。交卷后不能继续修改，所有题目会一次性计入训练记录。
+              还有 {exam.questionIds.length - answered} 道题未作答
+              {uncertainIds.length > 0 ? `，另有 ${uncertainIds.length} 道题标记不确定` : ''}
+              。交卷后不能继续修改，所有题目会一次性计入训练记录。
             </DialogContent>
             <DialogActions>
               <Button onClick={() => setConfirmOpen(false)}>继续检查</Button>
