@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { release } from './release'
+import { UserGuide } from './UserGuide'
 
 const shot = (name: string): string => `./screenshots/${name}.webp`
 
@@ -308,6 +309,37 @@ function FlowTabs({ onZoom }: { onZoom: (zoom: ZoomState) => void }): React.JSX.
 export function App(): React.JSX.Element {
   const [zoom, setZoom] = useState<ZoomState | null>(null)
   const [copiedCmd, setCopiedCmd] = useState(false)
+  const [showGuide, setShowGuide] = useState(() => window.location.hash === '#guide')
+
+  useEffect(() => {
+    const syncHash = (): void => {
+      const isGuide = window.location.hash === '#guide'
+      setShowGuide(isGuide)
+      if (isGuide) {
+        window.scrollTo({ top: 0, behavior: 'auto' })
+      }
+    }
+    window.addEventListener('hashchange', syncHash)
+    return () => window.removeEventListener('hashchange', syncHash)
+  }, [])
+
+  function openGuide(): void {
+    if (window.location.hash !== '#guide') {
+      window.location.hash = '#guide'
+    }
+    setShowGuide(true)
+    window.scrollTo({ top: 0, behavior: 'auto' })
+  }
+
+  function backToHome(anchor?: string): void {
+    setShowGuide(false)
+    if (anchor) {
+      window.location.hash = anchor
+    } else {
+      window.history.replaceState(null, '', window.location.pathname + window.location.search)
+      window.scrollTo({ top: 0, behavior: 'auto' })
+    }
+  }
 
   function copyChecksumCommand(): void {
     void navigator.clipboard
@@ -325,15 +357,42 @@ export function App(): React.JSX.Element {
     <div className="site">
       <header className="site-header">
         <div className="container header-inner">
-          <a className="brand" href="#top">
+          <a
+            className="brand"
+            href="#top"
+            onClick={(e) => {
+              if (showGuide) {
+                e.preventDefault()
+                backToHome()
+              }
+            }}
+          >
             <img className="brand-logo" src="./favicon-64.png" alt="" />
             <span className="brand-name">题舟 Tizhou</span>
           </a>
           <nav className="site-nav" aria-label="页面导航">
-            <a href="#flow">核心流程</a>
-            <a href="#why">为什么用题舟</a>
-            <a href="#start">快速上手</a>
-            <a href="#faq">常见问题</a>
+            <a href="#flow" onClick={() => showGuide && backToHome('#flow')}>
+              核心流程
+            </a>
+            <a href="#why" onClick={() => showGuide && backToHome('#why')}>
+              为什么用题舟
+            </a>
+            <a href="#start" onClick={() => showGuide && backToHome('#start')}>
+              快速上手
+            </a>
+            <a href="#faq" onClick={() => showGuide && backToHome('#faq')}>
+              常见问题
+            </a>
+            <a
+              href="#guide"
+              className={showGuide ? 'active' : undefined}
+              onClick={(e) => {
+                e.preventDefault()
+                openGuide()
+              }}
+            >
+              用户手册
+            </a>
           </nav>
           <div className="header-links">
             <a href="https://github.com/nghqqa/tizhou" className="header-link">
@@ -350,55 +409,183 @@ export function App(): React.JSX.Element {
       </header>
 
       <main id="top">
-        {/* Hero 首屏 */}
-        <section className="hero" id="download">
-          <div className="container hero-inner">
-            <div className="hero-copy">
-              <p className="eyebrow">本地优先 · 开源 · MIT 协议</p>
-              <h1>
-                题舟 <span className="latin">Tizhou</span>
-              </h1>
-              <p className="hero-tag">数据存你自己的电脑，题库由你自己导入。</p>
-              <p className="hero-desc">
-                本地优先的开源考公学习工作台：PDF
-                题本一键建库，训练、模考、错题复习、学习报告完整闭环。
-                无广告、无会员、无遥测，日常刷题完全离线。
-              </p>
-              <ul className="hero-chips" aria-label="关键能力">
-                {HERO_CHIPS.map((chip) => (
-                  <li key={chip}>{chip}</li>
-                ))}
-              </ul>
-              <div className="dl-buttons">
-                <a className="btn btn-primary" href={release.directDownload.url}>
-                  国内高速下载 v{release.version}
-                  <span className="btn-sub">
-                    直接下载 {release.asset.name} · {release.asset.sizeHint}
-                  </span>
-                </a>
-                <a className="btn btn-ghost" href={release.releasePages.github}>
-                  GitHub Releases
-                  <span className="btn-sub">国际网络适用</span>
-                </a>
-              </div>
-              <p className="hero-meta">
-                全量文件与{' '}
-                <a href={release.checksumUrls.cnb}>{release.asset.checksumFile}（国内源）</a> /{' '}
-                <a href={release.checksumUrls.github}>GitHub 源</a> 同步公开，v{release.version} ·{' '}
-                {release.platform} · {release.license}
-              </p>
-              <details className="hero-trust">
-                <summary>首次安装遇 Windows 蓝色安全提示？查看放行步骤与 SHA-256 核验方法</summary>
-                <div className="hero-trust-body">
-                  <p>
-                    题舟是个人维护的 MIT 开源软件，暂未购置商业代码签名证书。下载后首次运行若出现
-                    Windows SmartScreen 提示「未知发布者」，点击「<strong>更多信息</strong>」再选 「
-                    <strong>仍要运行</strong>」即可，仅需放行一次。
+        {showGuide ? (
+          <UserGuide onBack={() => backToHome()} />
+        ) : (
+          <>
+            {/* Hero 首屏 */}
+            <section className="hero" id="download">
+              <div className="container hero-inner">
+                <div className="hero-copy">
+                  <p className="eyebrow">本地优先 · 开源 · MIT 协议</p>
+                  <h1>
+                    题舟 <span className="latin">Tizhou</span>
+                  </h1>
+                  <p className="hero-tag">数据存你自己的电脑，题库由你自己导入。</p>
+                  <p className="hero-desc">
+                    本地优先的开源考公学习工作台：PDF
+                    题本一键建库，训练、模考、错题复习、学习报告完整闭环。
+                    无广告、无会员、无遥测，日常刷题完全离线。
                   </p>
-                  <p>
-                    如需核验安装包完整性，在安装包所在目录打开终端执行下方命令，并与官方{' '}
-                    <a href={release.checksumUrls.cnb}>{release.asset.checksumFile}</a>{' '}
-                    中的哈希逐字比对：
+                  <ul className="hero-chips" aria-label="关键能力">
+                    {HERO_CHIPS.map((chip) => (
+                      <li key={chip}>{chip}</li>
+                    ))}
+                  </ul>
+                  <div className="dl-buttons">
+                    <a className="btn btn-primary" href={release.directDownload.url}>
+                      国内高速下载 v{release.version}
+                      <span className="btn-sub">
+                        直接下载 {release.asset.name} · {release.asset.sizeHint}
+                      </span>
+                    </a>
+                    <a className="btn btn-ghost" href={release.releasePages.github}>
+                      GitHub Releases
+                      <span className="btn-sub">国际网络适用</span>
+                    </a>
+                  </div>
+                  <p className="hero-meta">
+                    全量文件与{' '}
+                    <a href={release.checksumUrls.cnb}>{release.asset.checksumFile}（国内源）</a> /{' '}
+                    <a href={release.checksumUrls.github}>GitHub 源</a> 同步公开，v{release.version}{' '}
+                    · {release.platform} · {release.license}
+                  </p>
+                  <details className="hero-trust">
+                    <summary>
+                      首次安装遇 Windows 蓝色安全提示？查看放行步骤与 SHA-256 核验方法
+                    </summary>
+                    <div className="hero-trust-body">
+                      <p>
+                        题舟是个人维护的 MIT
+                        开源软件，暂未购置商业代码签名证书。下载后首次运行若出现 Windows SmartScreen
+                        提示「未知发布者」，点击「<strong>更多信息</strong>」再选 「
+                        <strong>仍要运行</strong>」即可，仅需放行一次。
+                      </p>
+                      <p>
+                        如需核验安装包完整性，在安装包所在目录打开终端执行下方命令，并与官方{' '}
+                        <a href={release.checksumUrls.cnb}>{release.asset.checksumFile}</a>{' '}
+                        中的哈希逐字比对：
+                      </p>
+                      <div className="checksum-row">
+                        <code>{release.asset.checksumCommand}</code>
+                        <button
+                          type="button"
+                          className="copy-cmd-btn"
+                          onClick={copyChecksumCommand}
+                        >
+                          {copiedCmd ? '已复制' : '复制命令'}
+                        </button>
+                      </div>
+                    </div>
+                  </details>
+                </div>
+                <ShotFrame
+                  src={shot('01-dashboard')}
+                  alt="题舟今日工作台：学习日历热力图与待复习概览"
+                  caption="题舟 · 今日工作台（内置示例库数据）"
+                  eager
+                  onZoom={() => setZoom({ src: shot('01-dashboard'), alt: '今日工作台大图' })}
+                />
+              </div>
+            </section>
+
+            {/* 核心流程 */}
+            <section className="section" id="flow">
+              <div className="container">
+                <h2>从题本 PDF 到上岸，一条完整闭环</h2>
+                <p className="section-desc">
+                  四个阶段覆盖备考全程：训练、模考、建库、复盘。以下截图均来自真实应用界面，点击可放大查看。
+                </p>
+                <FlowTabs onZoom={setZoom} />
+              </div>
+            </section>
+
+            {/* 为什么用题舟 */}
+            <section className="section section-alt" id="why">
+              <div className="container">
+                <h2>为什么用题舟，而不是又一个刷题 App</h2>
+                <p className="section-desc">题舟把数据主权还给你：本地存储、开放格式、离线可用。</p>
+                <div className="why-grid">
+                  {WHY.map((item) => (
+                    <div className="why-card" key={item.title}>
+                      <WhyIcon name={item.icon} />
+                      <h3>
+                        {item.title}
+                        <span className="kw">{item.lead}</span>
+                      </h3>
+                      <p>{item.text}</p>
+                    </div>
+                  ))}
+                </div>
+                <div className="table-wrap">
+                  <table className="compare">
+                    <thead>
+                      <tr>
+                        <th>对比维度</th>
+                        <th>商业刷题 App</th>
+                        <th>题舟</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {COMPARE.map((row) => (
+                        <tr key={row.dim}>
+                          <td>{row.dim}</td>
+                          <td>{row.app}</td>
+                          <td className="highlight">{row.tizhou}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+
+            {/* 快速上手 */}
+            <section className="section" id="start">
+              <div className="container">
+                <h2>3 分钟上手</h2>
+                <p className="section-desc">
+                  装好即用：内置示例库无需任何配置。正式备考约 10 分钟完成题本导入。
+                </p>
+                <div className="steps">
+                  <div className="step">
+                    <span className="step-no">1</span>
+                    <h3>下载安装包</h3>
+                    <p>
+                      约 130 MB，点击「国内高速下载」直接开始；GitHub Releases
+                      内容一致。下载后可用发布页 SHA256SUMS.txt 校验完整性。
+                    </p>
+                  </div>
+                  <div className="step">
+                    <span className="step-no">2</span>
+                    <h3>双击安装</h3>
+                    <p>
+                      首次运行如遇 SmartScreen
+                      提示，按下方指引放行即可。题舟暂未购买商业代码签名证书。
+                    </p>
+                  </div>
+                  <div className="step">
+                    <span className="step-no">3</span>
+                    <h3>开始学习</h3>
+                    <p>
+                      安装完成即启动，内置示例题库可直接体验全部功能；正式备考时在知识库工坊导入自己的题本
+                      PDF 或 Markdown。
+                    </p>
+                  </div>
+                </div>
+                <div className="smartbox">
+                  <span className="smartbox-badge">Windows SmartScreen</span>
+                  <div className="smartbox-flow">
+                    <span>提示「未知发布者」</span>
+                    <span className="smartbox-arrow">→</span>
+                    <span className="smartbox-chip">点击「更多信息」</span>
+                    <span className="smartbox-arrow">→</span>
+                    <span className="smartbox-chip accent">选择「仍要运行」</span>
+                  </div>
+                  <p className="smartbox-note">
+                    只需放行一次。下载后可对照官方{' '}
+                    <a href={release.checksumUrls.cnb}>{release.asset.checksumFile}（CNB）</a> 或{' '}
+                    <a href={release.checksumUrls.github}>GitHub 校验文件</a> 核验哈希：
                   </p>
                   <div className="checksum-row">
                     <code>{release.asset.checksumCommand}</code>
@@ -407,143 +594,29 @@ export function App(): React.JSX.Element {
                     </button>
                   </div>
                 </div>
-              </details>
-            </div>
-            <ShotFrame
-              src={shot('01-dashboard')}
-              alt="题舟今日工作台：学习日历热力图与待复习概览"
-              caption="题舟 · 今日工作台（内置示例库数据）"
-              eager
-              onZoom={() => setZoom({ src: shot('01-dashboard'), alt: '今日工作台大图' })}
-            />
-          </div>
-        </section>
+                <p className="start-note">
+                  完整配置（可选）：知识库工坊安装转换引擎（约 200 MB，含 OCR 模型）→
+                  选择题本目录导入 → 抽查发布；如需 AI 能力，再到模型设置填入自备 Key 并测试连接。
+                </p>
+              </div>
+            </section>
 
-        {/* 核心流程 */}
-        <section className="section" id="flow">
-          <div className="container">
-            <h2>从题本 PDF 到上岸，一条完整闭环</h2>
-            <p className="section-desc">
-              四个阶段覆盖备考全程：训练、模考、建库、复盘。以下截图均来自真实应用界面，点击可放大查看。
-            </p>
-            <FlowTabs onZoom={setZoom} />
-          </div>
-        </section>
-
-        {/* 为什么用题舟 */}
-        <section className="section section-alt" id="why">
-          <div className="container">
-            <h2>为什么用题舟，而不是又一个刷题 App</h2>
-            <p className="section-desc">题舟把数据主权还给你：本地存储、开放格式、离线可用。</p>
-            <div className="why-grid">
-              {WHY.map((item) => (
-                <div className="why-card" key={item.title}>
-                  <WhyIcon name={item.icon} />
-                  <h3>
-                    {item.title}
-                    <span className="kw">{item.lead}</span>
-                  </h3>
-                  <p>{item.text}</p>
-                </div>
-              ))}
-            </div>
-            <div className="table-wrap">
-              <table className="compare">
-                <thead>
-                  <tr>
-                    <th>对比维度</th>
-                    <th>商业刷题 App</th>
-                    <th>题舟</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {COMPARE.map((row) => (
-                    <tr key={row.dim}>
-                      <td>{row.dim}</td>
-                      <td>{row.app}</td>
-                      <td className="highlight">{row.tizhou}</td>
-                    </tr>
+            {/* FAQ */}
+            <section className="section section-alt" id="faq">
+              <div className="container faq-container">
+                <h2>常见问题</h2>
+                <div className="faq">
+                  {FAQ.map((item) => (
+                    <details key={item.q}>
+                      <summary>{item.q}</summary>
+                      <p>{item.a}</p>
+                    </details>
                   ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </section>
-
-        {/* 快速上手 */}
-        <section className="section" id="start">
-          <div className="container">
-            <h2>3 分钟上手</h2>
-            <p className="section-desc">
-              装好即用：内置示例库无需任何配置。正式备考约 10 分钟完成题本导入。
-            </p>
-            <div className="steps">
-              <div className="step">
-                <span className="step-no">1</span>
-                <h3>下载安装包</h3>
-                <p>
-                  约 130 MB，点击「国内高速下载」直接开始；GitHub Releases
-                  内容一致。下载后可用发布页 SHA256SUMS.txt 校验完整性。
-                </p>
+                </div>
               </div>
-              <div className="step">
-                <span className="step-no">2</span>
-                <h3>双击安装</h3>
-                <p>
-                  首次运行如遇 SmartScreen 提示，按下方指引放行即可。题舟暂未购买商业代码签名证书。
-                </p>
-              </div>
-              <div className="step">
-                <span className="step-no">3</span>
-                <h3>开始学习</h3>
-                <p>
-                  安装完成即启动，内置示例题库可直接体验全部功能；正式备考时在知识库工坊导入自己的题本
-                  PDF 或 Markdown。
-                </p>
-              </div>
-            </div>
-            <div className="smartbox">
-              <span className="smartbox-badge">Windows SmartScreen</span>
-              <div className="smartbox-flow">
-                <span>提示「未知发布者」</span>
-                <span className="smartbox-arrow">→</span>
-                <span className="smartbox-chip">点击「更多信息」</span>
-                <span className="smartbox-arrow">→</span>
-                <span className="smartbox-chip accent">选择「仍要运行」</span>
-              </div>
-              <p className="smartbox-note">
-                只需放行一次。下载后可对照官方{' '}
-                <a href={release.checksumUrls.cnb}>{release.asset.checksumFile}（CNB）</a> 或{' '}
-                <a href={release.checksumUrls.github}>GitHub 校验文件</a> 核验哈希：
-              </p>
-              <div className="checksum-row">
-                <code>{release.asset.checksumCommand}</code>
-                <button type="button" className="copy-cmd-btn" onClick={copyChecksumCommand}>
-                  {copiedCmd ? '已复制' : '复制命令'}
-                </button>
-              </div>
-            </div>
-            <p className="start-note">
-              完整配置（可选）：知识库工坊安装转换引擎（约 200 MB，含 OCR 模型）→ 选择题本目录导入 →
-              抽查发布；如需 AI 能力，再到模型设置填入自备 Key 并测试连接。
-            </p>
-          </div>
-        </section>
-
-        {/* FAQ */}
-        <section className="section section-alt" id="faq">
-          <div className="container faq-container">
-            <h2>常见问题</h2>
-            <div className="faq">
-              {FAQ.map((item) => (
-                <details key={item.q}>
-                  <summary>{item.q}</summary>
-                  <p>{item.a}</p>
-                </details>
-              ))}
-            </div>
-          </div>
-        </section>
+            </section>
+          </>
+        )}
       </main>
 
       <footer className="site-footer">
@@ -560,7 +633,15 @@ export function App(): React.JSX.Element {
             <a href="https://cnb.cool/nghqqa/tizhou">CNB 镜像</a>
             <a href={release.releasePages.cnb}>Releases（含校验文件）</a>
             <a href="https://github.com/nghqqa/tizhou/issues">问题反馈</a>
-            <a href="https://github.com/nghqqa/tizhou/blob/master/docs/user-guide.md">用户手册</a>
+            <a
+              href="#guide"
+              onClick={(e) => {
+                e.preventDefault()
+                openGuide()
+              }}
+            >
+              用户手册
+            </a>
           </nav>
           <div className="footer-meta">
             <p>
