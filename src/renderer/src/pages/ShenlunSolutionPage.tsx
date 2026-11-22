@@ -198,7 +198,7 @@ export function ShenlunSolutionPage(): React.JSX.Element {
         params: {
           subject: 'shenlun',
           type: 'essay',
-          limit: 500,
+          limit: 5000,
           region: region || undefined,
           query: keyword.trim() || undefined
         }
@@ -554,28 +554,33 @@ export function ShenlunSolutionPage(): React.JSX.Element {
             {(current?.region ?? currentSummary?.region) && (
               <span className="pill">{current?.region ?? currentSummary?.region}</span>
             )}
-            {(current ?? currentSummary) && (
-              <span className="pill">
-                {classifyShenlunType(
-                  current?.category ?? currentSummary?.category,
-                  current?.stem ?? currentSummary?.stemPreview
-                )}
-              </span>
-            )}
-            {(current?.year ?? currentSummary?.year) && (
-              <span className="pill">{current?.year ?? currentSummary?.year}</span>
-            )}
-            {(current?.paper ?? currentSummary?.paper) && (
-              <span className="pill">{current?.paper ?? currentSummary?.paper}</span>
-            )}
-            {(current?.source ?? currentSummary?.source) && (
-              <span className="pill" title={current?.source ?? currentSummary?.source}>
-                教材来源：{formatMaterialSource(current?.source ?? currentSummary?.source)}
-              </span>
-            )}
-            {(current?.category ?? currentSummary?.category) && (
-              <span className="pill">{current?.category ?? currentSummary?.category}</span>
-            )}
+            {(() => {
+              const summaryOrDetail = current ?? currentSummary
+              if (!summaryOrDetail) return null
+              const kind = classifyShenlunType(
+                summaryOrDetail.category,
+                current?.stem ?? currentSummary?.stemPreview
+              )
+              return (
+                <>
+                  <span className="pill">{kind}</span>
+                  {(current?.year ?? currentSummary?.year) && (
+                    <span className="pill">{current?.year ?? currentSummary?.year}</span>
+                  )}
+                  {(current?.paper ?? currentSummary?.paper) && (
+                    <span className="pill">{current?.paper ?? currentSummary?.paper}</span>
+                  )}
+                  {(current?.source ?? currentSummary?.source) && (
+                    <span className="pill" title={current?.source ?? currentSummary?.source}>
+                      教材来源：{formatMaterialSource(current?.source ?? currentSummary?.source)}
+                    </span>
+                  )}
+                  {summaryOrDetail.category && summaryOrDetail.category !== kind && (
+                    <span className="pill">{summaryOrDetail.category}</span>
+                  )}
+                </>
+              )
+            })()}
             {(current ?? currentSummary) && (
               <span className="pill">难度 {(current ?? currentSummary)!.difficulty}</span>
             )}

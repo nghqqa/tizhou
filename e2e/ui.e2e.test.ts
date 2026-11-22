@@ -123,16 +123,10 @@ describe('启动、导航与全局功能', () => {
   })
 
   itE2E('更新检查：无更新时提示最新版本并显示更新源', async (page) => {
-    const messages: string[] = []
-    page.on('dialog', (dialog) => {
-      messages.push(dialog.message())
-      void dialog.accept()
-    })
     await page.getByRole('button', { name: '检查更新' }).click()
-    await new Promise((resolve) => setTimeout(resolve, 3_000))
-    const latest = messages.join('\n')
-    expect(latest).toContain('当前已是最新版本')
-    expect(latest).toContain('更新源：GitHub')
+    await page.getByText(/当前已是最新版本/).waitFor({ timeout: 10_000 })
+    await page.getByText('更新源：GitHub').waitFor({ timeout: 5_000 })
+    await page.getByRole('button', { name: '关闭' }).click()
   })
 
   itE2E(
@@ -346,16 +340,10 @@ describe('更新检查状态：无更新', () => {
     await closeCurrentAndClean()
   })
   itE2E('提示最新版本并显示更新源', async (page) => {
-    const messages: string[] = []
-    page.on('dialog', (dialog) => {
-      messages.push(dialog.message())
-      void dialog.accept()
-    })
     await page.getByRole('button', { name: '检查更新' }).click()
-    await new Promise((resolve) => setTimeout(resolve, 3_000))
-    const latest = messages.join('\n')
-    expect(latest).toContain('当前已是最新版本')
-    expect(latest).toContain('更新源：GitHub')
+    await page.getByText(/当前已是最新版本/).waitFor({ timeout: 10_000 })
+    await page.getByText('更新源：GitHub').waitFor({ timeout: 5_000 })
+    await page.getByRole('button', { name: '关闭' }).click()
   })
 })
 
@@ -367,15 +355,11 @@ describe('更新检查状态：有更新（发现 → 下载 → 安装提示）
     await closeCurrentAndClean()
   })
   itE2E('完整事件链提示', async (page) => {
-    const messages: string[] = []
-    page.on('dialog', (dialog) => {
-      messages.push(dialog.message())
-      void dialog.accept()
-    })
     await page.getByRole('button', { name: '检查更新' }).click()
-    await new Promise((resolve) => setTimeout(resolve, 3_000))
-    expect(messages.some((message) => message.includes('发现新版本 9.9.9'))).toBe(true)
-    expect(messages.some((message) => message.includes('更新已下载完成'))).toBe(true)
+    await page.getByText(/发现新版本 9\.9\.9/).waitFor({ timeout: 10_000 })
+    await page.getByText(/模拟版本 9\.9\.9 更新说明/).waitFor({ timeout: 5_000 })
+    await page.getByRole('button', { name: '立即下载' }).click()
+    await page.getByText(/更新已下载完成/).waitFor({ timeout: 10_000 })
   })
 })
 
@@ -387,14 +371,9 @@ describe('更新检查状态：检查失败', () => {
     await closeCurrentAndClean()
   })
   itE2E('明确错误提示', async (page) => {
-    const messages: string[] = []
-    page.on('dialog', (dialog) => {
-      messages.push(dialog.message())
-      void dialog.accept()
-    })
     await page.getByRole('button', { name: '检查更新' }).click()
-    await new Promise((resolve) => setTimeout(resolve, 3_000))
-    expect(messages.some((message) => message.includes('检查更新失败'))).toBe(true)
-    expect(messages.some((message) => message.includes('模拟更新服务不可用'))).toBe(true)
+    await page.getByText(/检查更新失败/).waitFor({ timeout: 10_000 })
+    await page.getByText(/模拟更新服务不可用/).waitFor({ timeout: 5_000 })
+    await page.getByRole('button', { name: '关闭' }).click()
   })
 })

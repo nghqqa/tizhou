@@ -5,6 +5,7 @@ import {
   MessageBar,
   MessageBarActions,
   MessageBarBody,
+  ProgressBar,
   Spinner
 } from '@fluentui/react-components'
 import {
@@ -38,6 +39,7 @@ import { useAppStore } from './store'
 import { invoke } from './api'
 import { LoadingState } from './components/ui'
 import { CommandPalette } from './components/CommandPalette'
+import { MarkdownContent } from './components/MarkdownContent'
 import { RouteErrorBoundary } from './components/RouteErrorBoundary'
 
 const DashboardPage = lazy(() =>
@@ -160,6 +162,26 @@ function AppShell(): React.JSX.Element {
   const location = useLocation()
   const navigate = useNavigate()
   const [paletteOpen, setPaletteOpen] = useState(false)
+  const [updateDialog, setUpdateDialog] = useState<{
+    open: boolean
+    checking: boolean
+    available: boolean
+    downloading: boolean
+    downloaded: boolean
+    progress?: number
+    version?: string
+    currentVersion: string
+    releaseNotes?: string
+    source?: 'cnb' | 'github'
+    error?: string
+  }>({
+    open: false,
+    checking: false,
+    available: false,
+    downloading: false,
+    downloaded: false,
+    currentVersion: ''
+  })
   const isDark =
     data?.settings.theme === 'light'
       ? false
@@ -187,52 +209,86 @@ function AppShell(): React.JSX.Element {
   const checkForUpdates = async (): Promise<void> => {
     if (updateBusyRef.current) return
     updateBusyRef.current = true
+    setUpdateDialog((prev) => ({ ...prev, open: true, checking: true, error: undefined }))
     try {
       const result = await invoke<{
         available: boolean
         downloading: boolean
         downloaded: boolean
+        progress?: number
         version?: string
+        releaseNotes?: string
         error?: string
         currentVersion: string
         source?: 'cnb' | 'github'
       }>({ method: 'app.update.check' })
-      const sourceLabel =
-        result.source === 'cnb' ? '更新源：国内镜像（cnb.cool）' : '更新源：GitHub'
-      if (result.error) {
-        window.alert(`检查更新失败：${result.error}`)
-      } else if (result.downloaded) {
-        // 已下载完毕，直接询问安装
-        const install = window.confirm('更新已下载完成。点击确定立即安装并重启应用。')
-        if (install) {
-          await invoke({ method: 'app.update.install' })
-        }
-      } else if (result.available && result.version) {
-        const download = window.confirm(
-          `发现新版本 ${result.version}（当前 ${result.currentVersion}）。\n${sourceLabel}\n点击确定开始下载，下载完成后会提示安装。`
-        )
-        if (download) {
-          const dlResult = await invoke<{
-            downloaded: boolean
-            downloading: boolean
-            error?: string
-          }>({ method: 'app.update.download' })
-          if (dlResult.error) {
-            window.alert(`下载失败：${dlResult.error}`)
-          } else if (dlResult.downloaded) {
-            const install = window.confirm('更新已下载完成。点击确定立即安装并重启应用。')
-            if (install) {
-              await invoke({ method: 'app.update.install' })
-            }
-          }
-        }
-      } else if (!result.downloading) {
-        window.alert(`当前已是最新版本（${result.currentVersion}）。\n${sourceLabel}`)
-      }
+      setUpdateDialog({
+        open: true,
+        checking: false,
+        available: result.available,
+        downloading: result.downloading,
+        downloaded: result.downloaded,
+        progress: result.progress,
+        version: result.version,
+        currentVersion: result.currentVersion,
+        releaseNotes: result.releaseNotes,
+        source: result.source,
+        error: result.error
+      })
     } catch (cause) {
-      window.alert(`检查更新失败：${cause instanceof Error ? cause.message : '未知错误'}`)
+      setUpdateDialog((prev) => ({
+        ...prev,
+        open: true,
+        checking: false,
+        error: cause instanceof Error ? cause.message : '未知错误'
+      }))
     } finally {
       updateBusyRef.current = false
+    }
+  }
+
+  const startUpdateDownload = async (): Promise<void> => {
+    setUpdateDialog((prev) => ({ ...prev, downloading: true, progress: 0, error: undefined }))
+    const poll = window.setInterval(() => {
+      void invoke<{
+        downloading: boolean
+        downloaded: boolean
+        progress?: number
+        error?: string
+      }>({ method: 'app.update.status' })
+        .then((status) => {
+          setUpdateDialog((prev) => ({
+            ...prev,
+            downloading: status.downloading,
+            downloaded: status.downloaded,
+            progress: status.progress,
+            error: status.error
+          }))
+        })
+        .catch(() => {})
+    }, 350)
+    try {
+      const dlResult = await invoke<{
+        downloaded: boolean
+        downloading: boolean
+        progress?: number
+        error?: string
+      }>({ method: 'app.update.download' })
+      setUpdateDialog((prev) => ({
+        ...prev,
+        downloading: dlResult.downloading,
+        downloaded: dlResult.downloaded,
+        progress: dlResult.progress ?? (dlResult.downloaded ? 100 : prev.progress),
+        error: dlResult.error
+      }))
+    } catch (cause) {
+      setUpdateDialog((prev) => ({
+        ...prev,
+        downloading: false,
+        error: cause instanceof Error ? cause.message : '下载失败'
+      }))
+    } finally {
+      window.clearInterval(poll)
     }
   }
 
@@ -420,6 +476,121 @@ function AppShell(): React.JSX.Element {
         onClose={() => setPaletteOpen(false)}
         onToggleTheme={toggleTheme}
       />
+      {updateDialog.open && (
+        <div
+          className="update-modal-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && !updateDialog.downloading) {
+              setUpdateDialog((prev) => ({ ...prev, open: false }))
+            }
+          }}
+        >
+          <div
+            className="update-dialog-surface"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="update-dialog-title"
+          >
+            <h2 id="update-dialog-title" className="update-dialog-title">
+              {updateDialog.checking
+                ? '正在检查更新'
+                : updateDialog.error
+                  ? '检查更新失败'
+                  : updateDialog.downloaded
+                    ? '更新已下载完成'
+                    : updateDialog.available && updateDialog.version
+                      ? `发现新版本 ${updateDialog.version}`
+                      : '检查更新'}
+            </h2>
+            <div className="update-dialog-body">
+              {updateDialog.checking ? (
+                <Spinner label="正在探测更新源并比对版本…" />
+              ) : (
+                <>
+                  <div className="update-dialog-meta">
+                    {updateDialog.currentVersion && (
+                      <span className="pill">当前版本 {updateDialog.currentVersion}</span>
+                    )}
+                    {updateDialog.version && updateDialog.available && (
+                      <span className="pill">最新版本 {updateDialog.version}</span>
+                    )}
+                    <span className="pill">
+                      {updateDialog.source === 'cnb'
+                        ? '更新源：国内镜像（cnb.cool）'
+                        : '更新源：GitHub'}
+                    </span>
+                  </div>
+                  {updateDialog.error ? (
+                    <p className="warning" style={{ margin: 0 }}>
+                      {updateDialog.error}
+                    </p>
+                  ) : updateDialog.downloaded ? (
+                    <p style={{ margin: 0 }}>
+                      新版本安装包已就绪，点击「立即安装并重启」即可完成升级，学习数据与题库不受影响。
+                    </p>
+                  ) : updateDialog.available ? (
+                    <>
+                      <div className="update-dialog-notes">
+                        <MarkdownContent
+                          content={
+                            updateDialog.releaseNotes ??
+                            '本次更新包含功能改进与稳定性修复。点击下方按钮开始下载更新。'
+                          }
+                        />
+                      </div>
+                      {updateDialog.downloading && (
+                        <div className="update-dialog-progress">
+                          <span className="muted" style={{ fontSize: 12 }}>
+                            正在下载更新… {updateDialog.progress ?? 0}%
+                          </span>
+                          <ProgressBar
+                            value={
+                              updateDialog.progress !== undefined
+                                ? updateDialog.progress / 100
+                                : undefined
+                            }
+                          />
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <p style={{ margin: 0 }}>当前已是最新版本（{updateDialog.currentVersion}）。</p>
+                  )}
+                </>
+              )}
+            </div>
+            <div className="update-dialog-actions">
+              {!updateDialog.checking && !updateDialog.downloading && (
+                <Button
+                  appearance="secondary"
+                  onClick={() => setUpdateDialog((prev) => ({ ...prev, open: false }))}
+                >
+                  关闭
+                </Button>
+              )}
+              {updateDialog.downloaded ? (
+                <Button
+                  appearance="primary"
+                  onClick={() => void invoke({ method: 'app.update.install' })}
+                >
+                  立即安装并重启
+                </Button>
+              ) : (
+                updateDialog.available &&
+                !updateDialog.error && (
+                  <Button
+                    appearance="primary"
+                    disabled={updateDialog.downloading}
+                    onClick={() => void startUpdateDownload()}
+                  >
+                    {updateDialog.downloading ? '正在下载…' : '立即下载'}
+                  </Button>
+                )
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -74,3 +74,58 @@ export async function resolveUpdateFeed(
   }
   return { provider: 'github', source: 'github' }
 }
+
+/** 拉取指定版本的发版更新说明（Markdown），超时或不可达时安全返回 undefined 不阻塞更新 */
+export async function fetchReleaseNotes(
+  version: string,
+  source: 'cnb' | 'github' | undefined,
+  fetchImpl: typeof fetch = fetch,
+  options: { probeDisabled?: boolean } = {}
+): Promise<string | undefined> {
+  if (options.probeDisabled) {
+    return `### 新特性与改进\n\n- 模拟版本 ${version} 更新说明（E2E 测试用）`
+  }
+  const cleanVer = version.replace(/^v/, '').trim()
+  if (!cleanVer) return undefined
+
+  const tryRaw = async (url: string): Promise<string | undefined> => {
+    try {
+      const res = await fetchImpl(url, {
+        headers: { 'User-Agent': 'tizhou-updater' },
+        signal: AbortSignal.timeout(2500)
+      })
+      if (!res.ok) return undefined
+      const text = (await res.text()).trim()
+      return text || undefined
+    } catch {
+      return undefined
+    }
+  }
+
+  if (source === 'cnb') {
+    const cnbRaw = await tryRaw(
+      `https://cnb.cool/nghqqa/tizhou/-/git/raw/master/docs/release-notes-${cleanVer}.md`
+    )
+    if (cnbRaw) return cnbRaw
+  }
+
+  try {
+    const res = await fetchImpl(
+      `https://api.github.com/repos/nghqqa/tizhou/releases/tags/v${cleanVer}`,
+      {
+        headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'tizhou-updater' },
+        signal: AbortSignal.timeout(2500)
+      }
+    )
+    if (res.ok) {
+      const data = (await res.json()) as { body?: unknown }
+      if (typeof data.body === 'string' && data.body.trim()) return data.body.trim()
+    }
+  } catch {
+    /* 回退 raw 文档 */
+  }
+
+  return tryRaw(
+    `https://raw.githubusercontent.com/nghqqa/tizhou/master/docs/release-notes-${cleanVer}.md`
+  )
+}

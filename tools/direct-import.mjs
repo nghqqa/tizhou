@@ -1146,7 +1146,11 @@ function classifyXzShenlunType(chapter, stem) {
   if (/综合分析|综合题/.test(cat)) return '综合题'
   if (/归纳概括|提出对策|单一题|概括|对策/.test(cat)) return '单一题'
   const text = String(stem ?? '').replace(/\s+/g, '')
-  if (/写一篇文章|自拟题目|议论文|800\s*[—–~-]\s*1\d{3}\s*字|不少于\s*(?:800|1000)\s*字/.test(text))
+  if (
+    /写一篇文章|写一篇.{0,4}(?:文章|论文)|策论文|自拟题目|议论文|800\s*[—–~-]\s*1\d{3}\s*字|不少于\s*(?:800|1000)\s*字/.test(
+      text
+    )
+  )
     return '作文题'
   if (
     /倡议书|发言稿|讲话稿|演讲稿|公开信|感谢信|回信|汇报|简报|编者按|短评|新闻稿|调研报告|考察报告|情况说明|通知|通告|工作方案|导语|推介|讲解词|致辞|提纲|撰写|起草一[份篇]|拟写一[份篇]/.test(
@@ -1398,10 +1402,21 @@ function buildKaogongShuatiShenlun(srcDir, outDir, primaryDir) {
   let withAnalysis = 0
 
   for (const row of rows) {
-    const stem = String(row.content ?? '').trim()
+    const stem = String(row.content ?? '')
+      .replace(
+        /\[materialid\]\d+\[\/materialid\](?:\s*[-～~—–]\s*\[materialid\]\d+\[\/materialid\])*/gi,
+        ''
+      )
+      .trim()
     const paperName = String(row.paperName ?? '').trim()
     const matParts = materialsByPaper.get(row.paperId) ?? []
-    const material = matParts.join('\n\n')
+    const material = matParts
+      .join('\n\n')
+      .replace(
+        /\[materialid\]\d+\[\/materialid\](?:\s*[-～~—–]\s*\[materialid\]\d+\[\/materialid\])*/gi,
+        ''
+      )
+      .trim()
     if (!stem || material.length < 40) {
       skippedEmpty += 1
       continue

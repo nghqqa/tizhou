@@ -20,7 +20,7 @@ import { renderReportMarkdown, reportFileName } from './services/report-markdown
 import { StudyService } from './services/study'
 import { VaultService } from './services/vault'
 import { resolveTestRuntime } from './services/test-runtime'
-import { resolveUpdateFeed } from './services/update-feed'
+import { fetchReleaseNotes, resolveUpdateFeed } from './services/update-feed'
 
 // electron-updater 是 CommonJS 包，用 createRequire 兼容 ESM 主进程
 const nodeRequire = createRequire(import.meta.url)
@@ -596,8 +596,19 @@ async function initialize(): Promise<void> {
           if (feed.provider === 'generic' && feed.url) {
             autoUpdater.setFeedURL({ provider: 'generic', url: feed.url })
           }
-          updateStatus = { ...updateStatus, checking: true, source: feed.source }
+          updateStatus = {
+            ...updateStatus,
+            checking: true,
+            source: feed.source,
+            releaseNotes: undefined
+          }
           await autoUpdater.checkForUpdates()
+          if (updateStatus.available && updateStatus.version) {
+            const notes = await fetchReleaseNotes(updateStatus.version, feed.source, fetch, {
+              probeDisabled: isE2EMode
+            })
+            if (notes) updateStatus = { ...updateStatus, releaseNotes: notes }
+          }
           return getUpdateStatus()
         } catch (error) {
           updateStatus = { ...updateStatus, checking: false }
@@ -796,6 +807,7 @@ let updateStatus: {
   downloaded: boolean
   progress?: number
   version?: string
+  releaseNotes?: string
   error?: string
   source?: 'cnb' | 'github'
 } = { checking: false, available: false, downloading: false, downloaded: false }
