@@ -13,6 +13,7 @@ import type {
 import {
   SHENLUN_QUESTION_TYPES,
   classifyShenlunType,
+  formatShenlunMaterialParagraphs,
   recommendShenlunMaterialIndices,
   splitShenlunMaterialBlocks,
   type ShenlunQuestionType
@@ -689,7 +690,9 @@ export function ShenlunSolutionPage(): React.JSX.Element {
                     typeof materialTab === 'number' && blocks[materialTab]
                       ? blocks[materialTab]!
                       : null
-                  const displayedMaterial = activeBlock ? activeBlock.raw : current.material
+                  const displayedMaterial = formatShenlunMaterialParagraphs(
+                    activeBlock ? activeBlock.raw : current.material
+                  )
                   return (
                     <div className="essay-material">
                       {blocks.length >= 2 ? (

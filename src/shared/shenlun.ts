@@ -248,3 +248,71 @@ export function recommendShenlunMaterialIndices(
   if (picked.length >= blocks.length) return []
   return picked.sort((a, b) => a - b)
 }
+
+const SKIP_PARAGRAPH_LINE_RE = /^(?:#{1,6}\s|[-*+]\s|\d+\.\s|>\s|\||```|!\[)/
+
+/**
+ * 将 PDF 抽取导致的超长无换行申论材料按句读与序号智能拆分为自然段，
+ * 保留已有段落与 Markdown 结构，避免整段“文字墙”影响阅读。
+ */
+export function formatShenlunMaterialParagraphs(text: string): string {
+  if (!text) return text
+  const lines = text.split(/\r?\n/)
+  const out: string[] = []
+
+  for (const line of lines) {
+    const trimmed = line.trim()
+    if (!trimmed || trimmed.length <= 320 || SKIP_PARAGRAPH_LINE_RE.test(trimmed)) {
+      out.push(line)
+      continue
+    }
+
+    const parts: string[] = []
+    let buf = ''
+    let i = 0
+    while (i < trimmed.length) {
+      const ch = trimmed[i]!
+      buf += ch
+
+      const nextTwo = trimmed.slice(i + 1, i + 4)
+      const isSentenceEnd =
+        ch === '。' ||
+        ch === '！' ||
+        ch === '？' ||
+        ((ch === '”' || ch === '」') &&
+          buf.length >= 2 &&
+          (buf[buf.length - 2] === '。' ||
+            buf[buf.length - 2] === '！' ||
+            buf[buf.length - 2] === '？'))
+
+      if (isSentenceEnd) {
+        if ((trimmed[i + 1] === '”' || trimmed[i + 1] === '」') && ch !== '”' && ch !== '」') {
+          i += 1
+          buf += trimmed[i]!
+        }
+        const remaining = trimmed.length - (i + 1)
+        const nextStartsItem = /^\s*\d+\.[\u4e00-\u9fa5]/.test(trimmed.slice(i + 1, i + 8))
+        if (
+          remaining >= 80 &&
+          ((nextStartsItem && buf.length >= 100) || (buf.length >= 220 && remaining >= 100))
+        ) {
+          parts.push(buf.trim())
+          buf = ''
+          while (i + 1 < trimmed.length && /\s/.test(trimmed[i + 1]!)) i += 1
+        }
+      } else if (
+        buf.length >= 100 &&
+        (ch === '。' || ch === '”' || ch === '；') &&
+        /^\d+\.[\u4e00-\u9fa5]/.test(nextTwo)
+      ) {
+        parts.push(buf.trim())
+        buf = ''
+      }
+      i += 1
+    }
+    if (buf.trim()) parts.push(buf.trim())
+    out.push(parts.join('\n\n'))
+  }
+
+  return out.join('\n')
+}

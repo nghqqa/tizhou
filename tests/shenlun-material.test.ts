@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { recommendShenlunMaterialIndices, splitShenlunMaterialBlocks } from '../src/shared/shenlun'
+import {
+  formatShenlunMaterialParagraphs,
+  recommendShenlunMaterialIndices,
+  splitShenlunMaterialBlocks
+} from '../src/shared/shenlun'
 
 const SAMPLE_MATERIAL = [
   '### 材料1\n\n党的十八大以来，我国生态文明建设取得历史性成就，绿色发展是高质量发展的底色。',
@@ -58,5 +62,15 @@ describe('shenlun material splitting & recommendation', () => {
       '作文题'
     )
     expect(essay).toEqual([])
+  })
+
+  it('splits long unformatted material walls into readable paragraphs', () => {
+    const sentence =
+      '“免陪照护服务呼应了不少患者群体的需求，但要真正达到预期效果，还需要多方合力，有很长的路要走。”记者在走访中也了解到，部分医院对推广免陪照护服务持审慎态度。'
+    const wall = sentence.repeat(8)
+    const formatted = formatShenlunMaterialParagraphs(wall)
+    const paragraphs = formatted.split('\n\n')
+    expect(paragraphs.length).toBeGreaterThanOrEqual(3)
+    expect(paragraphs.every((p) => p.length >= 100)).toBe(true)
   })
 })
