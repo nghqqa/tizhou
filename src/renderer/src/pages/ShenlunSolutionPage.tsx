@@ -600,20 +600,6 @@ export function ShenlunSolutionPage(): React.JSX.Element {
             {(current ?? currentSummary) && (
               <span className="pill">难度 {(current ?? currentSummary)!.difficulty}</span>
             )}
-            {(() => {
-              const wordCount = content.replace(/\s/g, '').length
-              const limit = current ? extractWordLimit(current.stem) : null
-              const overLimit = Boolean(limit?.max && wordCount > limit.max)
-              const underLimit = Boolean(limit?.min && wordCount > 0 && wordCount < limit.min)
-              return (
-                <span
-                  className={`pill${overLimit ? ' is-over-limit' : underLimit ? ' is-under-limit' : ''}`}
-                  title={limit ? `已识别题干字数要求：${limit.label}` : undefined}
-                >
-                  {limit ? `${wordCount} / ${limit.label}` : `${wordCount} 字`}
-                </span>
-              )
-            })()}
             {currentStatus && (
               <span className="pill is-evaluated">
                 已评 {currentStatus.count} 次 · 最新 {currentStatus.latestScore} 分
@@ -752,14 +738,30 @@ export function ShenlunSolutionPage(): React.JSX.Element {
                 <Tab value="history">历史记录 ({promptHistory.length})</Tab>
               </TabList>
               {view === 'write' ? (
-                <textarea
-                  className="essay-editor"
-                  data-testid="shenlun-draft-input"
-                  aria-label="申论作答草稿"
-                  value={content}
-                  onChange={(event) => updateDraftContent(event.target.value)}
-                  placeholder="建议先列要点，再组织成完整答案。草稿会在停止输入后自动保存。"
-                />
+                <div className="essay-editor-wrap">
+                  <textarea
+                    className="essay-editor"
+                    data-testid="shenlun-draft-input"
+                    aria-label="申论作答草稿"
+                    value={content}
+                    onChange={(event) => updateDraftContent(event.target.value)}
+                    placeholder="建议先列要点，再组织成完整答案。草稿会在停止输入后自动保存。"
+                  />
+                  {(() => {
+                    const wordCount = content.replace(/\s/g, '').length
+                    const limit = current ? extractWordLimit(current.stem) : null
+                    const overLimit = Boolean(limit?.max && wordCount > limit.max)
+                    const underLimit = Boolean(limit?.min && wordCount > 0 && wordCount < limit.min)
+                    return (
+                      <span
+                        className={`essay-word-counter${overLimit ? ' is-over-limit' : underLimit ? ' is-under-limit' : ''}`}
+                        title={limit ? `已识别题干字数要求：${limit.label}` : undefined}
+                      >
+                        {limit ? `${wordCount} / ${limit.label}` : `${wordCount} 字`}
+                      </span>
+                    )
+                  })()}
+                </div>
               ) : view === 'reference' ? (
                 <div className="answer-panel">
                   <h3>参考要点</h3>
