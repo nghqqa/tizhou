@@ -411,40 +411,103 @@ export class VaultService {
     const warnings: string[] = []
     const paths = this.walkMarkdown(realRoot, warnings)
     if (paths.length === 0) throw new Error('目录中没有找到 Markdown 文件')
-    // 增量索引：文件内容哈希与上次一致时直接复用库中记录，跳过 frontmatter 解析。
-    // 知识文档表不存哈希且数量很少，始终重新解析。
-    const previousByPath = new Map<string, Question>()
-    for (const question of this.database.listVaultQuestions(vaultId))
-      if (question.filePath) previousByPath.set(question.filePath, question)
-    const questions: Question[] = []
+    // 增量索引：优先用 mtime + size 零读盘跳过，其次用轻量 content_hash 复用，不加载全量大字段。
+    // 知识文档表数量很少，始终重新解析。
+    const previousByPath = new Map<
+      string,
+      {
+        id: string
+        filePath: string
+        contentHash: string
+        fileMtimeMs?: number
+        fileSize?: number
+      }
+    >()
+    for (const meta of this.database.listVaultQuestionIndexMeta(vaultId)) {
+      if (meta.filePath) previousByPath.set(meta.filePath, meta)
+    }
+    const questions: Array<
+      | Question
+      | {
+          id: string
+          contentHash: string
+          filePath: string
+          fileMtimeMs: number
+          fileSize: number
+          _reused: true
+        }
+    > = []
     const documents: KnowledgeDocument[] = []
     const seenIds = new Set<string>()
     let skipped = 0
     let reused = 0
     for (const path of paths) {
       try {
-        const raw = readFileSync(path, 'utf8')
         const cached = previousByPath.get(path)
-        let parsed: Question | KnowledgeDocument | undefined
-        if (cached && cached.contentHash === hash(raw)) {
-          parsed = cached
+        const fileStat = statSync(path)
+        if (
+          cached &&
+          cached.fileMtimeMs !== undefined &&
+          cached.fileSize !== undefined &&
+          cached.fileMtimeMs === fileStat.mtimeMs &&
+          cached.fileSize === fileStat.size
+        ) {
+          if (seenIds.has(cached.id)) {
+            warnings.push(`${relative(realRoot, path)}：ID ${cached.id} 重复，已跳过`)
+            skipped += 1
+            continue
+          }
+          seenIds.add(cached.id)
+          questions.push({
+            id: cached.id,
+            contentHash: cached.contentHash,
+            filePath: cached.filePath,
+            fileMtimeMs: fileStat.mtimeMs,
+            fileSize: fileStat.size,
+            _reused: true
+          })
           reused += 1
-        } else {
-          parsed = this.parseFile(realRoot, path, raw)
-          if (parsed) parsed.id = `${vaultId}:${parsed.id}`
+          continue
         }
+        const raw = readFileSync(path, 'utf8')
+        const rawHash = hash(raw)
+        if (cached && cached.contentHash === rawHash) {
+          if (seenIds.has(cached.id)) {
+            warnings.push(`${relative(realRoot, path)}：ID ${cached.id} 重复，已跳过`)
+            skipped += 1
+            continue
+          }
+          seenIds.add(cached.id)
+          questions.push({
+            id: cached.id,
+            contentHash: rawHash,
+            filePath: cached.filePath,
+            fileMtimeMs: fileStat.mtimeMs,
+            fileSize: fileStat.size,
+            _reused: true
+          })
+          reused += 1
+          continue
+        }
+        const parsed = this.parseFile(realRoot, path, raw)
         if (!parsed) {
           skipped += 1
           continue
         }
+        parsed.id = `${vaultId}:${parsed.id}`
         if (seenIds.has(parsed.id)) {
           warnings.push(`${relative(realRoot, path)}：ID ${parsed.id} 重复，已跳过`)
           skipped += 1
           continue
         }
         seenIds.add(parsed.id)
-        if ('stem' in parsed) questions.push(parsed)
-        else documents.push(parsed)
+        if ('stem' in parsed) {
+          parsed.fileMtimeMs = fileStat.mtimeMs
+          parsed.fileSize = fileStat.size
+          questions.push(parsed)
+        } else {
+          documents.push(parsed)
+        }
       } catch (error) {
         warnings.push(
           `${relative(realRoot, path)}：${error instanceof Error ? error.message : '解析失败'}`

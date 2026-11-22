@@ -1,5 +1,12 @@
 # 更新日志
 
+## 1.0.31 - 2026-11-22
+
+### 大题库增量索引提速与外部开源题库格式转换器
+
+- **大题库增量索引提速**：`questions` 表新增 `file_mtime_ms` 与 `file_size` 元数据列及 `listVaultQuestionIndexMeta` 轻量查询接口；`VaultService` 重索引比对时不再全量加载长材料与解析字段，未改动文件通过 `mtime + size` 零读盘快速跳过，大幅提升 5 万题级大型题库的重索引速度
+- **外部开源题库格式转换扩展**：`tools/direct-import.mjs` 新增 `xingcezhenti`（Markdown 卷拆题、资料分析分栏映射、本地图片拷贝与原卷信息保留）与 `kaogong-shuati-shenlun`（申论真题 + `materials.db` 材料拼接 + 四大题型归类）转换子命令，支持跨库去重与来源标识写入
+
 ## 1.0.30 - 2026-11-22
 
 ### 申论四大题型分类、结构化卡片选题与全站视觉统一

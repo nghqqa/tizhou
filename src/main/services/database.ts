@@ -370,7 +370,9 @@ export class DatabaseService {
       ['content_version', 'TEXT'],
       ['papers_json', 'TEXT'],
       ['group_id', 'TEXT'],
-      ['group_order', 'INTEGER']
+      ['group_order', 'INTEGER'],
+      ['file_mtime_ms', 'REAL'],
+      ['file_size', 'INTEGER']
     ]) {
       if (!questionColumns.some((column) => String(column.name) === name))
         this.db.exec(`ALTER TABLE questions ADD COLUMN ${name} ${type}`)
@@ -509,20 +511,68 @@ export class DatabaseService {
     }
   }
 
+  listVaultQuestionIndexMeta(vaultId: string): Array<{
+    id: string
+    filePath: string
+    contentHash: string
+    fileMtimeMs?: number
+    fileSize?: number
+  }> {
+    const rows = this.db
+      .prepare(
+        'SELECT id, file_path, content_hash, file_mtime_ms, file_size FROM questions WHERE vault_id = ?'
+      )
+      .all(vaultId) as Row[]
+    return rows.map((row) => ({
+      id: String(row.id),
+      filePath: row.file_path == null ? '' : String(row.file_path),
+      contentHash: String(row.content_hash),
+      fileMtimeMs:
+        row.file_mtime_ms === null || row.file_mtime_ms === undefined
+          ? undefined
+          : numberValue(row.file_mtime_ms),
+      fileSize:
+        row.file_size === null || row.file_size === undefined
+          ? undefined
+          : numberValue(row.file_size)
+    }))
+  }
+
   replaceVaultContent(
     vault: VaultInfo,
-    questions: Question[],
+    questions: Array<
+      | Question
+      | {
+          id: string
+          contentHash: string
+          filePath?: string
+          fileMtimeMs?: number
+          fileSize?: number
+          _reused: true
+        }
+    >,
     documents: KnowledgeDocument[],
     captureSnapshot = true
   ): { added: number; updated: number; removed: number } {
     const previousRows = this.db
-      .prepare('SELECT id, content_hash, file_path FROM questions WHERE vault_id = ?')
+      .prepare(
+        'SELECT id, content_hash, file_path, file_mtime_ms, file_size FROM questions WHERE vault_id = ?'
+      )
       .all(vault.id) as Row[]
     const previous = new Map(previousRows.map((row) => [String(row.id), String(row.content_hash)]))
     const previousPaths = new Map(
       previousRows.map((row) => [
         String(row.id),
         row.file_path == null ? '' : String(row.file_path)
+      ])
+    )
+    const previousStat = new Map(
+      previousRows.map((row) => [
+        String(row.id),
+        {
+          mtime: row.file_mtime_ms == null ? undefined : numberValue(row.file_mtime_ms),
+          size: row.file_size == null ? undefined : numberValue(row.file_size)
+        }
       ])
     )
     let added = 0
@@ -570,8 +620,8 @@ export class DatabaseService {
       const upsertQuestion = this.db.prepare(`INSERT INTO questions(
         id, vault_id, subject, category, type, stem, options_json, answer_json, explanation,
         difficulty, source, year, region, paper, material, content_version, tags_json, file_path,
-        content_hash, papers_json, group_id, group_order, indexed_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        content_hash, papers_json, group_id, group_order, file_mtime_ms, file_size, indexed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         vault_id=excluded.vault_id, subject=excluded.subject, category=excluded.category,
         type=excluded.type, stem=excluded.stem, options_json=excluded.options_json,
@@ -582,15 +632,29 @@ export class DatabaseService {
         tags_json=excluded.tags_json, file_path=excluded.file_path,
         content_hash=excluded.content_hash, papers_json=excluded.papers_json,
         group_id=excluded.group_id, group_order=excluded.group_order,
+        file_mtime_ms=excluded.file_mtime_ms, file_size=excluded.file_size,
         indexed_at=excluded.indexed_at`)
+      const updateFileStat = this.db.prepare(
+        'UPDATE questions SET file_mtime_ms = ?, file_size = ? WHERE id = ?'
+      )
       for (const question of questions) {
         // 内容哈希与路径都未变的题不重写：全量 upsert 在大库上是重索引的主要开销之一；
         // 路径也参与比较，文件被移动时哈希虽同仍需更新 file_path（题图按文件位置定位）
         if (
           previous.get(question.id) === question.contentHash &&
           previousPaths.get(question.id) === (question.filePath ?? '')
-        )
+        ) {
+          const prevStat = previousStat.get(question.id)
+          if (
+            question.fileMtimeMs !== undefined &&
+            question.fileSize !== undefined &&
+            (prevStat?.mtime !== question.fileMtimeMs || prevStat?.size !== question.fileSize)
+          ) {
+            updateFileStat.run(question.fileMtimeMs, question.fileSize, question.id)
+          }
           continue
+        }
+        if ('_reused' in question) continue
         upsertQuestion.run(
           question.id,
           vault.id,
@@ -614,6 +678,8 @@ export class DatabaseService {
           question.papers?.length ? JSON.stringify(question.papers) : null,
           question.groupId ?? null,
           question.groupOrder ?? null,
+          question.fileMtimeMs ?? null,
+          question.fileSize ?? null,
           now()
         )
       }

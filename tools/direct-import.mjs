@@ -1123,6 +1123,338 @@ function dedupAgainst(primaryDir, secondaryDir) {
   console.log(`primary ${signatures.size} 题；从 secondary 删除重复 ${removed} 题`)
 }
 
+const XZ_MODULE_DIRS = [
+  '01-政治理论',
+  '02-常识判断',
+  '03-言语理解与表达',
+  '04-数量关系',
+  '05-判断推理',
+  '06-资料分析'
+]
+
+function normalizeXzRegion(raw) {
+  const s = String(raw ?? '').trim()
+  if (!s) return ''
+  if (/国考|国家公务员|中央机关/.test(s)) return '国考'
+  return s.replace(/(?:省|市|自治区)$/, '')
+}
+
+function classifyXzShenlunType(chapter, stem) {
+  const cat = String(chapter ?? '').trim()
+  if (/大作文|作文|申发论述|文章写作/.test(cat)) return '作文题'
+  if (/贯彻执行|应用文|公文/.test(cat)) return '公文题'
+  if (/综合分析|综合题/.test(cat)) return '综合题'
+  if (/归纳概括|提出对策|单一题|概括|对策/.test(cat)) return '单一题'
+  const text = String(stem ?? '').replace(/\s+/g, '')
+  if (/写一篇文章|自拟题目|议论文|800\s*[—–~-]\s*1\d{3}\s*字|不少于\s*(?:800|1000)\s*字/.test(text))
+    return '作文题'
+  if (
+    /倡议书|发言稿|讲话稿|演讲稿|公开信|感谢信|回信|汇报|简报|编者按|短评|新闻稿|调研报告|考察报告|情况说明|通知|通告|工作方案|导语|推介|讲解词|致辞|提纲|撰写|起草一[份篇]|拟写一[份篇]/.test(
+      text
+    )
+  )
+    return '公文题'
+  if (
+    /谈谈.{0,12}(?:理解|认识|看法|启示|体会|感悟)|如何理解|怎样理解|谈谈你对|评析|评价|辨析|启示/.test(
+      text
+    )
+  )
+    return '综合题'
+  return '单一题'
+}
+
+/** 转换 ERRRC/xingcezhenti 仓库为题舟标准 Markdown 题库（支持合并进同一目标库并去重） */
+function buildXingcezhenti(srcDir, outDir, primaryDir) {
+  if (!srcDir || !outDir || !existsSync(srcDir)) {
+    throw new Error(`源目录不存在：${srcDir}`)
+  }
+  mkdirSync(outDir, { recursive: true })
+  const assetsOutDir = join(outDir, 'assets')
+  mkdirSync(assetsOutDir, { recursive: true })
+
+  const dedupBase = primaryDir || outDir
+  const primary = existsSync(dedupBase) ? loadPrimaryIndex(dedupBase) : null
+  const seenSig = new Set()
+  const copiedAssets = new Set()
+  const counters = { imported: 0, skippedDup: 0, skippedIncomplete: 0, copiedAssets: 0 }
+
+  const rewriteText = (raw, fileDir) => {
+    let text = String(raw ?? '')
+    text = text.replace(/<img[^>]*src=["']([^"']+)["'][^>]*>/gi, (_m, srcPath) => {
+      const cleanSrc = srcPath.trim()
+      if (/^https?:\/\//i.test(cleanSrc)) return ''
+      const absImg = join(fileDir, cleanSrc)
+      if (!existsSync(absImg)) return ''
+      const fileName = basename(absImg)
+      if (!copiedAssets.has(fileName)) {
+        copyFileSync(absImg, join(assetsOutDir, fileName))
+        copiedAssets.add(fileName)
+        counters.copiedAssets += 1
+      }
+      return ` ![](assets/${fileName}) `
+    })
+    return text
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<\/(p|div|li|tr|h[1-6])>/gi, '\n')
+      .replace(/<[^>]+>/g, '')
+      .replace(/&nbsp;/g, ' ')
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/\u3000+/g, ' ')
+      .replace(/[ \t]+\n/g, '\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim()
+  }
+
+  for (const modDir of XZ_MODULE_DIRS) {
+    const fullMod = join(srcDir, modDir)
+    if (!existsSync(fullMod)) continue
+    const files = readdirSync(fullMod)
+      .filter((name) => name.endsWith('.md') && name !== 'README.md')
+      .sort()
+
+    for (const fileName of files) {
+      const filePath = join(fullMod, fileName)
+      const fileDir = dirname(filePath)
+      const parsed = matter(readFileSync(filePath, 'utf8'))
+      const paper = String(parsed.data['试卷'] ?? basename(fileName, '.md')).trim()
+      const region = normalizeXzRegion(parsed.data['地区'] ?? regionFromPaperTitle(paper))
+      const yearNum = Number(parsed.data['年份'])
+      const year = Number.isFinite(yearNum) && yearNum > 1990 ? yearNum : undefined
+      const category = String(parsed.data['模块'] ?? modDir.replace(/^\d+-/, '')).trim()
+      const source = `开源真题/xingcezhenti/${paper}`
+      const content = parsed.content
+
+      const parseQuestionChunk = (chunk, materialText, groupId, groupOrder, orderInPaper) => {
+        const headerLine = chunk.split(/\r?\n/)[0] ?? ''
+        const qidMatch = headerLine.match(/qid\s+(\d+)/)
+        const qid = qidMatch
+          ? qidMatch[1]
+          : createHash('sha1').update(`${paper}\n${orderInPaper}`).digest('hex').slice(0, 12)
+
+        const lines = chunk.split(/\r?\n/).slice(1)
+        const optionStart = lines.findIndex((l) => /^\s*-\s+\*\*[A-H]\*\*\./.test(l))
+        if (optionStart < 0) {
+          counters.skippedIncomplete += 1
+          return
+        }
+        const stem = rewriteText(lines.slice(0, optionStart).join('\n'), fileDir)
+        const options = []
+        let ansLineIdx = -1
+        for (let i = optionStart; i < lines.length; i += 1) {
+          const line = lines[i] ?? ''
+          const optMatch = line.match(/^\s*-\s+\*\*([A-H])\*\*\.\s*(.+)$/)
+          if (optMatch) {
+            const optText = rewriteText(optMatch[2].replace(/\s*✅\s*$/, ''), fileDir)
+            options.push({ key: optMatch[1], text: optText || optMatch[1] })
+            continue
+          }
+          if (/^\*\*答案\*\*/.test(line)) {
+            ansLineIdx = i
+            break
+          }
+        }
+        const ansRaw =
+          ansLineIdx >= 0
+            ? (lines[ansLineIdx] ?? '').replace(/^\*\*答案\*\*[：:]\s*/, '').trim()
+            : ''
+        const answer = /^[A-H]+$/i.test(ansRaw) ? ansRaw.toUpperCase().split('') : []
+        if (!stem || options.length < 2 || answer.length === 0) {
+          counters.skippedIncomplete += 1
+          return
+        }
+        const expStart = lines.findIndex(
+          (l, idx) => idx > ansLineIdx && /^\*\*官方解析\*\*/.test(l)
+        )
+        const explanation =
+          expStart >= 0
+            ? rewriteText(
+                lines
+                  .slice(expStart + 1)
+                  .join('\n')
+                  .replace(/\n---\s*$/, ''),
+                fileDir
+              )
+            : '暂无解析。'
+
+        const sig = questionSignature(stem, options, materialText ?? '')
+        if (seenSig.has(sig)) {
+          counters.skippedDup += 1
+          return
+        }
+        if (primary) {
+          if (
+            primary.strict.has(sig) ||
+            primary.loose.has(looseSignature(stem, materialText ?? '', options[0]?.text)) ||
+            (category === '资料分析' &&
+              materialText &&
+              findContainedZiliao(stem, materialText, primary.ziliao))
+          ) {
+            counters.skippedDup += 1
+            return
+          }
+        }
+        seenSig.add(sig)
+
+        const id = `xz-${createHash('sha1').update(`${qid}\n${sig}`).digest('hex').slice(0, 18)}`
+        const question = {
+          id,
+          subject: 'xingce',
+          category,
+          tags: [region || '未标注', ...(year ? [`${year}`] : []), 'xingcezhenti'],
+          source,
+          sourceFile: `${modDir}/${fileName}`,
+          year,
+          region: region || undefined,
+          paper,
+          groupId,
+          groupOrder,
+          questionType: answer.length > 1 ? 'multiple' : 'single',
+          difficulty: 3,
+          material: materialText || undefined,
+          stem,
+          options,
+          answer,
+          explanation: explanation || '暂无解析。',
+          papers: [{ paper, order: orderInPaper }]
+        }
+        writeFileSync(join(outDir, `${id}.md`), questionMarkdown(question), 'utf8')
+        counters.imported += 1
+      }
+
+      if (content.includes('\n## 材料 ')) {
+        const materialSections = content.split(/\r?\n## 材料 \d+[^\r\n]*/).slice(1)
+        materialSections.forEach((matSection, matIdx) => {
+          const parts = matSection.split(/\r?\n### 第 (\d+) 题/)
+          const matText = rewriteText(parts[0] ?? '', fileDir)
+          const groupId = `xz-mat-${createHash('sha1').update(`${paper}\n${matIdx}`).digest('hex').slice(0, 12)}`
+          for (let j = 1; j < parts.length; j += 2) {
+            const qNum = Number(parts[j]) || (j + 1) / 2
+            const chunk = parts[j + 1] ?? ''
+            parseQuestionChunk(chunk, matText, groupId, (j + 1) / 2, qNum)
+          }
+        })
+      } else {
+        const qParts = content.split(/\r?\n## 第 (\d+) 题/)
+        for (let j = 1; j < qParts.length; j += 2) {
+          const qNum = Number(qParts[j]) || (j + 1) / 2
+          const chunk = qParts[j + 1] ?? ''
+          parseQuestionChunk(chunk, undefined, undefined, undefined, qNum)
+        }
+      }
+    }
+  }
+  console.log(
+    `[xingcezhenti] 完成：导入 ${counters.imported} 题（拷贝图片 ${counters.copiedAssets} 张），去重跳过 ${counters.skippedDup} 题，残缺跳过 ${counters.skippedIncomplete} 题`
+  )
+}
+
+/** 转换 ERRRC/kaogong-shuati 申论真题 + materials.db 材料为题舟申论库（支持合并与跨库去重） */
+function buildKaogongShuatiShenlun(srcDir, outDir, primaryDir) {
+  const tikuPath = join(srcDir, 'tiku.db')
+  const matPath = join(srcDir, 'materials.db')
+  if (!existsSync(tikuPath) || !existsSync(matPath)) {
+    throw new Error(
+      `未在 ${srcDir} 找到 tiku.db 与 materials.db（如尚未合并分卷请先运行 node tools/reassemble-tiku.mjs）`
+    )
+  }
+  mkdirSync(outDir, { recursive: true })
+  const dedupBase = primaryDir || outDir
+  const primary = existsSync(dedupBase) ? loadPrimaryIndex(dedupBase) : null
+  const seenSig = new Set()
+
+  const tikuDb = new DatabaseSync(tikuPath, { readOnly: true })
+  const matDb = new DatabaseSync(matPath, { readOnly: true })
+
+  // 按 paperId 聚合全部给定材料
+  const materialsByPaper = new Map()
+  for (const row of matDb
+    .prepare('SELECT paperId, idx, title, text FROM materials ORDER BY paperId, idx')
+    .all()) {
+    const text = String(row.text ?? '').trim()
+    if (!text) continue
+    const list = materialsByPaper.get(row.paperId) ?? []
+    const label = String(row.title ?? '').trim()
+    list.push(label ? `### ${label}\n\n${text}` : text)
+    materialsByPaper.set(row.paperId, list)
+  }
+
+  const rows = tikuDb
+    .prepare(
+      `SELECT q.questionId, q.paperId, q.chapter, q.content, q.answer, q.analysis,
+              p.name AS paperName, p.category AS paperRegion
+       FROM questions q
+       JOIN papers p ON p.id = q.paperId
+       WHERE p.subjectName LIKE '%申论%' OR p.subject = 'shenlun'
+       ORDER BY q.paperId, q.id`
+    )
+    .all()
+
+  let imported = 0
+  let skippedDup = 0
+  let skippedEmpty = 0
+  let withAnalysis = 0
+
+  for (const row of rows) {
+    const stem = String(row.content ?? '').trim()
+    const paperName = String(row.paperName ?? '').trim()
+    const matParts = materialsByPaper.get(row.paperId) ?? []
+    const material = matParts.join('\n\n')
+    if (!stem || material.length < 40) {
+      skippedEmpty += 1
+      continue
+    }
+
+    const sig = questionSignature(stem, [], material)
+    if (seenSig.has(sig) || primary?.strict.has(sig)) {
+      skippedDup += 1
+      continue
+    }
+    seenSig.add(sig)
+
+    const rawRegion = String(row.paperRegion ?? '').trim() || regionFromPaperTitle(paperName) || ''
+    const region = normalizeXzRegion(rawRegion)
+    const yearMatch = paperName.match(/(20\d{2})/)
+    const year = yearMatch ? Number(yearMatch[1]) : undefined
+    const category = classifyXzShenlunType(row.chapter, stem)
+    const rawAnalysis = String(row.analysis ?? '').trim()
+    const rawAnswer = String(row.answer ?? '').trim()
+    const explanation =
+      rawAnalysis || rawAnswer || '暂无参考答案；可在「申论作答」页配合 AI 批改或本地规则评分练习。'
+    if (rawAnalysis || rawAnswer) withAnalysis += 1
+
+    const id = `kgst-sl-${row.questionId}`
+    const question = {
+      id,
+      subject: 'shenlun',
+      category,
+      tags: [region || '未标注', ...(year ? [`${year}`] : []), 'kaogong-shuati'],
+      source: `开源真题/kaogong-shuati/${paperName || row.paperId}`,
+      sourceFile: `tiku.db#paper-${row.paperId}`,
+      year,
+      region: region || undefined,
+      paper: paperName || undefined,
+      questionType: 'essay',
+      difficulty: 3,
+      material,
+      stem,
+      options: [],
+      answer: [],
+      explanation
+    }
+    writeFileSync(join(outDir, `${id}.md`), questionMarkdown(question), 'utf8')
+    imported += 1
+  }
+
+  tikuDb.close()
+  matDb.close()
+  console.log(
+    `[kaogong-shuati-shenlun] 完成：导入 ${imported} 道申论真题（其中 ${withAnalysis} 题附带官方解析），去重跳过 ${skippedDup} 题，无材料/空题跳过 ${skippedEmpty} 题`
+  )
+}
+
 const command = argv[2]
 if (command === 'build' && argv[3] === 'pianduan600') {
   buildPianduan600(argv[4], argv[5])
@@ -1132,6 +1464,10 @@ if (command === 'build' && argv[3] === 'pianduan600') {
   buildOpenExamJson(argv[4], argv[5], argv[6])
 } else if (command === 'build' && argv[3] === 'kaogong') {
   buildKaogong(argv[4], argv[5], argv[6], argv[7])
+} else if (command === 'build' && argv[3] === 'xingcezhenti') {
+  buildXingcezhenti(argv[4], argv[5], argv[6])
+} else if (command === 'build' && argv[3] === 'kaogong-shuati-shenlun') {
+  buildKaogongShuatiShenlun(argv[4], argv[5], argv[6])
 } else if (command === 'build' && argv[3] === 'shenlun') {
   buildShenlun(argv[4], argv[5], argv[6])
 } else if (command === 'build' && argv[3] === 'shenlun-essay') {

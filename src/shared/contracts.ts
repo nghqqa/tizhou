@@ -36,6 +36,8 @@ export interface Question {
   contentVersion?: string
   tags: string[]
   filePath?: string
+  fileMtimeMs?: number
+  fileSize?: number
   contentHash: string
   /** 同一题目在多套真题卷中的复现记录（联考共用卷），按卷重组模考时使用 */
   papers?: QuestionPaperRef[]
