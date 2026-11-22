@@ -13,6 +13,7 @@ import type {
   BackupInfo,
   IntegrationConfig,
   ObsidianBackupInfo,
+  QuestionFacets,
   RuntimeStatus,
   VaultInfo,
   VaultIndexResult,
@@ -20,6 +21,7 @@ import type {
 } from '@shared/contracts'
 import { UI_SCALE_PRESETS } from '@shared/defaults'
 import { formatBytes, formatFullDate, invoke } from '../api'
+import { RegionCascadePicker } from '../components/RegionCascadePicker'
 import {
   EmptyState,
   ErrorState,
@@ -362,6 +364,8 @@ export function SettingsPage(): React.JSX.Element {
   const [backups, setBackups] = useState<BackupInfo[]>()
   const [vaults, setVaults] = useState<VaultInfo[]>([])
   const [snapshots, setSnapshots] = useState<VaultSnapshotInfo[]>([])
+  const [facets, setFacets] = useState<QuestionFacets>({ years: [], regions: [], papers: [] })
+  const [cacheStats, setCacheStats] = useState<{ totalBytes: number; entries: number }>()
   const [busy, setBusy] = useState(false)
   const [showWarnings, setShowWarnings] = useState(false)
   const [error, setError] = useState('')
@@ -381,6 +385,14 @@ export function SettingsPage(): React.JSX.Element {
       method: 'vault.snapshots',
       params: { vaultId: data!.vault.id }
     }).then(setSnapshots)
+    void invoke<QuestionFacets>({ method: 'vault.facets' })
+      .then(setFacets)
+      .catch(() => setFacets({ years: [], regions: [], papers: [] }))
+    void invoke<{ totalBytes: number; entries: number }>({
+      method: 'knowledgeBuilder.cache.stats'
+    })
+      .then(setCacheStats)
+      .catch(() => setCacheStats(undefined))
   }, [])
 
   async function clearVaultWarnings(): Promise<void> {
@@ -502,6 +514,41 @@ export function SettingsPage(): React.JSX.Element {
       )
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '重新索引失败')
+    } finally {
+      setBusy(false)
+    }
+  }
+  async function normalizeRegions(): Promise<void> {
+    setBusy(true)
+    setError('')
+    setMessage('')
+    try {
+      const result = await invoke<{ updated: number }>({ method: 'vault.normalizeRegions' })
+      setFacets(await invoke<QuestionFacets>({ method: 'vault.facets' }))
+      setMessage(
+        result.updated > 0
+          ? `已整理 ${result.updated} 道题目的地区标签（同义省市已归并，未标注旧题已按文件名/来源补齐）。`
+          : '当前题库地区标签已规范，无需调整。'
+      )
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : '地区标签整理失败')
+    } finally {
+      setBusy(false)
+    }
+  }
+  async function clearConversionCache(): Promise<void> {
+    setBusy(true)
+    setError('')
+    setMessage('')
+    try {
+      await invoke({ method: 'knowledgeBuilder.cache.clear', params: {} })
+      const next = await invoke<{ totalBytes: number; entries: number }>({
+        method: 'knowledgeBuilder.cache.stats'
+      })
+      setCacheStats(next)
+      setMessage('OCR 转换缓存已清理。')
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : '清理转换缓存失败')
     } finally {
       setBusy(false)
     }
@@ -691,6 +738,14 @@ export function SettingsPage(): React.JSX.Element {
                 onChange={(_, value) => setSettings({ ...settings, examGoalDate: value.value })}
               />
             </Field>
+            <Field label="目标考区（默认地区）">
+              <RegionCascadePicker
+                regions={facets.regions}
+                regionCounts={facets.regionCounts}
+                value={settings.defaultRegion ?? ''}
+                onChange={(nextRegion) => setSettings({ ...settings, defaultRegion: nextRegion })}
+              />
+            </Field>
           </div>
           <div className="data-row">
             <div>
@@ -789,6 +844,9 @@ export function SettingsPage(): React.JSX.Element {
             <Button icon={<ArrowClockwiseIcon />} disabled={busy} onClick={() => void reindex()}>
               重新索引
             </Button>
+            <Button icon={<WrenchIcon />} disabled={busy} onClick={() => void normalizeRegions()}>
+              整理地区标签
+            </Button>
           </div>
           {vaults.length > 1 && (
             <div style={{ marginTop: 18 }}>
@@ -850,9 +908,16 @@ export function SettingsPage(): React.JSX.Element {
           title="数据备份"
           description="恢复前会自动创建 pre-restore 快照，避免误操作造成不可逆丢失。"
           actions={
-            <Button icon={<DatabaseIcon />} disabled={busy} onClick={() => void createBackup()}>
-              立即备份
-            </Button>
+            <div className="button-row">
+              {cacheStats && cacheStats.totalBytes > 0 && (
+                <Button disabled={busy} onClick={() => void clearConversionCache()}>
+                  清理转换缓存（{formatBytes(cacheStats.totalBytes)}）
+                </Button>
+              )}
+              <Button icon={<DatabaseIcon />} disabled={busy} onClick={() => void createBackup()}>
+                立即备份
+              </Button>
+            </div>
           }
         >
           {!backups ? (

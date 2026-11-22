@@ -666,4 +666,78 @@ describe('DatabaseService local-date statistics and exam edge cases', () => {
     database.resetLearningData()
     expect(database.listAiConversations()).toHaveLength(0)
   })
+
+  it('地区提取、按地区级联 facets 与未标注地区过滤', async () => {
+    const { extractRegionFromText, normalizeRegionName, UNLABELED_REGION_FILTER } =
+      await import('../src/shared/region')
+    expect(normalizeRegionName('江苏省')).toBe('江苏')
+    expect(normalizeRegionName('北京市')).toBe('北京')
+    expect(normalizeRegionName('2025国考')).toBe('国考')
+    expect(extractRegionFromText('2024年广东省考申论（县级）')).toBe('广东')
+    expect(extractRegionFromText('2024年国家公务员考试申论')).toBe('国考')
+    expect(extractRegionFromText('普通练习卷')).toBeUndefined()
+
+    const vaultId = database.getActiveVault()!.id
+    const db = (
+      database as unknown as {
+        db: { prepare: (sql: string) => { run: (...v: unknown[]) => unknown } }
+      }
+    ).db
+    const insertEssay = (id: string, region: string | null, paper: string | null): void => {
+      db.prepare(
+        `INSERT INTO questions(
+          id, vault_id, subject, category, type, stem, options_json, answer_json, explanation,
+          difficulty, source, year, region, paper, tags_json, content_hash, indexed_at
+        ) VALUES (?, ?, 'shenlun', '归纳概括', 'essay', ?, '[]', '[]', '解析',
+          3, '测试', 2024, ?, ?, '[]', 'hash-${id}', '2024-01-01')`
+      ).run(id, vaultId, `题干-${id}`, region, paper)
+    }
+    insertEssay('e-js', '江苏', '2024年江苏省考申论A卷')
+    insertEssay('e-gd', '广东', '2024年广东省考申论')
+    insertEssay('e-none', null, '通用申论教材训练一')
+    // 同义地区归并（「北京」与「北京市」在 facets 合并为「北京」并累加题量，查询时同时命中）
+    insertEssay('e-bj1', '北京', '2024年北京市考申论')
+    insertEssay('e-bj2', '北京市', '2023年北京市考申论')
+
+    const allFacets = database.getQuestionFacets('shenlun')
+    expect(allFacets.regions).toEqual(expect.arrayContaining(['江苏', '广东', '北京']))
+    expect(allFacets.regions.filter((r) => r.startsWith('北京'))).toEqual(['北京'])
+    expect(allFacets.regionCounts?.find((r) => r.region === '北京')?.count).toBe(2)
+    expect(allFacets.papers).toEqual(
+      expect.arrayContaining(['2024年江苏省考申论A卷', '2024年广东省考申论'])
+    )
+
+    // 按地区级联过滤 papers，同时保留 regions 列表供切换
+    const jsFacets = database.getQuestionFacets('shenlun', '江苏')
+    expect(jsFacets.regions).toEqual(expect.arrayContaining(['江苏', '广东']))
+    expect(jsFacets.papers).toEqual(['2024年江苏省考申论A卷'])
+
+    expect(database.listQuestions({ subject: 'shenlun', region: '广东' }).map((q) => q.id)).toEqual(
+      ['e-gd']
+    )
+    const unlabeled = database.listQuestions({
+      subject: 'shenlun',
+      region: UNLABELED_REGION_FILTER
+    })
+    expect(unlabeled.some((q) => q.id === 'e-none')).toBe(true)
+    expect(unlabeled.some((q) => q.id === 'e-js')).toBe(false)
+
+    expect(database.listQuestions({ subject: 'shenlun', region: '北京' }).map((q) => q.id)).toEqual(
+      expect.arrayContaining(['e-bj1', 'e-bj2'])
+    )
+
+    // 轻量摘要列表（不含 material）与一键整理地区标签 + defaultRegion 设置
+    const summaries = database.listQuestionSummaries({ subject: 'shenlun', region: '北京' })
+    expect(summaries).toHaveLength(2)
+    expect('material' in summaries[0]!).toBe(false)
+    expect(summaries[0]!.stemPreview).toContain('题干-')
+
+    insertEssay('e-old', null, '2022年浙江省考申论')
+    const normalized = database.normalizeActiveVaultRegions()
+    expect(normalized.updated).toBeGreaterThanOrEqual(2) // e-bj2 ('北京市'->'北京') + e-old (null->'浙江')
+    expect(database.getQuestion('e-bj2')?.region).toBe('北京')
+    expect(database.getQuestion('e-old')?.region).toBe('浙江')
+
+    expect(database.saveAppSettings({ defaultRegion: '浙江' }).defaultRegion).toBe('浙江')
+  })
 })

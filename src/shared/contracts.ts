@@ -308,9 +308,23 @@ export interface QuestionFilter {
   limit?: number
 }
 
+export interface QuestionSummary {
+  id: string
+  subject: Subject
+  category: string
+  type: QuestionType
+  difficulty: Difficulty
+  source: string
+  year?: number
+  region?: string
+  paper?: string
+  stemPreview: string
+}
+
 export interface QuestionFacets {
   years: number[]
   regions: string[]
+  regionCounts?: Array<{ region: string; count: number }>
   papers: string[]
 }
 
@@ -742,6 +756,7 @@ export interface AppSettings {
   backupRetention: number
   examGoalName?: string
   examGoalDate?: string
+  defaultRegion?: string
 }
 
 export interface BootstrapData {
@@ -785,8 +800,11 @@ export type WorkbenchRequest =
   | { method: 'vault.snapshots'; params: { vaultId: string } }
   | { method: 'vault.rollback'; params: { snapshotId: string } }
   | { method: 'vault.search'; params: QuestionFilter }
+  | { method: 'vault.listSummary'; params: QuestionFilter }
+  | { method: 'vault.question'; params: { id: string } }
+  | { method: 'vault.normalizeRegions'; params?: undefined }
   | { method: 'vault.categories'; params?: { subject?: Subject } }
-  | { method: 'vault.facets'; params?: { subject?: Subject } }
+  | { method: 'vault.facets'; params?: { subject?: Subject; region?: string } }
   | { method: 'vault.asset'; params: { sourceFilePath: string; assetPath: string } }
   | { method: 'knowledgeBuilder.source.choose'; params?: undefined }
   | { method: 'knowledgeBuilder.source.scan'; params: { path: string } }

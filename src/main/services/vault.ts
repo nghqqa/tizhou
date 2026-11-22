@@ -11,6 +11,7 @@ import {
 } from 'node:fs'
 import { basename, dirname, extname, isAbsolute, relative, resolve } from 'node:path'
 import matter from 'gray-matter'
+import { extractRegionFromText, normalizeRegionName } from '../../shared/region'
 import type {
   Difficulty,
   KnowledgeDocument,
@@ -647,10 +648,15 @@ export class VaultService {
       1,
       Math.min(5, Number.isFinite(difficultyNumber) ? Math.round(difficultyNumber) : 2)
     ) as Difficulty
-    const region = normalizeText(data.region || data.area || data.province)
+    const rawRegion = normalizeText(data.region || data.area || data.province)
     const paper = normalizeText(data.paper || data.paperName || data.exam)
+    const source = normalizeText(data.source)
+    const region =
+      (rawRegion ? normalizeRegionName(rawRegion) : '') ||
+      extractRegionFromText(paper, source, relativePath) ||
+      ''
     const year = data.year && Number.isFinite(Number(data.year)) ? Number(data.year) : undefined
-    const stableSignature = `${subject}\n${category}\n${stem}\n${JSON.stringify(options)}\n${normalizeText(data.source)}\n${year ?? ''}\n${region}\n${paper}`
+    const stableSignature = `${subject}\n${category}\n${stem}\n${JSON.stringify(options)}\n${source}\n${year ?? ''}\n${rawRegion}\n${paper}`
     const aliases = asStringArray(data.aliases || data.alias)
     const explicitId = normalizeText(data.id || data.uid || aliases[0])
     return {

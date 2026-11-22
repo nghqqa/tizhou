@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   computeExamCountdown,
   extractSearchSnippet,
-  extractWordLimit
+  extractWordLimit,
+  formatMaterialSource
 } from '../src/renderer/src/services/study-helpers'
 
 describe('study-helpers（申论字数识别、正文检索、考试倒计时）', () => {
@@ -68,5 +69,14 @@ describe('study-helpers（申论字数识别、正文检索、考试倒计时）
     expect(computeExamCountdown('2026-02-31', base)).toBeNull()
     expect(computeExamCountdown('not-a-date', base)).toBeNull()
     expect(computeExamCountdown('', base)).toBeNull()
+  })
+
+  it('formatMaterialSource 清洗本地资料前缀与文件扩展名', () => {
+    expect(formatMaterialSource('本地资料/2027申论-专项提升夸夸刷.pdf')).toBe(
+      '2027申论-专项提升夸夸刷'
+    )
+    expect(formatMaterialSource('本地资料/kaogong-bank-20260907')).toBe('kaogong-bank-20260907')
+    expect(formatMaterialSource('题舟内置示例')).toBe('题舟内置示例')
+    expect(formatMaterialSource('')).toBe('')
   })
 })

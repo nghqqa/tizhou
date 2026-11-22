@@ -814,6 +814,7 @@ describe('knowledge builder direct mode', () => {
     expect(first.data.answer).toEqual([])
     expect(String(first.data.material)).toContain('社区基金')
     expect(first.data.year).toBe(2023)
+    expect(first.data.region).toBe('山东')
     expect(first.data.paper).toBe('山东B卷')
   }, 35_000)
 

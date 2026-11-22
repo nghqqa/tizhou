@@ -87,3 +87,33 @@ export function computeExamCountdown(
     status: daysLeft > 0 ? 'upcoming' : daysLeft === 0 ? 'today' : 'passed'
   }
 }
+
+/** 规范化展示教材/题目来源（去掉「本地资料/」前缀及常见文档后缀） */
+export function formatMaterialSource(source?: string): string {
+  const trimmed = source?.trim() ?? ''
+  if (!trimmed) return ''
+  const withoutPrefix = trimmed.replace(/^本地资料[\\/]+/, '')
+  const segments = withoutPrefix.split(/[\\/]+/).filter(Boolean)
+  const leaf = segments[segments.length - 1] ?? withoutPrefix
+  return leaf.replace(/\.(pdf|docx?|md|txt)$/i, '')
+}
+
+/** 读取已记忆的筛选地区（页内未单独选择时回退全局默认考区） */
+export function readStoredRegion(storageKey: string, fallbackRegion = ''): string {
+  try {
+    const stored = window.localStorage.getItem(storageKey)
+    return stored !== null ? stored : fallbackRegion
+  } catch {
+    return fallbackRegion
+  }
+}
+
+/** 持久化当前选择的筛选地区 */
+export function writeStoredRegion(storageKey: string, region: string): void {
+  try {
+    if (region) window.localStorage.setItem(storageKey, region)
+    else window.localStorage.removeItem(storageKey)
+  } catch {
+    /* 忽略受限环境下的 localStorage 写入失败 */
+  }
+}

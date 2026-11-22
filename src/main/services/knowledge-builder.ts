@@ -2295,6 +2295,7 @@ export class KnowledgeBuilderService {
               tags: [...new Set([...job.options.tags, ...(unit.chapter ? [unit.chapter] : [])])],
               sourceFile: book.relativePath,
               year: unit.year,
+              region: unit.region,
               paper: unit.paper,
               questionType: 'essay',
               difficulty: 3,

@@ -3,6 +3,12 @@ import { basename, join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { randomUUID } from 'node:crypto'
 import { gzipSync, gunzipSync } from 'node:zlib'
+import {
+  UNLABELED_REGION_FILTER,
+  expandRegionAliases,
+  extractRegionFromText,
+  normalizeRegionName
+} from '../../shared/region'
 import type {
   AiConversation,
   AiMessage,
@@ -25,6 +31,7 @@ import type {
   Question,
   QuestionFacets,
   QuestionLibraryItem,
+  QuestionSummary,
   QuestionUserMeta,
   ReportData,
   ReviewItem,
@@ -117,6 +124,7 @@ function numberValue(value: unknown): number {
 
 export class DatabaseService {
   private db: DatabaseSync
+  private facetsCache = new Map<string, QuestionFacets>()
 
   constructor(
     readonly databasePath: string,
@@ -195,6 +203,8 @@ export class DatabaseService {
       );
       CREATE INDEX IF NOT EXISTS idx_questions_subject_category ON questions(subject, category);
       CREATE INDEX IF NOT EXISTS idx_questions_vault ON questions(vault_id);
+      CREATE INDEX IF NOT EXISTS idx_questions_vault_subject_region_year ON questions(vault_id, subject, region, year);
+      CREATE INDEX IF NOT EXISTS idx_questions_vault_subject_paper ON questions(vault_id, subject, paper);
       CREATE TABLE IF NOT EXISTS documents (
         id TEXT PRIMARY KEY,
         vault_id TEXT NOT NULL,
@@ -423,6 +433,8 @@ export class DatabaseService {
     const rawGoalDate =
       typeof settings.examGoalDate === 'string' ? settings.examGoalDate.trim() : ''
     settings.examGoalDate = isValidCalendarDate(rawGoalDate) ? rawGoalDate : ''
+    settings.defaultRegion =
+      typeof settings.defaultRegion === 'string' ? settings.defaultRegion.trim().slice(0, 40) : ''
     this.setSetting('app_settings', settings)
     return settings
   }
@@ -475,6 +487,7 @@ export class DatabaseService {
       this.db.prepare('UPDATE vault_registry SET active=0').run()
       this.db.prepare('UPDATE vault_registry SET active=1 WHERE id=?').run(id)
     })
+    this.facetsCache.clear()
     return this.mapVault(row)
   }
 
@@ -627,7 +640,33 @@ export class DatabaseService {
         )
       }
     })
+    this.facetsCache.clear()
     return { added, updated, removed }
+  }
+
+  listQuestionSummaries(filter: QuestionListFilter = {}): QuestionSummary[] {
+    const { where, values } = this.buildQuestionFilter(filter)
+    const limit = Math.max(1, Math.min(5000, filter.limit ?? 500))
+    const rows = this.db
+      .prepare(
+        `SELECT q.id, q.subject, q.category, q.type, q.difficulty, q.source,
+                q.year, q.region, q.paper, substr(q.stem, 1, 160) AS stem_preview
+         FROM questions q JOIN vault_registry v ON v.id = q.vault_id
+         WHERE ${where.join(' AND ')} ORDER BY q.year DESC, q.category, q.id LIMIT ?`
+      )
+      .all(...values, limit) as Row[]
+    return rows.map((row) => ({
+      id: String(row.id),
+      subject: String(row.subject) as Question['subject'],
+      category: String(row.category),
+      type: String(row.type) as Question['type'],
+      difficulty: numberValue(row.difficulty) as Question['difficulty'],
+      source: String(row.source),
+      year: row.year === null || row.year === undefined ? undefined : numberValue(row.year),
+      region: row.region ? String(row.region) : undefined,
+      paper: row.paper ? String(row.paper) : undefined,
+      stemPreview: String(row.stem_preview ?? '')
+    }))
   }
 
   listQuestions(filter: QuestionListFilter = {}): Question[] {
@@ -701,8 +740,15 @@ export class DatabaseService {
       values.push(filter.year)
     }
     if (filter.region?.trim()) {
-      where.push('q.region = ?')
-      values.push(filter.region.trim())
+      const regionValue = filter.region.trim()
+      if (regionValue === UNLABELED_REGION_FILTER) {
+        where.push("(q.region IS NULL OR q.region = '')")
+      } else {
+        const aliases = expandRegionAliases(regionValue)
+        const placeholders = aliases.map(() => '?').join(', ')
+        where.push(`q.region IN (${placeholders})`)
+        values.push(...aliases)
+      }
     }
     if (filter.paper?.trim()) {
       where.push('q.paper = ?')
@@ -1124,25 +1170,96 @@ export class DatabaseService {
     return rows.map((row) => ({ name: String(row.category), count: numberValue(row.count) }))
   }
 
-  getQuestionFacets(subject?: string): QuestionFacets {
+  getQuestionFacets(subject?: string, region?: string): QuestionFacets {
+    const cacheKey = `${subject ?? ''}::${region?.trim() ?? ''}`
+    const cached = this.facetsCache.get(cacheKey)
+    if (cached) return cached
+
     const subjectClause = subject ? 'AND q.subject=?' : ''
-    const parameters = subject ? [subject] : []
-    const read = (column: 'year' | 'region' | 'paper'): Array<string | number> =>
+    const baseParameters = subject ? [subject] : []
+    const read = (
+      column: 'year' | 'paper',
+      extraClause = '',
+      extraParams: SqlValue[] = []
+    ): Array<string | number> =>
       (
         this.db
           .prepare(
             `SELECT DISTINCT q.${column} AS value FROM questions q
              JOIN vault_registry v ON v.id=q.vault_id
-             WHERE v.active=1 AND q.${column} IS NOT NULL AND q.${column} != '' ${subjectClause}
+             WHERE v.active=1 AND q.${column} IS NOT NULL AND q.${column} != '' ${subjectClause} ${extraClause}
              ORDER BY q.${column} DESC`
           )
-          .all(...parameters) as Row[]
+          .all(...baseParameters, ...extraParams) as Row[]
       ).map((row) => (column === 'year' ? numberValue(row.value) : String(row.value)))
-    return {
-      years: read('year') as number[],
-      regions: read('region') as string[],
-      papers: read('paper') as string[]
+
+    // 聚合并归并同义地区（例如旧库中的「北京」与「北京市」）
+    const rawRegionRows = this.db
+      .prepare(
+        `SELECT q.region AS value, COUNT(*) AS count FROM questions q
+         JOIN vault_registry v ON v.id=q.vault_id
+         WHERE v.active=1 AND q.region IS NOT NULL AND q.region != '' ${subjectClause}
+         GROUP BY q.region`
+      )
+      .all(...baseParameters) as Row[]
+    const mergedCounts = new Map<string, number>()
+    for (const row of rawRegionRows) {
+      const normalized = normalizeRegionName(String(row.value))
+      if (!normalized) continue
+      mergedCounts.set(normalized, (mergedCounts.get(normalized) ?? 0) + numberValue(row.count))
     }
+    const regionCounts = [...mergedCounts.entries()]
+      .map(([name, count]) => ({ region: name, count }))
+      .sort((a, b) => b.count - a.count || a.region.localeCompare(b.region, 'zh-CN'))
+
+    const trimmedRegion = region?.trim()
+    let paperRegionClause = ''
+    let paperRegionParams: SqlValue[] = []
+    if (trimmedRegion === UNLABELED_REGION_FILTER) {
+      paperRegionClause = "AND (q.region IS NULL OR q.region = '')"
+    } else if (trimmedRegion) {
+      const aliases = expandRegionAliases(trimmedRegion)
+      paperRegionClause = `AND q.region IN (${aliases.map(() => '?').join(', ')})`
+      paperRegionParams = aliases
+    }
+    const result: QuestionFacets = {
+      years: read('year') as number[],
+      regions: regionCounts.map((item) => item.region),
+      regionCounts,
+      papers: read('paper', paperRegionClause, paperRegionParams) as string[]
+    }
+    this.facetsCache.set(cacheKey, result)
+    return result
+  }
+
+  /** 对当前活动题库批量规整/补齐地区标签（不改文件、不改题目 ID） */
+  normalizeActiveVaultRegions(): { updated: number } {
+    const active = this.getActiveVault()
+    if (!active) return { updated: 0 }
+    const rows = this.db
+      .prepare('SELECT id, region, paper, source, file_path FROM questions WHERE vault_id = ?')
+      .all(active.id) as Row[]
+    const updateStmt = this.db.prepare('UPDATE questions SET region = ? WHERE id = ?')
+    let updated = 0
+    this.transaction(() => {
+      for (const row of rows) {
+        const current = row.region ? String(row.region).trim() : ''
+        const normalized =
+          (current ? normalizeRegionName(current) : '') ||
+          extractRegionFromText(
+            row.paper ? String(row.paper) : undefined,
+            row.source ? String(row.source) : undefined,
+            row.file_path ? String(row.file_path) : undefined
+          ) ||
+          ''
+        if (normalized && normalized !== current) {
+          updateStmt.run(normalized, String(row.id))
+          updated += 1
+        }
+      }
+    })
+    this.facetsCache.clear()
+    return { updated }
   }
 
   findSimilarQuestions(questionId: string, limit = 5): Question[] {

@@ -24,9 +24,11 @@ import { useNavigate } from 'react-router-dom'
 import { formatDate, formatFullDate, invoke } from '../api'
 import { MarkdownContent } from '../components/MarkdownContent'
 import { OptionContent } from '../components/OptionContent'
+import { RegionCascadePicker } from '../components/RegionCascadePicker'
 import { ReadingTypographyBar, useReadingTypography } from '../components/ReadingTypographyControl'
 import { EmptyState, ErrorState, LoadingState, PageHeader, Section } from '../components/ui'
 import { EssaySaveController, ExamAnswerSaveController } from '../services/exam-essay-save'
+import { readStoredRegion, writeStoredRegion } from '../services/study-helpers'
 import { useAppStore } from '../store'
 
 const EXAM_UNCERTAIN_PREFIX = 'tizhou:exam-uncertain:'
@@ -59,7 +61,9 @@ export function ExamHomePage(): React.JSX.Element {
   const [questionCount, setQuestionCount] = useState(20)
   const [facets, setFacets] = useState<QuestionFacets>({ years: [], regions: [], papers: [] })
   const [year, setYear] = useState('')
-  const [region, setRegion] = useState('')
+  const [region, setRegion] = useState(() =>
+    readStoredRegion('tizhou:exam-region', data.settings.defaultRegion ?? '')
+  )
   const [paper, setPaper] = useState('')
   const [history, setHistory] = useState<ExamSession[]>()
   const [error, setError] = useState('')
@@ -73,13 +77,24 @@ export function ExamHomePage(): React.JSX.Element {
         pruneStaleExamUncertainKeys(items.find((item) => item.status === 'active')?.id)
       })
       .catch(() => setHistory([]))
-    void invoke<QuestionFacets>({ method: 'vault.facets', params: { subject: 'xingce' } })
-      .then(setFacets)
-      .catch(() => setFacets({ years: [], regions: [], papers: [] }))
     void invoke<Array<{ paper: string; count: number; year?: number }>>({ method: 'exam.papers' })
       .then(setPapers)
       .catch(() => setPapers([]))
   }, [])
+
+  useEffect(() => {
+    void invoke<QuestionFacets>({
+      method: 'vault.facets',
+      params: { subject: 'xingce', region: region || undefined }
+    })
+      .then((nextFacets) => {
+        setFacets(nextFacets)
+        setPaper((currentPaper) =>
+          currentPaper && !nextFacets.papers.includes(currentPaper) ? '' : currentPaper
+        )
+      })
+      .catch(() => setFacets({ years: [], regions: [], papers: [] }))
+  }, [region])
 
   async function createPaperExam(): Promise<void> {
     if (!paperChoice) return
@@ -167,30 +182,30 @@ export function ExamHomePage(): React.JSX.Element {
                 }
               />
             </Field>
-            {facets.years.length > 0 && (
-              <Field label="年份">
-                <Select value={year} onChange={(_, dataValue) => setYear(dataValue.value)}>
-                  <option value="">全部年份</option>
-                  {facets.years.map((item) => (
-                    <option key={item} value={item}>
-                      {item}
-                    </option>
-                  ))}
-                </Select>
-              </Field>
-            )}
-            {facets.regions.length > 0 && (
-              <Field label="地区">
-                <Select value={region} onChange={(_, dataValue) => setRegion(dataValue.value)}>
-                  <option value="">全部地区</option>
-                  {facets.regions.map((item) => (
-                    <option key={item} value={item}>
-                      {item}
-                    </option>
-                  ))}
-                </Select>
-              </Field>
-            )}
+            <Field label="年份">
+              <Select value={year} onChange={(_, dataValue) => setYear(dataValue.value)}>
+                <option value="">全部年份</option>
+                {facets.years.map((item) => (
+                  <option key={item} value={item}>
+                    {item}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="地区 / 分类">
+              <RegionCascadePicker
+                regions={facets.regions}
+                regionCounts={facets.regionCounts}
+                value={region}
+                papers={facets.papers}
+                selectedPaper={paper}
+                onChange={(nextRegion, nextPaper) => {
+                  setRegion(nextRegion)
+                  writeStoredRegion('tizhou:exam-region', nextRegion)
+                  if (nextPaper !== undefined) setPaper(nextPaper)
+                }}
+              />
+            </Field>
             {facets.papers.length > 0 && (
               <Field className="full" label="指定试卷">
                 <Select value={paper} onChange={(_, dataValue) => setPaper(dataValue.value)}>

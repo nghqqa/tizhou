@@ -376,10 +376,16 @@ async function initialize(): Promise<void> {
       }
       case 'vault.search':
         return database!.listQuestions(request.params)
+      case 'vault.listSummary':
+        return database!.listQuestionSummaries(request.params)
+      case 'vault.question':
+        return database!.getQuestion(request.params.id)
+      case 'vault.normalizeRegions':
+        return database!.normalizeActiveVaultRegions()
       case 'vault.categories':
         return database!.listCategories(request.params?.subject)
       case 'vault.facets':
-        return database!.getQuestionFacets(request.params?.subject)
+        return database!.getQuestionFacets(request.params?.subject, request.params?.region)
       case 'vault.asset': {
         try {
           return vaults.readAssetDataUrl(request.params.sourceFilePath, request.params.assetPath)

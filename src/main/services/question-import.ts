@@ -2,6 +2,7 @@
 // 版式假设来自实测的花生/四海/超格系题本：套标题 + 「N. 题干 + A-D 选项」+ 解析册【参考答案】标记块，
 // 或书尾「第N篇 + 1-5:BBDBC」分组答案页。
 import { createHash } from 'node:crypto'
+import { extractRegionFromText } from '../../shared/region'
 import type { PageManifest } from './source-evidence'
 import {
   STRUCTURAL_NOISE_LINE,
@@ -666,6 +667,7 @@ export interface ParsedEssayUnit {
   /** 资料正文 */
   material: string
   year?: number
+  region?: string
   paper?: string
   /** 单元内的参考答案/要点段（现版教材通常没有） */
   explanation: string
@@ -860,6 +862,8 @@ function buildEssayUnit(entry: EssayUnitEntry, seq: number): ParsedEssayUnit | u
   // 仅凭长标题放行会让目录幽灵以「标题=题干、零材料」形态污染审核列表。
   if (material.replace(/\s+/g, '').length < 40) return undefined
 
+  const originRegion = extractRegionFromText(originPaper, entry.title, entry.chapter)
+
   return {
     seq,
     chapter: entry.chapter,
@@ -867,6 +871,7 @@ function buildEssayUnit(entry: EssayUnitEntry, seq: number): ParsedEssayUnit | u
     stem,
     material,
     ...(originYear && Number.isFinite(originYear) ? { year: originYear } : {}),
+    ...(originRegion ? { region: originRegion } : {}),
     ...(originPaper ? { paper: originPaper } : {}),
     explanation: answerIndex >= 0 ? joinProse(body.slice(answerIndex + 1)).trim() : '',
     lineStart,

@@ -148,6 +148,7 @@ describe('VaultService', () => {
     expect(database.getQuestionFacets('xingce')).toEqual({
       years: [2025],
       regions: ['上海'],
+      regionCounts: [{ region: '上海', count: 1 }],
       papers: ['2025 上海测试卷']
     })
     expect(vaults.readAssetDataUrl(question.filePath!, 'image.png')).toMatch(

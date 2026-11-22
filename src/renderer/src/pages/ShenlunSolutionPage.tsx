@@ -6,12 +6,21 @@ import type {
   ConstructedAttemptRecord,
   ConstructedDraft,
   ConstructedEvaluation,
-  Question
+  Question,
+  QuestionFacets,
+  QuestionSummary
 } from '@shared/contracts'
 import { formatFullDate, invoke } from '../api'
 import { MarkdownContent } from '../components/MarkdownContent'
+import { RegionCascadePicker } from '../components/RegionCascadePicker'
 import { EmptyState, ErrorState, LoadingState, PageHeader, Section } from '../components/ui'
-import { extractWordLimit } from '../services/study-helpers'
+import {
+  extractWordLimit,
+  formatMaterialSource,
+  readStoredRegion,
+  writeStoredRegion
+} from '../services/study-helpers'
+import { useAppStore } from '../store'
 
 // 下拉预览的优雅截断：压缩空白后在限长内回退到最近的句读，
 // 没有句读可退时才硬切，始终以省略号提示有下文
@@ -31,8 +40,15 @@ function stemPreview(stem: string, max = 60): string {
 export function ShenlunSolutionPage(): React.JSX.Element {
   const [searchParams, setSearchParams] = useSearchParams()
   const requestedPromptId = searchParams.get('promptId') ?? ''
-  const [prompts, setPrompts] = useState<Question[]>()
+  const defaultRegion = useAppStore((state) => state.data?.settings.defaultRegion ?? '')
+  const [prompts, setPrompts] = useState<QuestionSummary[]>()
   const [promptId, setPromptId] = useState(requestedPromptId)
+  const [currentDetail, setCurrentDetail] = useState<Question | undefined>()
+  const [region, setRegion] = useState(() =>
+    requestedPromptId ? '' : readStoredRegion('tizhou:shenlun-region', defaultRegion)
+  )
+  const [regions, setRegions] = useState<string[]>([])
+  const [regionCounts, setRegionCounts] = useState<Array<{ region: string; count: number }>>([])
   const [keyword, setKeyword] = useState('')
   const [onlyUnattempted, setOnlyUnattempted] = useState(false)
   const [officialTypography, setOfficialTypography] = useState<boolean>(() => {
@@ -56,6 +72,7 @@ export function ShenlunSolutionPage(): React.JSX.Element {
   const activePromptIdRef = useRef(promptId)
   activePromptIdRef.current = promptId
   const pendingDraftRef = useRef<{ promptId: string; title: string; content: string } | null>(null)
+  const questionCacheRef = useRef(new Map<string, Question>())
 
   // 按题汇总已评估状态（最新得分与提交次数）
   const statusByPrompt = useMemo(() => {
@@ -85,12 +102,13 @@ export function ShenlunSolutionPage(): React.JSX.Element {
     () => (visiblePrompts ? visiblePrompts.findIndex((prompt) => prompt.id === promptId) : -1),
     [visiblePrompts, promptId]
   )
-  const current = useMemo(
+  const currentSummary = useMemo(
     () =>
       (visiblePrompts && currentIndex >= 0 ? visiblePrompts[currentIndex] : undefined) ??
       prompts?.find((prompt) => prompt.id === promptId),
     [visiblePrompts, currentIndex, prompts, promptId]
   )
+  const current = currentDetail?.id === promptId ? currentDetail : undefined
 
   // 加载全局申论评估记录（用于标注每题状态与「只看未做」筛选）
   async function refreshAllHistory(): Promise<void> {
@@ -107,6 +125,18 @@ export function ShenlunSolutionPage(): React.JSX.Element {
 
   useEffect(() => {
     void refreshAllHistory()
+    void invoke<QuestionFacets>({
+      method: 'vault.facets',
+      params: { subject: 'shenlun' }
+    })
+      .then((facets) => {
+        setRegions(facets.regions)
+        setRegionCounts(facets.regionCounts ?? [])
+      })
+      .catch(() => {
+        setRegions([])
+        setRegionCounts([])
+      })
   }, [])
 
   useEffect(() => {
@@ -124,21 +154,23 @@ export function ShenlunSolutionPage(): React.JSX.Element {
   useEffect(() => {
     if (!requestedPromptId || evaluating) return
     void flushPendingDraft(false).then(() => {
+      setRegion('')
       setOnlyUnattempted(false)
       setPromptId(requestedPromptId)
     })
   }, [requestedPromptId, evaluating])
 
-  // 关键词搜索（防抖）：题目多时不再静默截断在前 200 题，可按关键词定位目标题
+  // 关键词搜索（防抖）：仅拉取轻量摘要，不一次性传递几百篇长材料
   useEffect(() => {
     let cancelled = false
     const timer = window.setTimeout(() => {
-      void invoke<Question[]>({
-        method: 'vault.search',
+      void invoke<QuestionSummary[]>({
+        method: 'vault.listSummary',
         params: {
           subject: 'shenlun',
           type: 'essay',
           limit: 500,
+          region: region || undefined,
           query: keyword.trim() || undefined
         }
       })
@@ -166,7 +198,7 @@ export function ShenlunSolutionPage(): React.JSX.Element {
       cancelled = true
       window.clearTimeout(timer)
     }
-  }, [keyword, requestedPromptId])
+  }, [keyword, region, requestedPromptId])
 
   // 开启「只看未做」导致当前题不在可见列表中时，先落盘草稿再自动切到第一道未做题
   useEffect(() => {
@@ -181,16 +213,27 @@ export function ShenlunSolutionPage(): React.JSX.Element {
     }
   }, [visiblePrompts, promptId, evaluating])
 
-  // 切换题目时加载草稿与本题历次评估记录（自动回显最近一次评估）
+  // 切换题目时按需加载完整题目材料、草稿与本题历次评估记录
   useEffect(() => {
-    if (!promptId) return
+    if (!promptId) {
+      setCurrentDetail(undefined)
+      return
+    }
     let cancelled = false
+    const cachedQuestion = questionCacheRef.current.get(promptId)
+    if (cachedQuestion) setCurrentDetail(cachedQuestion)
     setContent('')
     setEvaluation(undefined)
     setSelectedHistoryId('')
     setPromptHistory([])
     setExpandedHistoryIds({})
     void Promise.all([
+      cachedQuestion
+        ? Promise.resolve(cachedQuestion)
+        : invoke<Question | undefined>({
+            method: 'vault.question',
+            params: { id: promptId }
+          }),
       invoke<ConstructedDraft | undefined>({
         method: 'draft.get',
         params: { id: `draft-${promptId}` }
@@ -199,8 +242,12 @@ export function ShenlunSolutionPage(): React.JSX.Element {
         method: 'constructed.history',
         params: { promptId, limit: 50 }
       }).catch(() => [] as ConstructedAttemptRecord[])
-    ]).then(([draft, history]) => {
+    ]).then(([questionDetail, draft, history]) => {
       if (cancelled) return
+      if (questionDetail) {
+        questionCacheRef.current.set(promptId, questionDetail)
+        setCurrentDetail(questionDetail)
+      }
       setContent(draft?.content ?? '')
       setPromptHistory(history)
       if (history.length > 0) {
@@ -399,6 +446,37 @@ export function ShenlunSolutionPage(): React.JSX.Element {
       {error && <ErrorState message={error} />}
       <Section>
         <div className="form-grid">
+          <Field label="地区 / 分类">
+            <RegionCascadePicker
+              regions={regions}
+              regionCounts={regionCounts}
+              value={region}
+              disabled={evaluating}
+              items={(visiblePrompts ?? []).map((prompt) => {
+                const status = statusByPrompt.get(prompt.id)
+                const metaParts = [
+                  prompt.region,
+                  prompt.year ? `${prompt.year}年` : '',
+                  prompt.category,
+                  prompt.source ? formatMaterialSource(prompt.source) : '',
+                  status ? `已评 ${status.latestScore} 分` : ''
+                ].filter(Boolean)
+                return {
+                  id: prompt.id,
+                  label: stemPreview(prompt.stemPreview, 42),
+                  meta: metaParts.join(' · ')
+                }
+              })}
+              selectedItemId={promptId}
+              onChange={(nextRegion, _paper, nextPromptId) => {
+                if (nextRegion !== region) {
+                  setRegion(nextRegion)
+                  writeStoredRegion('tizhou:shenlun-region', nextRegion)
+                }
+                if (nextPromptId) void switchPrompt(nextPromptId)
+              }}
+            />
+          </Field>
           <Field className="grow" label="搜索题目">
             <Input
               value={keyword}
@@ -416,9 +494,11 @@ export function ShenlunSolutionPage(): React.JSX.Element {
               {(visiblePrompts ?? []).map((prompt) => {
                 const status = statusByPrompt.get(prompt.id)
                 const badge = status ? ` [已评 ${status.latestScore} 分]` : ''
+                const regionPrefix = prompt.region ? `[${prompt.region}] ` : ''
                 return (
                   <option value={prompt.id} key={prompt.id}>
-                    {prompt.category}：{stemPreview(prompt.stem)}
+                    {regionPrefix}
+                    {prompt.category}：{stemPreview(prompt.stemPreview)}
                     {badge}
                   </option>
                 )
@@ -428,8 +508,26 @@ export function ShenlunSolutionPage(): React.JSX.Element {
         </div>
         <div className="solution-nav-bar">
           <div className="question-meta">
-            {current && <span className="pill">{current.category}</span>}
-            {current && <span className="pill">难度 {current.difficulty}</span>}
+            {(current?.region ?? currentSummary?.region) && (
+              <span className="pill">{current?.region ?? currentSummary?.region}</span>
+            )}
+            {(current?.year ?? currentSummary?.year) && (
+              <span className="pill">{current?.year ?? currentSummary?.year}</span>
+            )}
+            {(current?.paper ?? currentSummary?.paper) && (
+              <span className="pill">{current?.paper ?? currentSummary?.paper}</span>
+            )}
+            {(current?.source ?? currentSummary?.source) && (
+              <span className="pill" title={current?.source ?? currentSummary?.source}>
+                教材来源：{formatMaterialSource(current?.source ?? currentSummary?.source)}
+              </span>
+            )}
+            {(current?.category ?? currentSummary?.category) && (
+              <span className="pill">{current?.category ?? currentSummary?.category}</span>
+            )}
+            {(current ?? currentSummary) && (
+              <span className="pill">难度 {(current ?? currentSummary)!.difficulty}</span>
+            )}
             {(() => {
               const wordCount = content.replace(/\s/g, '').length
               const limit = current ? extractWordLimit(current.stem) : null

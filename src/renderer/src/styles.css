@@ -3266,3 +3266,194 @@ a {
     max-height: none;
   }
 }
+
+/* ── 地区多级分类选择器（锚定悬浮面板，不遮罩底层页面） ── */
+.region-picker-wrap {
+  position: relative;
+  display: block;
+  width: 100%;
+}
+.region-picker-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 176px;
+  height: 32px;
+  padding: 0 11px;
+  border-radius: var(--tz-radius);
+  border: 1px solid var(--tz-border-strong);
+  background: var(--tz-surface);
+  color: var(--tz-ink);
+  font-family: var(--tz-font-ui);
+  font-size: var(--tz-text-sm);
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    background-color 0.15s ease;
+}
+.region-picker-trigger:hover:not(:disabled),
+.region-picker-trigger.is-open {
+  border-color: var(--tz-vermillion-border);
+  background: var(--tz-surface-2);
+}
+.region-picker-trigger.is-selected {
+  border-color: var(--tz-vermillion-border);
+  background: var(--tz-vermillion-bg);
+  color: var(--tz-vermillion);
+  font-weight: 500;
+}
+.region-picker-trigger:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.region-picker-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+.region-picker-caret {
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
+.region-cascade-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 1200;
+  width: min(720px, calc(100vw - 64px));
+  background: var(--tz-surface);
+  border: 1px solid var(--tz-border-strong);
+  border-radius: var(--tz-radius-lg);
+  box-shadow: 0 12px 32px rgba(40, 37, 32, 0.16);
+  overflow: hidden;
+}
+.region-cascade-popover.is-align-right {
+  left: auto;
+  right: 0;
+}
+
+.region-cascade-grid {
+  display: grid;
+  grid-template-columns: 165px 175px minmax(0, 1fr);
+  height: 360px;
+  background: var(--tz-surface);
+}
+
+.region-cascade-col {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px;
+  overflow-y: auto;
+  border-right: 1px solid var(--tz-border);
+  background: var(--tz-surface-2);
+}
+.region-cascade-col:nth-child(2) {
+  background: var(--tz-surface);
+}
+.region-cascade-col:last-child {
+  border-right: none;
+  background: var(--tz-surface);
+}
+
+.region-cascade-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: var(--tz-radius);
+  background: transparent;
+  color: var(--tz-ink);
+  font-family: var(--tz-font-ui);
+  font-size: var(--tz-text-sm);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background-color 0.12s ease,
+    color 0.12s ease;
+}
+.region-cascade-option:hover {
+  background: var(--tz-surface-3);
+}
+.region-cascade-option.is-active {
+  background: var(--tz-vermillion-bg);
+  color: var(--tz-vermillion);
+  font-weight: 600;
+}
+.region-cascade-option.is-summary {
+  margin-bottom: 4px;
+  border: 1px dashed var(--tz-vermillion-border);
+  background: var(--tz-vermillion-bg);
+  color: var(--tz-vermillion);
+  font-weight: 500;
+}
+.region-cascade-count {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--tz-surface);
+  color: var(--tz-ink-3);
+}
+.region-cascade-arrow {
+  flex-shrink: 0;
+  opacity: 0.6;
+}
+.region-cascade-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+}
+.region-cascade-region-count {
+  font-size: 11px;
+  color: var(--tz-ink-3);
+  font-variant-numeric: tabular-nums;
+}
+.region-cascade-option.is-active .region-cascade-region-count {
+  color: var(--tz-vermillion);
+}
+.region-cascade-item-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.region-cascade-item-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.region-cascade-item-meta {
+  font-size: 11px;
+  color: var(--tz-ink-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.region-cascade-empty {
+  padding: 20px 12px;
+  font-size: var(--tz-text-sm);
+  color: var(--tz-ink-3);
+  text-align: center;
+}
+
+@media (max-width: 680px) {
+  .region-cascade-grid {
+    grid-template-columns: 1fr;
+    height: auto;
+    max-height: 62vh;
+  }
+  .region-cascade-col {
+    border-right: none;
+    border-bottom: 1px solid var(--tz-border);
+    max-height: 150px;
+  }
+}

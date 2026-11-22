@@ -41,7 +41,13 @@ import { formatDate, invoke } from '../api'
 import { MarkdownContent } from '../components/MarkdownContent'
 import { OptionContent } from '../components/OptionContent'
 import { ReadingTypographyBar, useReadingTypography } from '../components/ReadingTypographyControl'
+import { RegionCascadePicker } from '../components/RegionCascadePicker'
 import { EmptyState, ErrorState, LoadingState, PageHeader, Section } from '../components/ui'
+import {
+  formatMaterialSource,
+  readStoredRegion,
+  writeStoredRegion
+} from '../services/study-helpers'
 import { useAppStore } from '../store'
 
 interface Category {
@@ -111,12 +117,15 @@ function Trainer({
   const refreshDashboard = useAppStore((state) => state.refreshDashboard)
   const showToast = useAppStore((state) => state.showToast)
   const ai = useAppStore((state) => state.data!.ai)
+  const defaultRegion = useAppStore((state) => state.data?.settings.defaultRegion ?? '')
   const [categories, setCategories] = useState<Category[]>([])
   const [facets, setFacets] = useState<QuestionFacets>({ years: [], regions: [], papers: [] })
   const [subject, setSubject] = useState<'' | Subject>(initial?.subject ?? 'xingce')
   const [category, setCategory] = useState(initial?.category ?? '')
   const [year, setYear] = useState('')
-  const [region, setRegion] = useState('')
+  const [region, setRegion] = useState(() =>
+    review ? '' : readStoredRegion('tizhou:practice-region', defaultRegion)
+  )
   const [paper, setPaper] = useState('')
   const [difficulty, setDifficulty] = useState('')
   const [keyword, setKeyword] = useState('')
@@ -183,11 +192,16 @@ function Trainer({
       .catch(() => setCategories([]))
     void invoke<QuestionFacets>({
       method: 'vault.facets',
-      params: { subject: review ? undefined : subjectFilter }
+      params: { subject: review ? undefined : subjectFilter, region: region || undefined }
     })
-      .then(setFacets)
+      .then((nextFacets) => {
+        setFacets(nextFacets)
+        setPaper((currentPaper) =>
+          currentPaper && !nextFacets.papers.includes(currentPaper) ? '' : currentPaper
+        )
+      })
       .catch(() => setFacets({ years: [], regions: [], papers: [] }))
-  }, [review, subject])
+  }, [review, subject, region])
 
   // 会话恢复只在挂载时查一次；若带 questionId 或 resumeActive 则按需直达训练
   useEffect(() => {
@@ -864,30 +878,30 @@ function Trainer({
               placeholder="按题干、解析或标签搜索"
             />
           </Field>
-          {facets.years.length > 0 && (
-            <Field label="年份">
-              <Select value={year} onChange={(_, data) => setYear(data.value)}>
-                <option value="">全部年份</option>
-                {facets.years.map((item) => (
-                  <option key={item} value={item}>
-                    {item}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-          )}
-          {facets.regions.length > 0 && (
-            <Field label="地区">
-              <Select value={region} onChange={(_, data) => setRegion(data.value)}>
-                <option value="">全部地区</option>
-                {facets.regions.map((item) => (
-                  <option key={item} value={item}>
-                    {item}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-          )}
+          <Field label="年份">
+            <Select value={year} onChange={(_, data) => setYear(data.value)}>
+              <option value="">全部年份</option>
+              {facets.years.map((item) => (
+                <option key={item} value={item}>
+                  {item}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="地区 / 分类">
+            <RegionCascadePicker
+              regions={facets.regions}
+              regionCounts={facets.regionCounts}
+              value={region}
+              papers={facets.papers}
+              selectedPaper={paper}
+              onChange={(nextRegion, nextPaper) => {
+                setRegion(nextRegion)
+                if (!review) writeStoredRegion('tizhou:practice-region', nextRegion)
+                if (nextPaper !== undefined) setPaper(nextPaper)
+              }}
+            />
+          </Field>
           {facets.papers.length > 0 && (
             <Field className="full" label="试卷">
               <Select value={paper} onChange={(_, data) => setPaper(data.value)}>
@@ -993,7 +1007,9 @@ function Trainer({
                     ? '判断题'
                     : '主观题'}
             </span>
-            <span className="pill">{current.source}</span>
+            <span className="pill" title={current.source}>
+              教材来源：{formatMaterialSource(current.source)}
+            </span>
             {current.year && <span className="pill">{current.year}</span>}
             {current.region && <span className="pill">{current.region}</span>}
             {current.paper && <span className="pill">{current.paper}</span>}
