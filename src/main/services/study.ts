@@ -8,6 +8,7 @@ import type {
   Question
 } from '../../shared/contracts'
 import { FEATURE_PROMPTS, taskDataEnvelope } from '../../shared/prompts'
+import { classifyShenlunType } from '../../shared/shenlun'
 import { AiService } from './ai'
 import { DatabaseService } from './database'
 
@@ -250,6 +251,13 @@ export class StudyService {
     const config = this.ai.getConfig()
     let evaluation: ConstructedEvaluation | undefined
     if (config.hasApiKey || config.provider === 'ollama' || config.provider === 'lmstudio') {
+      const stemText = prompt?.stem ?? input.title
+      const questionType = classifyShenlunType(prompt?.category, stemText)
+      const actualWordCount = content.replace(/\s/g, '').length
+      const explanationText =
+        prompt?.explanation && !prompt.explanation.startsWith('暂无参考答案')
+          ? prompt.explanation
+          : ''
       try {
         const result = await this.ai.ask({
           purpose: 'evaluate',
@@ -262,10 +270,12 @@ export class StudyService {
               role: 'user',
               content: taskDataEnvelope('申论作答评估输入', {
                 title: input.title,
-                prompt: prompt?.stem ?? input.title,
+                questionType,
+                actualWordCount,
+                prompt: stemText,
                 material: prompt?.material ?? '',
                 referencePoints: prompt?.answer ?? [],
-                referenceExplanation: prompt?.explanation ?? '',
+                referenceExplanation: explanationText,
                 studentAnswer: content
               })
             }
