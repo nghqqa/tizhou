@@ -3,6 +3,7 @@
 // 或书尾「第N篇 + 1-5:BBDBC」分组答案页。
 import { createHash } from 'node:crypto'
 import { extractRegionFromText } from '../../shared/region'
+import { classifyShenlunType } from '../../shared/shenlun'
 import type { PageManifest } from './source-evidence'
 import {
   STRUCTURAL_NOISE_LINE,
@@ -866,7 +867,7 @@ function buildEssayUnit(entry: EssayUnitEntry, seq: number): ParsedEssayUnit | u
 
   return {
     seq,
-    chapter: entry.chapter,
+    chapter: entry.chapter || classifyShenlunType('', stem),
     title: entry.title,
     stem,
     material,

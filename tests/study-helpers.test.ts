@@ -79,4 +79,34 @@ describe('study-helpers（申论字数识别、正文检索、考试倒计时）
     expect(formatMaterialSource('题舟内置示例')).toBe('题舟内置示例')
     expect(formatMaterialSource('')).toBe('')
   })
+
+  it('classifyShenlunType 准确归类单一题/综合题/公文题/作文题', async () => {
+    const { classifyShenlunType } = await import('../src/shared/shenlun')
+    expect(classifyShenlunType('申论-归纳概括', '概括做法')).toBe('单一题')
+    expect(classifyShenlunType('申论-提出对策', '提出建议')).toBe('单一题')
+    expect(classifyShenlunType('申论-综合分析', '谈谈理解')).toBe('综合题')
+    expect(classifyShenlunType('申论-贯彻执行', '写一份发言稿')).toBe('公文题')
+    expect(classifyShenlunType('应用文', '写一封公开信')).toBe('公文题')
+    expect(classifyShenlunType('申论-大作文', '写一篇文章')).toBe('作文题')
+
+    // 书名或默认兜底分类时按题干特征自动识别
+    expect(
+      classifyShenlunType(
+        '申论-夸夸刷申论',
+        '请结合给定资料，以“绿色发展”为主题，自拟题目写一篇文章，800—1000字。'
+      )
+    ).toBe('作文题')
+    expect(
+      classifyShenlunType(
+        '申论综合',
+        '假如你是某市商务局工作人员，请起草一份关于夜经济发展的倡议书。'
+      )
+    ).toBe('公文题')
+    expect(
+      classifyShenlunType('申论-酷酷刷申论', '结合给定资料，谈谈你对“电力自由”这句话的理解。')
+    ).toBe('综合题')
+    expect(classifyShenlunType('申论综合', '根据给定资料2，概括W市社区治理的主要做法。')).toBe(
+      '单一题'
+    )
+  })
 })

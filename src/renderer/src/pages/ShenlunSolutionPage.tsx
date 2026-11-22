@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Button, Field, Input, Select, Spinner, Tab, TabList } from '@fluentui/react-components'
+import { Button, Field, Input, Spinner, Tab, TabList } from '@fluentui/react-components'
 import { ArrowLeftIcon, ArrowRightIcon, FloppyDiskIcon, SparkleIcon } from '@phosphor-icons/react'
 import { useSearchParams } from 'react-router-dom'
 import type {
@@ -10,9 +10,15 @@ import type {
   QuestionFacets,
   QuestionSummary
 } from '@shared/contracts'
+import {
+  SHENLUN_QUESTION_TYPES,
+  classifyShenlunType,
+  type ShenlunQuestionType
+} from '@shared/shenlun'
 import { formatFullDate, invoke } from '../api'
 import { MarkdownContent } from '../components/MarkdownContent'
 import { RegionCascadePicker } from '../components/RegionCascadePicker'
+import { ShenlunPromptPicker } from '../components/ShenlunPromptPicker'
 import { EmptyState, ErrorState, LoadingState, PageHeader, Section } from '../components/ui'
 import {
   extractWordLimit,
@@ -49,6 +55,7 @@ export function ShenlunSolutionPage(): React.JSX.Element {
   )
   const [regions, setRegions] = useState<string[]>([])
   const [regionCounts, setRegionCounts] = useState<Array<{ region: string; count: number }>>([])
+  const [shenlunType, setShenlunType] = useState<'' | ShenlunQuestionType>('')
   const [keyword, setKeyword] = useState('')
   const [onlyUnattempted, setOnlyUnattempted] = useState(false)
   const [officialTypography, setOfficialTypography] = useState<boolean>(() => {
@@ -92,11 +99,32 @@ export function ShenlunSolutionPage(): React.JSX.Element {
     return map
   }, [allHistory])
 
+  const typeCounts = useMemo(() => {
+    const counts: Record<ShenlunQuestionType, number> = {
+      单一题: 0,
+      综合题: 0,
+      公文题: 0,
+      作文题: 0
+    }
+    for (const prompt of prompts ?? []) {
+      const kind = classifyShenlunType(prompt.category, prompt.stemPreview)
+      counts[kind] += 1
+    }
+    return counts
+  }, [prompts])
+
   const visiblePrompts = useMemo(() => {
     if (!prompts) return undefined
-    if (!onlyUnattempted) return prompts
-    return prompts.filter((prompt) => !statusByPrompt.has(prompt.id))
-  }, [prompts, onlyUnattempted, statusByPrompt])
+    return prompts.filter((prompt) => {
+      if (shenlunType && classifyShenlunType(prompt.category, prompt.stemPreview) !== shenlunType) {
+        return false
+      }
+      if (onlyUnattempted && statusByPrompt.has(prompt.id)) {
+        return false
+      }
+      return true
+    })
+  }, [prompts, shenlunType, onlyUnattempted, statusByPrompt])
 
   const currentIndex = useMemo(
     () => (visiblePrompts ? visiblePrompts.findIndex((prompt) => prompt.id === promptId) : -1),
@@ -155,6 +183,7 @@ export function ShenlunSolutionPage(): React.JSX.Element {
     if (!requestedPromptId || evaluating) return
     void flushPendingDraft(false).then(() => {
       setRegion('')
+      setShenlunType('')
       setOnlyUnattempted(false)
       setPromptId(requestedPromptId)
     })
@@ -457,7 +486,7 @@ export function ShenlunSolutionPage(): React.JSX.Element {
                 const metaParts = [
                   prompt.region,
                   prompt.year ? `${prompt.year}年` : '',
-                  prompt.category,
+                  classifyShenlunType(prompt.category, prompt.stemPreview),
                   prompt.source ? formatMaterialSource(prompt.source) : '',
                   status ? `已评 ${status.latestScore} 分` : ''
                 ].filter(Boolean)
@@ -486,30 +515,52 @@ export function ShenlunSolutionPage(): React.JSX.Element {
             />
           </Field>
           <Field className="grow" label="选择题目">
-            <Select
+            <ShenlunPromptPicker
+              prompts={visiblePrompts ?? []}
               value={promptId}
+              statusByPrompt={statusByPrompt}
               disabled={evaluating || !totalVisible}
-              onChange={(_, data) => void switchPrompt(data.value)}
-            >
-              {(visiblePrompts ?? []).map((prompt) => {
-                const status = statusByPrompt.get(prompt.id)
-                const badge = status ? ` [已评 ${status.latestScore} 分]` : ''
-                const regionPrefix = prompt.region ? `[${prompt.region}] ` : ''
-                return (
-                  <option value={prompt.id} key={prompt.id}>
-                    {regionPrefix}
-                    {prompt.category}：{stemPreview(prompt.stemPreview)}
-                    {badge}
-                  </option>
-                )
-              })}
-            </Select>
+              onSelect={(id) => void switchPrompt(id)}
+            />
           </Field>
+        </div>
+        <div className="shenlun-type-bar" role="tablist" aria-label="申论题型分类">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={shenlunType === ''}
+            className={`shenlun-type-chip${shenlunType === '' ? ' is-active' : ''}`}
+            disabled={evaluating}
+            onClick={() => setShenlunType('')}
+          >
+            全部题型 ({prompts?.length ?? 0})
+          </button>
+          {SHENLUN_QUESTION_TYPES.map((kind) => (
+            <button
+              key={kind}
+              type="button"
+              role="tab"
+              aria-selected={shenlunType === kind}
+              className={`shenlun-type-chip${shenlunType === kind ? ' is-active' : ''}`}
+              disabled={evaluating}
+              onClick={() => setShenlunType(kind)}
+            >
+              {kind} ({typeCounts[kind]})
+            </button>
+          ))}
         </div>
         <div className="solution-nav-bar">
           <div className="question-meta">
             {(current?.region ?? currentSummary?.region) && (
               <span className="pill">{current?.region ?? currentSummary?.region}</span>
+            )}
+            {(current ?? currentSummary) && (
+              <span className="pill">
+                {classifyShenlunType(
+                  current?.category ?? currentSummary?.category,
+                  current?.stem ?? currentSummary?.stemPreview
+                )}
+              </span>
             )}
             {(current?.year ?? currentSummary?.year) && (
               <span className="pill">{current?.year ?? currentSummary?.year}</span>

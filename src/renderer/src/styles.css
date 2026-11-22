@@ -3457,3 +3457,221 @@ a {
     max-height: 150px;
   }
 }
+
+/* ── 申论四大题型分类切换条 ── */
+.shenlun-type-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+.shenlun-type-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid var(--tz-border-strong);
+  background: var(--tz-surface);
+  color: var(--tz-ink-2);
+  font-family: var(--tz-font-ui);
+  font-size: var(--tz-text-xs);
+  cursor: pointer;
+  transition:
+    background-color 0.14s ease,
+    border-color 0.14s ease,
+    color 0.14s ease;
+}
+.shenlun-type-chip:hover:not(:disabled) {
+  background: var(--tz-surface-2);
+  color: var(--tz-ink);
+}
+.shenlun-type-chip.is-active {
+  background: var(--tz-vermillion-bg);
+  border-color: var(--tz-vermillion-border);
+  color: var(--tz-vermillion);
+  font-weight: 600;
+}
+.shenlun-type-chip:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* ── 申论题目卡片选择器（替代原生 select 长列表） ── */
+.prompt-picker-wrap {
+  position: relative;
+  width: 100%;
+}
+.prompt-picker-trigger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 32px;
+  padding: 0 11px;
+  border-radius: var(--tz-radius);
+  border: 1px solid var(--tz-border-strong);
+  background: var(--tz-surface);
+  color: var(--tz-ink);
+  font-family: var(--tz-font-ui);
+  font-size: var(--tz-text-sm);
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    background-color 0.15s ease;
+}
+.prompt-picker-trigger:hover:not(:disabled),
+.prompt-picker-trigger.is-open {
+  border-color: var(--tz-vermillion-border);
+  background: var(--tz-surface-2);
+}
+.prompt-picker-trigger:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.prompt-picker-icon {
+  flex-shrink: 0;
+  color: var(--tz-ink-3);
+}
+.prompt-picker-summary {
+  flex: 1;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+.prompt-picker-kind {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--tz-vermillion-bg);
+  color: var(--tz-vermillion);
+  font-size: 11px;
+  font-weight: 600;
+}
+.prompt-picker-stem {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+.prompt-picker-empty {
+  flex: 1;
+  color: var(--tz-ink-3);
+  text-align: left;
+}
+.prompt-picker-counter {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--tz-ink-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.prompt-picker-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 1200;
+  background: var(--tz-surface);
+  border: 1px solid var(--tz-border-strong);
+  border-radius: var(--tz-radius-lg);
+  box-shadow: 0 12px 32px rgba(40, 37, 32, 0.16);
+  overflow: hidden;
+}
+.prompt-picker-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 420px;
+  padding: 8px;
+  overflow-y: auto;
+}
+.prompt-picker-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid transparent;
+  border-radius: var(--tz-radius);
+  background: transparent;
+  color: var(--tz-ink);
+  font-family: var(--tz-font-ui);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background-color 0.12s ease,
+    border-color 0.12s ease;
+}
+.prompt-picker-item:hover {
+  background: var(--tz-surface-2);
+  border-color: var(--tz-border);
+}
+.prompt-picker-item.is-active {
+  background: var(--tz-vermillion-bg);
+  border-color: var(--tz-vermillion-border);
+}
+.prompt-picker-item-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.prompt-picker-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.prompt-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  border-radius: 4px;
+  background: var(--tz-surface-2);
+  border: 1px solid var(--tz-border);
+  color: var(--tz-ink-2);
+  font-size: 11px;
+  font-weight: 500;
+}
+.prompt-badge.kind-单一题 {
+  background: var(--tz-pine-bg);
+  border-color: rgba(85, 115, 99, 0.25);
+  color: var(--tz-pine);
+}
+.prompt-badge.kind-综合题 {
+  background: var(--tz-amber-bg);
+  border-color: rgba(183, 134, 61, 0.28);
+  color: var(--tz-amber);
+}
+.prompt-badge.kind-公文题 {
+  background: var(--tz-vermillion-bg);
+  border-color: var(--tz-vermillion-border);
+  color: var(--tz-vermillion);
+}
+.prompt-badge.kind-作文题 {
+  background: var(--tz-surface-3);
+  border-color: var(--tz-border-strong);
+  color: var(--tz-ink);
+  font-weight: 600;
+}
+.prompt-badge.is-score {
+  background: var(--tz-pine-bg);
+  color: var(--tz-pine);
+  font-weight: 600;
+}
+.prompt-picker-check {
+  flex-shrink: 0;
+  color: var(--tz-vermillion);
+}
+.prompt-picker-item-stem {
+  font-size: var(--tz-text-sm);
+  line-height: 1.5;
+  color: var(--tz-ink);
+}
+.prompt-picker-item-meta {
+  font-size: 11px;
+  color: var(--tz-ink-3);
+}
