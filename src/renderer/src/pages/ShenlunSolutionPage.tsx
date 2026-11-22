@@ -21,6 +21,7 @@ import {
 import { formatFullDate, invoke } from '../api'
 import { MarkdownContent } from '../components/MarkdownContent'
 import { RegionCascadePicker } from '../components/RegionCascadePicker'
+import { ShenlunAnswerSheet } from '../components/ShenlunAnswerSheet'
 import { ShenlunPromptPicker } from '../components/ShenlunPromptPicker'
 import { EmptyState, ErrorState, LoadingState, PageHeader, Section } from '../components/ui'
 import {
@@ -79,6 +80,15 @@ export function ShenlunSolutionPage(): React.JSX.Element {
   const [error, setError] = useState('')
   const [expandedHistoryIds, setExpandedHistoryIds] = useState<Record<string, boolean>>({})
   const [materialTab, setMaterialTab] = useState<'all' | number>('all')
+  const [sheetMode, setSheetMode] = useState<'sheet' | 'plain'>(() => {
+    try {
+      return window.localStorage.getItem('tizhou:shenlun-sheet-mode') === 'plain'
+        ? 'plain'
+        : 'sheet'
+    } catch {
+      return 'sheet'
+    }
+  })
   const saveTimer = useRef<number | undefined>(undefined)
   const activePromptIdRef = useRef(promptId)
   activePromptIdRef.current = promptId
@@ -164,12 +174,29 @@ export function ShenlunSolutionPage(): React.JSX.Element {
       .then((facets) => {
         setRegions(facets.regions)
         setRegionCounts(facets.regionCounts ?? [])
+        if (region && !facets.regions.includes(region)) {
+          setRegion('')
+          writeStoredRegion('tizhou:shenlun-region', '')
+        }
       })
       .catch(() => {
         setRegions([])
         setRegionCounts([])
       })
   }, [])
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem('tizhou:shenlun-sheet-mode', sheetMode)
+    } catch {
+      /* 忽略本地存储受限 */
+    }
+  }, [sheetMode])
+
+  const activeQuestionType = current
+    ? classifyShenlunType(current.category, current.stem)
+    : '单一题'
+  const currentLimit = current ? extractWordLimit(current.stem) : null
 
   useEffect(() => {
     try {
@@ -450,13 +477,33 @@ export function ShenlunSolutionPage(): React.JSX.Element {
         <LoadingState />
       </div>
     )
-  if (!prompts.length)
+  if (!prompts.length && !region && !keyword.trim())
     return (
       <div className="page">
         <PageHeader title="申论作答" />
         <EmptyState
           title="知识库中没有申论主观题"
           description="导入 type: essay 且 subject: shenlun 的 Markdown 题目后即可开始。"
+        />
+      </div>
+    )
+  if (!prompts.length)
+    return (
+      <div className="page page-solution">
+        <PageHeader
+          eyebrow="提升 · 申论作答"
+          title="申论作答"
+          description="草稿在本机自动保存。未配置 AI 时使用透明的本地规则评分，配置后自动尝试语义评估。"
+        />
+        <EmptyState
+          title="当前筛选下没有匹配的申论题目"
+          description={`当前条件（${region ? `地区：${region}` : ''}${region && keyword.trim() ? '，' : ''}${keyword.trim() ? `关键词：${keyword.trim()}` : ''}）暂无题目，可清除筛选查看全部申论真题。`}
+          actionLabel="查看全部题目"
+          onAction={() => {
+            setRegion('')
+            writeStoredRegion('tizhou:shenlun-region', '')
+            setKeyword('')
+          }}
         />
       </div>
     )
@@ -728,40 +775,78 @@ export function ShenlunSolutionPage(): React.JSX.Element {
               />
             </div>
             <div className="essay-col">
-              <TabList
-                className="solution-tabs"
-                selectedValue={view}
-                onTabSelect={(_, data) => setView(data.value as 'write' | 'reference' | 'history')}
-              >
-                <Tab value="write">我的作答</Tab>
-                <Tab value="reference">参考解析</Tab>
-                <Tab value="history">历史记录 ({promptHistory.length})</Tab>
-              </TabList>
+              <div className="solution-tabs-bar">
+                <TabList
+                  className="solution-tabs"
+                  selectedValue={view}
+                  onTabSelect={(_, data) =>
+                    setView(data.value as 'write' | 'reference' | 'history')
+                  }
+                >
+                  <Tab value="write">我的作答</Tab>
+                  <Tab value="reference">参考解析</Tab>
+                  <Tab value="history">历史记录 ({promptHistory.length})</Tab>
+                </TabList>
+                {view === 'write' && (
+                  <div className="sheet-mode-switch" role="group" aria-label="作答模式">
+                    <button
+                      type="button"
+                      className={`sheet-mode-btn${sheetMode === 'sheet' ? ' is-active' : ''}`}
+                      onClick={() => setSheetMode('sheet')}
+                    >
+                      答题卡
+                    </button>
+                    <button
+                      type="button"
+                      className={`sheet-mode-btn${sheetMode === 'plain' ? ' is-active' : ''}`}
+                      onClick={() => setSheetMode('plain')}
+                    >
+                      自由框
+                    </button>
+                  </div>
+                )}
+              </div>
               {view === 'write' ? (
-                <div className="essay-editor-wrap">
-                  <textarea
-                    className="essay-editor"
-                    data-testid="shenlun-draft-input"
-                    aria-label="申论作答草稿"
+                sheetMode === 'sheet' ? (
+                  <ShenlunAnswerSheet
                     value={content}
-                    onChange={(event) => updateDraftContent(event.target.value)}
-                    placeholder="建议先列要点，再组织成完整答案。草稿会在停止输入后自动保存。"
+                    onChange={updateDraftContent}
+                    limit={currentLimit}
+                    headerTitle={
+                      currentIndex >= 0
+                        ? `第 ${currentIndex + 1} 题 · ${activeQuestionType}`
+                        : activeQuestionType
+                    }
+                    officialTypography={officialTypography}
                   />
-                  {(() => {
-                    const wordCount = content.replace(/\s/g, '').length
-                    const limit = current ? extractWordLimit(current.stem) : null
-                    const overLimit = Boolean(limit?.max && wordCount > limit.max)
-                    const underLimit = Boolean(limit?.min && wordCount > 0 && wordCount < limit.min)
-                    return (
-                      <span
-                        className={`essay-word-counter${overLimit ? ' is-over-limit' : underLimit ? ' is-under-limit' : ''}`}
-                        title={limit ? `已识别题干字数要求：${limit.label}` : undefined}
-                      >
-                        {limit ? `${wordCount} / ${limit.label}` : `${wordCount} 字`}
-                      </span>
-                    )
-                  })()}
-                </div>
+                ) : (
+                  <div className="essay-editor-wrap">
+                    <textarea
+                      className="essay-editor"
+                      data-testid="shenlun-draft-input"
+                      aria-label="申论作答草稿"
+                      value={content}
+                      onChange={(event) => updateDraftContent(event.target.value)}
+                      placeholder="建议先列要点，再组织成完整答案。草稿会在停止输入后自动保存。"
+                    />
+                    {(() => {
+                      const wordCount = content.replace(/\s/g, '').length
+                      const limit = currentLimit
+                      const overLimit = Boolean(limit?.max && wordCount > limit.max)
+                      const underLimit = Boolean(
+                        limit?.min && wordCount > 0 && wordCount < limit.min
+                      )
+                      return (
+                        <span
+                          className={`essay-word-counter${overLimit ? ' is-over-limit' : underLimit ? ' is-under-limit' : ''}`}
+                          title={limit ? `已识别题干字数要求：${limit.label}` : undefined}
+                        >
+                          {limit ? `${wordCount} / ${limit.label}` : `${wordCount} 字`}
+                        </span>
+                      )
+                    })()}
+                  </div>
+                )
               ) : view === 'reference' ? (
                 <div className="answer-panel">
                   <h3>参考要点</h3>

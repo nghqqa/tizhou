@@ -316,3 +316,108 @@ export function formatShenlunMaterialParagraphs(text: string): string {
 
   return out.join('\n')
 }
+
+export const SHENLUN_SHEET_COLS = 25
+
+export interface ShenlunSheetCell {
+  row: number
+  col: number
+  char: string
+  charIndex: number | null
+  cellNumber: number
+  isLimitBoundary: boolean
+  isOverLimit: boolean
+}
+
+export interface ShenlunSheetRow {
+  rowIndex: number
+  cells: ShenlunSheetCell[]
+  /** 每 4 行（100 格）标注字数刻度，如 "100字"、"200字" */
+  hundredMark: string | null
+  /** 点击该行空白尾部时应定位到的文本下标 */
+  lineEndCharIndex: number
+}
+
+export interface ShenlunSheetGrid {
+  rows: ShenlunSheetRow[]
+  caretRow: number
+  caretCol: number
+  charCoordMap: Array<{ row: number; col: number }>
+}
+
+/**
+ * 将作答文本按真考申论答题卡（25 格/行，每 4 行 100 字）映射为方格矩阵，
+ * 支持换行跳行、字数上限警戒线与点击方格反查光标位置。
+ */
+export function buildShenlunSheetGrid(
+  content: string,
+  maxChars: number | null,
+  caretIndex: number
+): ShenlunSheetGrid {
+  const cols = SHENLUN_SHEET_COLS
+  const targetCells = maxChars && maxChars > 0 ? maxChars + cols * 2 : 400
+  const minRows = Math.max(10, Math.ceil(targetCells / cols))
+
+  const cellMap = new Map<string, { char: string; charIndex: number }>()
+  const lineEndIndex = new Map<number, number>()
+  const charCoordMap: Array<{ row: number; col: number }> = new Array(content.length + 1)
+
+  let row = 0
+  let col = 0
+  for (let i = 0; i < content.length; i += 1) {
+    charCoordMap[i] = { row, col }
+    const ch = content[i]!
+    if (ch === '\r') continue
+    if (ch === '\n') {
+      lineEndIndex.set(row, i)
+      row += 1
+      col = 0
+      continue
+    }
+    cellMap.set(`${row}:${col}`, { char: ch, charIndex: i })
+    col += 1
+    if (col >= cols) {
+      lineEndIndex.set(row, i + 1)
+      row += 1
+      col = 0
+    }
+  }
+  charCoordMap[content.length] = { row, col }
+  if (!lineEndIndex.has(row)) lineEndIndex.set(row, content.length)
+
+  const totalRows = Math.max(minRows, row + 2)
+  const clampedCaret = Math.max(0, Math.min(caretIndex, content.length))
+  const caretCoord = charCoordMap[clampedCaret] ?? { row, col }
+
+  const rows: ShenlunSheetRow[] = []
+  for (let r = 0; r < totalRows; r += 1) {
+    const cells: ShenlunSheetCell[] = []
+    const fallbackIndex = lineEndIndex.get(r) ?? content.length
+    for (let c = 0; c < cols; c += 1) {
+      const cellNumber = r * cols + c + 1
+      const entry = cellMap.get(`${r}:${c}`)
+      cells.push({
+        row: r,
+        col: c,
+        char: entry?.char ?? '',
+        charIndex: entry ? entry.charIndex : null,
+        cellNumber,
+        isLimitBoundary: Boolean(maxChars && cellNumber === maxChars),
+        isOverLimit: Boolean(maxChars && cellNumber > maxChars && entry)
+      })
+    }
+    rows.push({
+      rowIndex: r,
+      cells,
+      hundredMark: (r + 1) % 4 === 0 ? `${((r + 1) / 4) * 100}字` : null,
+      lineEndCharIndex: fallbackIndex
+    })
+  }
+
+  return {
+    rows,
+    caretRow: caretCoord.row,
+    caretCol: caretCoord.col,
+    charCoordMap
+  }
+}

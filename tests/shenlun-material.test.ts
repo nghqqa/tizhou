@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  buildShenlunSheetGrid,
   formatShenlunMaterialParagraphs,
   recommendShenlunMaterialIndices,
   splitShenlunMaterialBlocks
@@ -72,5 +73,19 @@ describe('shenlun material splitting & recommendation', () => {
     const paragraphs = formatted.split('\n\n')
     expect(paragraphs.length).toBeGreaterThanOrEqual(3)
     expect(paragraphs.every((p) => p.length >= 100)).toBe(true)
+  })
+
+  it('maps text to 25-column answer sheet grid with 100-char marks & newline jumps', () => {
+    const grid = buildShenlunSheetGrid('第一行\n第二行', 200, 4)
+    expect(grid.rows.length).toBeGreaterThanOrEqual(10)
+    expect(grid.rows[0]?.cells[0]?.char).toBe('第')
+    expect(grid.rows[0]?.cells[2]?.char).toBe('行')
+    expect(grid.rows[0]?.cells[3]?.char).toBe('')
+    expect(grid.rows[1]?.cells[0]?.char).toBe('第')
+    expect(grid.rows[3]?.hundredMark).toBe('100字')
+    expect(grid.rows[7]?.hundredMark).toBe('200字')
+    expect(grid.rows[7]?.cells[24]?.isLimitBoundary).toBe(true)
+    expect(grid.caretRow).toBe(1)
+    expect(grid.caretCol).toBe(0)
   })
 })
