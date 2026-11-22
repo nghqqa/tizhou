@@ -13,6 +13,8 @@ import type {
 import {
   SHENLUN_QUESTION_TYPES,
   classifyShenlunType,
+  recommendShenlunMaterialIndices,
+  splitShenlunMaterialBlocks,
   type ShenlunQuestionType
 } from '@shared/shenlun'
 import { formatFullDate, invoke } from '../api'
@@ -75,6 +77,7 @@ export function ShenlunSolutionPage(): React.JSX.Element {
   const [evaluating, setEvaluating] = useState(false)
   const [error, setError] = useState('')
   const [expandedHistoryIds, setExpandedHistoryIds] = useState<Record<string, boolean>>({})
+  const [materialTab, setMaterialTab] = useState<'all' | number>('all')
   const saveTimer = useRef<number | undefined>(undefined)
   const activePromptIdRef = useRef(promptId)
   activePromptIdRef.current = promptId
@@ -282,6 +285,18 @@ export function ShenlunSolutionPage(): React.JSX.Element {
       if (history.length > 0) {
         setEvaluation(history[0]!.evaluation)
         setSelectedHistoryId(history[0]!.id)
+      }
+      if (questionDetail?.material) {
+        const blocks = splitShenlunMaterialBlocks(questionDetail.material)
+        const rec = recommendShenlunMaterialIndices(
+          blocks,
+          questionDetail.stem,
+          questionDetail.explanation,
+          classifyShenlunType(questionDetail.category, questionDetail.stem)
+        )
+        setMaterialTab(blocks.length >= 3 && rec.length > 0 ? rec[0]! : 'all')
+      } else {
+        setMaterialTab('all')
       }
     })
     return () => {
@@ -656,12 +671,67 @@ export function ShenlunSolutionPage(): React.JSX.Element {
         ) : (
           <div className={`essay-columns${officialTypography ? ' is-official-doc' : ''}`}>
             <div className="essay-col">
-              {current?.material && (
-                <div className="essay-material">
-                  <h3>给定资料</h3>
-                  <MarkdownContent content={current.material} sourceFilePath={current.filePath} />
-                </div>
-              )}
+              {current?.material &&
+                (() => {
+                  const blocks = splitShenlunMaterialBlocks(current.material)
+                  const recSet =
+                    blocks.length >= 2
+                      ? new Set(
+                          recommendShenlunMaterialIndices(
+                            blocks,
+                            current.stem,
+                            current.explanation,
+                            classifyShenlunType(current.category, current.stem)
+                          )
+                        )
+                      : new Set<number>()
+                  const activeBlock =
+                    typeof materialTab === 'number' && blocks[materialTab]
+                      ? blocks[materialTab]!
+                      : null
+                  const displayedMaterial = activeBlock ? activeBlock.raw : current.material
+                  return (
+                    <div className="essay-material">
+                      {blocks.length >= 2 ? (
+                        <div className="essay-material-head">
+                          <h3>给定资料</h3>
+                          <div className="essay-material-tabs" role="tablist" aria-label="材料分段">
+                            <button
+                              type="button"
+                              role="tab"
+                              aria-selected={materialTab === 'all'}
+                              className={`essay-material-tab${materialTab === 'all' ? ' is-active' : ''}`}
+                              onClick={() => setMaterialTab('all')}
+                            >
+                              全部 ({blocks.length})
+                            </button>
+                            {blocks.map((block, idx) => (
+                              <button
+                                key={`${block.title}-${idx}`}
+                                type="button"
+                                role="tab"
+                                aria-selected={materialTab === idx}
+                                className={`essay-material-tab${materialTab === idx ? ' is-active' : ''}`}
+                                onClick={() => setMaterialTab(idx)}
+                              >
+                                {block.title}
+                                {recSet.has(idx) && (
+                                  <span className="essay-material-badge">相关</span>
+                                )}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      ) : (
+                        <h3>给定资料</h3>
+                      )}
+                      <MarkdownContent
+                        content={displayedMaterial}
+                        sourceFilePath={current.filePath}
+                      />
+                    </div>
+                  )
+                })()}
               <MarkdownContent
                 className="question-stem"
                 content={current?.stem ?? ''}

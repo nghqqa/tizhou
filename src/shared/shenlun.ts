@@ -34,3 +34,217 @@ export function classifyShenlunType(category?: string, stem?: string): ShenlunQu
   }
   return '单一题'
 }
+
+export interface ShenlunMaterialBlock {
+  title: string
+  index: number | null
+  content: string
+  raw: string
+}
+
+const CN_NUM_MAP: Record<string, number> = {
+  一: 1,
+  二: 2,
+  三: 3,
+  四: 4,
+  五: 5,
+  六: 6,
+  七: 7,
+  八: 8,
+  九: 9,
+  十: 10
+}
+
+function parseChineseOrArabicNum(token: string): number | null {
+  const trimmed = token.trim()
+  if (/^\d+$/.test(trimmed)) return Number(trimmed)
+  if (trimmed.length === 1 && CN_NUM_MAP[trimmed]) return CN_NUM_MAP[trimmed] ?? null
+  const c0 = trimmed[0]
+  const c1 = trimmed[1]
+  if (trimmed.startsWith('十') && trimmed.length === 2 && c1 && CN_NUM_MAP[c1]) {
+    return 10 + CN_NUM_MAP[c1]!
+  }
+  if (trimmed.endsWith('十') && trimmed.length === 2 && c0 && CN_NUM_MAP[c0]) {
+    return CN_NUM_MAP[c0]! * 10
+  }
+  return null
+}
+
+const MATERIAL_HEADING_RE =
+  /^(?:#{1,4}\s*|\*\*)?(?:给定)?(?:资料|材料)\s*([一二三四五六七八九十\d]+)(?:\*\*)?(?:[：:.\s]|$)/
+
+/** 将按「材料1 / 给定资料1」分段的申论材料拆分为独立块；不足 2 段时返回空数组 */
+export function splitShenlunMaterialBlocks(material: string): ShenlunMaterialBlock[] {
+  const lines = material.split(/\r?\n/)
+  const starts: Array<{ lineIdx: number; title: string; index: number | null }> = []
+  for (let i = 0; i < lines.length; i += 1) {
+    const trimmed = (lines[i] ?? '').trim()
+    const match = trimmed.match(MATERIAL_HEADING_RE)
+    if (!match || !match[1]) continue
+    const num = parseChineseOrArabicNum(match[1])
+    const cleanTitle = trimmed
+      .replace(/^#{1,4}\s*/, '')
+      .replace(/\*\*/g, '')
+      .replace(/[：:]$/, '')
+      .trim()
+    starts.push({
+      lineIdx: i,
+      title: cleanTitle || `材料${match[1]}`,
+      index: num
+    })
+  }
+  if (starts.length < 2) return []
+
+  const blocks: ShenlunMaterialBlock[] = []
+  for (let i = 0; i < starts.length; i += 1) {
+    const cur = starts[i]!
+    const next = starts[i + 1]
+    const startLine = cur.lineIdx
+    const endLine = next ? next.lineIdx : lines.length
+    const raw = lines.slice(startLine, endLine).join('\n').trim()
+    const content = lines
+      .slice(startLine + 1, endLine)
+      .join('\n')
+      .trim()
+    if (raw) {
+      blocks.push({
+        title: cur.title,
+        index: cur.index,
+        content: content || raw,
+        raw
+      })
+    }
+  }
+  return blocks.length >= 2 ? blocks : []
+}
+
+const FULL_MATERIAL_RE = /(?:全部|所有|整篇|各则|上述|以上)\s*(?:给定)?(?:资料|材料)/
+
+const EXPLICIT_MATERIAL_REF_RE =
+  /(?:给定资料|给定材料|资料|材料)\s*([一二三四五六七八九十\d]+(?:\s*[、,，和与及\-～~—–]\s*[一二三四五六七八九十\d]+)*)/g
+
+const STEM_BOILERPLATE_RE =
+  /请根据|根据给定|结合给定|给定材料|给定资料|材料|资料|谈谈|概括|归纳|梳理|分析|说明|阐述|指出|提出|结合|围绕|联系实际|要求|全面|准确|简明|扼要|条理清晰|有条理|层次分明|分条作答|不超过|左右|字数|篇幅|分值|假如你是|假设你是|作为一名|工作人员|撰写一|拟写一|写一篇|写一份|关于|主要内容|主要问题|对策建议|体现在哪些方面|哪些方面|如何理解/g
+
+function extractMatchTokens(text: string): { quoted: string[]; terms: string[] } {
+  const quoted: string[] = []
+  const quoteMatches = text.matchAll(/[“「《]([^”」》]{2,18})[”」》]/g)
+  for (const m of quoteMatches) {
+    const q = (m[1] ?? '').trim()
+    if (q && !quoted.includes(q)) quoted.push(q)
+  }
+
+  const cleaned = text
+    .replace(/[“”「」《》()（）、，。；：？！\s\d]/g, ' ')
+    .replace(STEM_BOILERPLATE_RE, ' ')
+  const terms = new Set<string>()
+  for (const seg of cleaned.split(/\s+/)) {
+    const s = seg.trim()
+    if (s.length < 2) continue
+    if (s.length <= 6) terms.add(s)
+    for (let i = 0; i <= s.length - 2; i += 1) {
+      terms.add(s.slice(i, i + 2))
+      if (i <= s.length - 3) terms.add(s.slice(i, i + 3))
+    }
+  }
+  return { quoted, terms: [...terms] }
+}
+
+function countOccurrences(haystack: string, needle: string, cap: number): number {
+  let count = 0
+  let pos = 0
+  while (count < cap) {
+    const idx = haystack.indexOf(needle, pos)
+    if (idx === -1) break
+    count += 1
+    pos = idx + needle.length
+  }
+  return count
+}
+
+/**
+ * 为申论非大作文小题推荐最相关的材料块下标（0-based）。
+ * 返回空数组表示应保留全部材料（如大作文、明确要求全部材料、或无法区分）。
+ */
+export function recommendShenlunMaterialIndices(
+  blocks: ShenlunMaterialBlock[],
+  stem: string,
+  explanation?: string,
+  category?: string
+): number[] {
+  if (blocks.length < 2) return []
+  const effectiveType = category || classifyShenlunType(undefined, stem)
+  if (effectiveType === '作文题' || FULL_MATERIAL_RE.test(stem)) return []
+
+  // 1) 题干明确引用「给定资料3 / 材料2、3 / 资料1-3」
+  const wantedNums = new Set<number>()
+  for (const match of stem.matchAll(EXPLICIT_MATERIAL_REF_RE)) {
+    const expr = match[1] ?? ''
+    if (!expr) continue
+    const rangeMatch = expr.match(
+      /^([一二三四五六七八九十\d]+)\s*[-～~—–]\s*([一二三四五六七八九十\d]+)$/
+    )
+    if (rangeMatch && rangeMatch[1] && rangeMatch[2]) {
+      const start = parseChineseOrArabicNum(rangeMatch[1])
+      const end = parseChineseOrArabicNum(rangeMatch[2])
+      if (start && end && end >= start && end - start <= 12) {
+        for (let n = start; n <= end; n += 1) wantedNums.add(n)
+        continue
+      }
+    }
+    for (const part of expr.split(/[、,，和与及\s]+/)) {
+      const n = parseChineseOrArabicNum(part)
+      if (n) wantedNums.add(n)
+    }
+  }
+  if (wantedNums.size > 0) {
+    const matched = blocks
+      .map((b, idx) => ({ b, idx }))
+      .filter(({ b }) => b.index !== null && wantedNums.has(b.index))
+      .map(({ idx }) => idx)
+    if (matched.length > 0 && matched.length < blocks.length) return matched
+  }
+
+  // 2) 基于题干（及参考解析）实体词与关键词相关性打分
+  const stemTokens = extractMatchTokens(stem.normalize('NFKC'))
+  const cleanExp =
+    explanation && !explanation.startsWith('暂无参考答案')
+      ? explanation.slice(0, 600).normalize('NFKC')
+      : ''
+  const expTokens = cleanExp ? extractMatchTokens(cleanExp) : { quoted: [], terms: [] }
+
+  const scored = blocks.map((block, idx) => {
+    const text = block.content.normalize('NFKC')
+    let rawScore = 0
+    for (const q of stemTokens.quoted) {
+      rawScore += countOccurrences(text, q, 3) * 14
+    }
+    for (const t of stemTokens.terms) {
+      const hits = countOccurrences(text, t, 4)
+      if (hits > 0) rawScore += (t.length >= 3 ? 4 : 2.2) + (hits - 1) * 0.9
+    }
+    for (const q of expTokens.quoted) {
+      rawScore += countOccurrences(text, q, 2) * 4
+    }
+    for (const t of expTokens.terms) {
+      if (text.includes(t)) rawScore += t.length >= 3 ? 1.2 : 0.6
+    }
+    const normScore = rawScore / Math.sqrt(text.length + 300)
+    return { idx, score: normScore }
+  })
+
+  scored.sort((a, b) => b.score - a.score)
+  const top = scored[0]
+  if (!top || top.score <= 0.05) return []
+
+  const picked = [top.idx]
+  const second = scored[1]
+  if (second && second.score >= top.score * 0.58) {
+    picked.push(second.idx)
+  }
+  if (effectiveType === '综合题' && scored[2] && scored[2].score >= top.score * 0.68) {
+    picked.push(scored[2].idx)
+  }
+  if (picked.length >= blocks.length) return []
+  return picked.sort((a, b) => a - b)
+}

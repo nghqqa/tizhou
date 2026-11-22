@@ -1355,6 +1355,122 @@ function buildXingcezhenti(srcDir, outDir, primaryDir) {
   )
 }
 
+function selectRelevantShenlunBlocks(blocks, stem, category, explanation) {
+  if (blocks.length <= 1) return blocks
+  if (category === '作文题') return blocks
+  if (/(?:全部|所有|整篇|各则|上述|以上)\s*(?:给定)?(?:资料|材料)/.test(stem)) {
+    return blocks
+  }
+
+  const cnNum = { 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10 }
+  const parseNum = (t) => {
+    const s = String(t ?? '').trim()
+    if (/^\d+$/.test(s)) return Number(s)
+    if (s.length === 1 && cnNum[s]) return cnNum[s]
+    if (s.startsWith('十') && s.length === 2 && cnNum[s[1]]) return 10 + cnNum[s[1]]
+    if (s.endsWith('十') && s.length === 2 && cnNum[s[0]]) return cnNum[s[0]] * 10
+    return null
+  }
+
+  // 1) 显式「给定资料N / 材料N」引用
+  const wanted = new Set()
+  const refRe =
+    /(?:给定资料|给定材料|资料|材料)\s*([一二三四五六七八九十\d]+(?:\s*[、,，和与及\-～~—–]\s*[一二三四五六七八九十\d]+)*)/g
+  for (const m of stem.matchAll(refRe)) {
+    const expr = m[1]
+    const rangeMatch = expr.match(
+      /^([一二三四五六七八九十\d]+)\s*[-～~—–]\s*([一二三四五六七八九十\d]+)$/
+    )
+    if (rangeMatch) {
+      const start = parseNum(rangeMatch[1])
+      const end = parseNum(rangeMatch[2])
+      if (start && end && end >= start && end - start <= 12) {
+        for (let n = start; n <= end; n += 1) wanted.add(n)
+        continue
+      }
+    }
+    for (const part of expr.split(/[、,，和与及\s]+/)) {
+      const n = parseNum(part)
+      if (n) wanted.add(n)
+    }
+  }
+  if (wanted.size > 0) {
+    const matched = blocks.filter(
+      (b) => wanted.has(b.idx) || (b.titleNum && wanted.has(b.titleNum))
+    )
+    if (matched.length > 0 && matched.length < blocks.length) return matched
+  }
+
+  // 2) 题干 + 参考解析实体词相关性打分
+  const boilerplateRe =
+    /请根据|根据给定|结合给定|给定材料|给定资料|材料|资料|谈谈|概括|归纳|梳理|分析|说明|阐述|指出|提出|结合|围绕|联系实际|要求|全面|准确|简明|扼要|条理清晰|有条理|层次分明|分条作答|不超过|左右|字数|篇幅|分值|假如你是|假设你是|作为一名|工作人员|撰写一|拟写一|写一篇|写一份|关于|主要内容|主要问题|对策建议|体现在哪些方面|哪些方面|如何理解/g
+  const tokenize = (text) => {
+    const quoted = []
+    for (const m of text.matchAll(/[“「《]([^”」》]{2,18})[”」》]/g)) {
+      const q = m[1].trim()
+      if (q && !quoted.includes(q)) quoted.push(q)
+    }
+    const cleaned = text
+      .replace(/[“”「」《》()（）、，。；：？！\s\d]/g, ' ')
+      .replace(boilerplateRe, ' ')
+    const terms = new Set()
+    for (const seg of cleaned.split(/\s+/)) {
+      const s = seg.trim()
+      if (s.length < 2) continue
+      if (s.length <= 6) terms.add(s)
+      for (let i = 0; i <= s.length - 2; i += 1) {
+        terms.add(s.slice(i, i + 2))
+        if (i <= s.length - 3) terms.add(s.slice(i, i + 3))
+      }
+    }
+    return { quoted, terms: [...terms] }
+  }
+  const countOcc = (hay, needle, cap) => {
+    let c = 0
+    let p = 0
+    while (c < cap) {
+      const i = hay.indexOf(needle, p)
+      if (i === -1) break
+      c += 1
+      p = i + needle.length
+    }
+    return c
+  }
+
+  const stemTok = tokenize(stem.normalize('NFKC'))
+  const expText =
+    explanation && !explanation.startsWith('暂无参考答案')
+      ? explanation.slice(0, 600).normalize('NFKC')
+      : ''
+  const expTok = expText ? tokenize(expText) : { quoted: [], terms: [] }
+
+  const scored = blocks.map((b, i) => {
+    const text = b.text.normalize('NFKC')
+    let rawScore = 0
+    for (const q of stemTok.quoted) rawScore += countOcc(text, q, 3) * 14
+    for (const t of stemTok.terms) {
+      const hits = countOcc(text, t, 4)
+      if (hits > 0) rawScore += (t.length >= 3 ? 4 : 2.2) + (hits - 1) * 0.9
+    }
+    for (const q of expTok.quoted) rawScore += countOcc(text, q, 2) * 4
+    for (const t of expTok.terms) {
+      if (text.includes(t)) rawScore += t.length >= 3 ? 1.2 : 0.6
+    }
+    return { i, score: rawScore / Math.sqrt(text.length + 300) }
+  })
+  scored.sort((a, b) => b.score - a.score)
+  const top = scored[0]
+  if (!top || top.score <= 0.05) return blocks
+
+  const pickedIdx = [top.i]
+  if (scored[1] && scored[1].score >= top.score * 0.58) pickedIdx.push(scored[1].i)
+  if (category === '综合题' && scored[2] && scored[2].score >= top.score * 0.68) {
+    pickedIdx.push(scored[2].i)
+  }
+  if (pickedIdx.length >= blocks.length) return blocks
+  return pickedIdx.sort((a, b) => a - b).map((idx) => blocks[idx])
+}
+
 /** 转换 ERRRC/kaogong-shuati 申论真题 + materials.db 材料为题舟申论库（支持合并与跨库去重） */
 function buildKaogongShuatiShenlun(srcDir, outDir, primaryDir) {
   const tikuPath = join(srcDir, 'tiku.db')
@@ -1372,16 +1488,28 @@ function buildKaogongShuatiShenlun(srcDir, outDir, primaryDir) {
   const tikuDb = new DatabaseSync(tikuPath, { readOnly: true })
   const matDb = new DatabaseSync(matPath, { readOnly: true })
 
-  // 按 paperId 聚合全部给定材料
+  // 按 paperId 聚合给定材料分块（支持按小题智能匹配对应材料段）
   const materialsByPaper = new Map()
   for (const row of matDb
     .prepare('SELECT paperId, idx, title, text FROM materials ORDER BY paperId, idx')
     .all()) {
-    const text = String(row.text ?? '').trim()
+    const text = String(row.text ?? '')
+      .normalize('NFKC')
+      .replace(
+        /\[materialid\]\d+\[\/materialid\](?:\s*[-～~—–]\s*\[materialid\]\d+\[\/materialid\])*/gi,
+        ''
+      )
+      .trim()
     if (!text) continue
     const list = materialsByPaper.get(row.paperId) ?? []
     const label = String(row.title ?? '').trim()
-    list.push(label ? `### ${label}\n\n${text}` : text)
+    const numMatch = label.match(/(\d+)/)
+    list.push({
+      idx: Number(row.idx) || list.length + 1,
+      titleNum: numMatch ? Number(numMatch[1]) : null,
+      text,
+      rendered: label ? `### ${label}\n\n${text}` : text
+    })
     materialsByPaper.set(row.paperId, list)
   }
 
@@ -1409,13 +1537,16 @@ function buildKaogongShuatiShenlun(srcDir, outDir, primaryDir) {
       )
       .trim()
     const paperName = String(row.paperName ?? '').trim()
-    const matParts = materialsByPaper.get(row.paperId) ?? []
-    const material = matParts
+    const category = classifyXzShenlunType(row.chapter, stem)
+    const rawAnalysis = String(row.analysis ?? '').trim()
+    const rawAnswer = String(row.answer ?? '').trim()
+    const explanation =
+      rawAnalysis || rawAnswer || '暂无参考答案；可在「申论作答」页配合 AI 批改或本地规则评分练习。'
+    const allMatBlocks = materialsByPaper.get(row.paperId) ?? []
+    const pickedBlocks = selectRelevantShenlunBlocks(allMatBlocks, stem, category, explanation)
+    const material = pickedBlocks
+      .map((b) => b.rendered)
       .join('\n\n')
-      .replace(
-        /\[materialid\]\d+\[\/materialid\](?:\s*[-～~—–]\s*\[materialid\]\d+\[\/materialid\])*/gi,
-        ''
-      )
       .trim()
     if (!stem || material.length < 40) {
       skippedEmpty += 1
@@ -1433,11 +1564,6 @@ function buildKaogongShuatiShenlun(srcDir, outDir, primaryDir) {
     const region = normalizeXzRegion(rawRegion)
     const yearMatch = paperName.match(/(20\d{2})/)
     const year = yearMatch ? Number(yearMatch[1]) : undefined
-    const category = classifyXzShenlunType(row.chapter, stem)
-    const rawAnalysis = String(row.analysis ?? '').trim()
-    const rawAnswer = String(row.answer ?? '').trim()
-    const explanation =
-      rawAnalysis || rawAnswer || '暂无参考答案；可在「申论作答」页配合 AI 批改或本地规则评分练习。'
     if (rawAnalysis || rawAnswer) withAnalysis += 1
 
     const id = `kgst-sl-${row.questionId}`
