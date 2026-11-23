@@ -1187,7 +1187,9 @@ function Trainer({
                       </div>
                     )}
                   </div>
-                  <MarkdownContent content={current.material} sourceFilePath={current.filePath} />
+                  <div className={useSplit ? 'material-split-scroll' : undefined}>
+                    <MarkdownContent content={current.material} sourceFilePath={current.filePath} />
+                  </div>
                 </div>
               )}
               {questionBody}
