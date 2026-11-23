@@ -250,6 +250,7 @@ export class StudyService {
     const prompt = this.database.getQuestion(input.promptId)
     const config = this.ai.getConfig()
     let evaluation: ConstructedEvaluation | undefined
+    let aiFailureReason = ''
     if (config.hasApiKey || config.provider === 'ollama' || config.provider === 'lmstudio') {
       const stemText = prompt?.stem ?? input.title
       const questionType = classifyShenlunType(prompt?.category, stemText)
@@ -258,31 +259,33 @@ export class StudyService {
         prompt?.explanation && !prompt.explanation.startsWith('暂无参考答案')
           ? prompt.explanation
           : ''
-      try {
-        const result = await this.ai.ask({
-          purpose: 'evaluate',
-          messages: [
-            {
-              role: 'system',
-              content: FEATURE_PROMPTS.constructedEvaluation
-            },
-            {
-              role: 'user',
-              content: taskDataEnvelope('申论作答评估输入', {
-                title: input.title,
-                questionType,
-                actualWordCount,
-                prompt: stemText,
-                material: prompt?.material ?? '',
-                referencePoints: prompt?.answer ?? [],
-                referenceExplanation: explanationText,
-                studentAnswer: content
-              })
-            }
-          ]
-        })
-        const parsed = parseJsonObject(result.content)
-        if (parsed) {
+      const messages = [
+        {
+          role: 'system' as const,
+          content: FEATURE_PROMPTS.constructedEvaluation
+        },
+        {
+          role: 'user' as const,
+          content: taskDataEnvelope('申论作答评估输入', {
+            title: input.title,
+            questionType,
+            actualWordCount,
+            prompt: stemText,
+            material: prompt?.material ?? '',
+            referencePoints: prompt?.answer ?? [],
+            referenceExplanation: explanationText,
+            studentAnswer: content
+          })
+        }
+      ]
+      for (let attempt = 0; attempt < 2 && !evaluation; attempt += 1) {
+        try {
+          const result = await this.ai.ask({ purpose: 'evaluate', messages }, 90_000)
+          const parsed = parseJsonObject(result.content)
+          if (!parsed) {
+            aiFailureReason = 'AI 返回结果未包含合法 JSON 结构'
+            continue
+          }
           const dimensionsRaw = Array.isArray(parsed.dimensions) ? parsed.dimensions : []
           evaluation = {
             id: randomUUID(),
@@ -306,12 +309,18 @@ export class StudyService {
             createdAt: now(),
             provider: `${result.provider}/${result.model}`
           }
+        } catch (cause) {
+          aiFailureReason = cause instanceof Error ? cause.message : String(cause || '未知错误')
+          evaluation = undefined
         }
-      } catch {
-        evaluation = undefined
       }
     }
-    evaluation ??= this.localEvaluation(input.promptId, content, prompt)
+    if (!evaluation) {
+      evaluation = this.localEvaluation(input.promptId, content, prompt)
+      if (aiFailureReason) {
+        evaluation.summary = `【AI 批改回退提示】本次 AI 评估未能完成（原因：${aiFailureReason}），已自动回退为本地规则评分。\n\n${evaluation.summary}`
+      }
+    }
     this.database.saveConstructedAttempt({
       id: evaluation.id,
       promptId: input.promptId,
