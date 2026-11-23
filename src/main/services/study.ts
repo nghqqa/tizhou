@@ -41,21 +41,37 @@ function clamp(value: number, minimum: number, maximum: number): number {
 // ---- 组题抽题：资料分析等题型是一组材料带 N 道连续小题，抽题以组为原子单位 ----
 // 组内按小题序（groupOrder）连续排列，不被随机打散；无组题目视为单题组。
 
+function extractQuestionOrder(question: Question): number {
+  if (typeof question.groupOrder === 'number' && Number.isFinite(question.groupOrder)) {
+    return question.groupOrder
+  }
+  const match = question.id.match(/(?:_q|-q|_)(\d+)$/i)
+  return match ? Number(match[1]) : 0
+}
+
 export function buildQuestionUnits(pool: Question[]): Question[][] {
   const groups = new Map<string, Question[]>()
   const singles: Question[][] = []
   for (const question of pool) {
-    if (question.groupId) {
-      const list = groups.get(question.groupId)
+    // 优先使用显式 groupId；若缺失但有共享材料（如 OpenExam 资料分析），按「试卷/来源 + 材料前缀」自动归组
+    const fallbackGroupKey =
+      !question.groupId && question.material && question.material.trim().length >= 40
+        ? `mat:${question.paper || question.source || ''}\u0000${question.material.trim().slice(0, 180)}`
+        : ''
+    const groupKey = question.groupId || fallbackGroupKey
+    if (groupKey) {
+      const list = groups.get(groupKey)
       if (list) list.push(question)
-      else groups.set(question.groupId, [question])
+      else groups.set(groupKey, [question])
     } else {
       singles.push([question])
     }
   }
   const units = [...singles, ...groups.values()]
   for (const unit of units) {
-    if (unit.length > 1) unit.sort((a, b) => (a.groupOrder ?? 0) - (b.groupOrder ?? 0))
+    if (unit.length > 1) {
+      unit.sort((a, b) => extractQuestionOrder(a) - extractQuestionOrder(b))
+    }
   }
   return units
 }
@@ -104,7 +120,7 @@ export class StudyService {
       return this.database.getDueReviews(count).map((item) => item.question)
     // 抽题池走专用查询：万题级题库全库采样不受列表查询的 5000 截断（旧题也要能抽到）
     const pool = this.database.listQuestionsForPool({ ...selection.filter })
-    if (selection.mode === 'sequence') return pool.slice(0, count)
+    if (selection.mode === 'sequence') return takeUnits(buildQuestionUnits(pool), count)
     if (selection.mode === 'adaptive') {
       const diagnosis = this.getDiagnosis()
       const priority = new Map(
