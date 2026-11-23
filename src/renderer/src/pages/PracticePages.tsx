@@ -21,6 +21,7 @@ import {
   ExportIcon,
   FlagIcon,
   NotePencilIcon,
+  PaintBrushIcon,
   PrinterIcon,
   RobotIcon,
   SkipForwardIcon
@@ -42,6 +43,7 @@ import { MarkdownContent } from '../components/MarkdownContent'
 import { OptionContent } from '../components/OptionContent'
 import { ReadingTypographyBar, useReadingTypography } from '../components/ReadingTypographyControl'
 import { RegionCascadePicker } from '../components/RegionCascadePicker'
+import { ScratchpadDrawer } from '../components/ScratchpadDrawer'
 import { EmptyState, ErrorState, LoadingState, PageHeader, Section } from '../components/ui'
 import {
   formatMaterialSource,
@@ -242,6 +244,7 @@ function Trainer({
   const currentRecord = current
     ? sessionResults.find((item) => item.questionId === current.id)
     : undefined
+  const [showScratchpad, setShowScratchpad] = useState(false)
   const currentEliminated = current ? (eliminatedByQuestion[current.id] ?? []) : []
 
   useEffect(() => {
@@ -703,22 +706,48 @@ function Trainer({
   if (summaryComplete) {
     // 分母基于完整题目列表（快照恢复后内存态 sessionResults 可能缺失历史作答）
     const correctCount = sessionResults.filter((item) => item.result.correct).length
+    const wrongQuestions = questions.filter((question) => {
+      const item = sessionResults.find((entry) => entry.questionId === question.id)
+      return !item || !item.result.correct
+    })
     return (
       <Section
         title={`本组完成：${correctCount}/${questions.length} 正确`}
         description="汇总模式在全部作答完成后统一展示答案与解析。"
         actions={
-          <Button
-            appearance="primary"
-            onClick={() => {
-              setSummaryComplete(false)
-              setQuestions([])
-              setSession(undefined)
-              setSessionResults([])
-            }}
-          >
-            返回训练配置
-          </Button>
+          <div className="button-row">
+            {wrongQuestions.length > 0 && (
+              <Button
+                appearance="secondary"
+                onClick={() => {
+                  setSummaryComplete(false)
+                  setQuestions(wrongQuestions)
+                  setIndex(0)
+                  setSelected([])
+                  setResult(undefined)
+                  setSessionResults([])
+                  setEliminatedByQuestion({})
+                  setAiExplanation('')
+                  setSession(undefined)
+                  startedAt.current = Date.now()
+                  setElapsedSeconds(0)
+                }}
+              >
+                重刷本场错题 ({wrongQuestions.length})
+              </Button>
+            )}
+            <Button
+              appearance="primary"
+              onClick={() => {
+                setSummaryComplete(false)
+                setQuestions([])
+                setSession(undefined)
+                setSessionResults([])
+              }}
+            >
+              返回训练配置
+            </Button>
+          </div>
         }
       >
         {questions.map((question, questionIndex) => {
@@ -1049,6 +1078,15 @@ function Trainer({
             >
               速查卡
             </Button>
+            <Button
+              size="small"
+              appearance={showScratchpad ? 'secondary' : 'subtle'}
+              icon={<PaintBrushIcon />}
+              title="打开/收起随手草稿纸（手写涂鸦 + 速算便签）"
+              onClick={() => setShowScratchpad((value) => !value)}
+            >
+              草稿纸
+            </Button>
             <ReadingTypographyBar
               typography={reading.typography}
               onUpdate={reading.update}
@@ -1367,6 +1405,7 @@ function Trainer({
           </Section>
         )}
       </div>
+      <ScratchpadDrawer open={showScratchpad} onClose={() => setShowScratchpad(false)} />
     </div>
   )
 }

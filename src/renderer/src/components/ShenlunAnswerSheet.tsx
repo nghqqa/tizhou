@@ -63,6 +63,16 @@ export function ShenlunAnswerSheet({
     })
   }
 
+  function insertIndent(): void {
+    const el = textareaRef.current
+    const pos = el ? (el.selectionStart ?? value.length) : caretIndex
+    const end = el ? (el.selectionEnd ?? pos) : pos
+    const indent = '\u3000\u3000'
+    const next = value.slice(0, pos) + indent + value.slice(end)
+    onChange(next)
+    focusAt(pos + indent.length)
+  }
+
   const caretLeftPct = Math.min(92, (grid.caretCol / SHENLUN_SHEET_COLS) * 100)
   const caretTopPx = grid.caretRow * 29 + 12
 
@@ -78,12 +88,25 @@ export function ShenlunAnswerSheet({
     >
       <div className="shenlun-sheet-header">
         <span className="shenlun-sheet-title">{headerTitle}</span>
-        <span
-          className={`shenlun-sheet-counter${overLimit ? ' is-over-limit' : underLimit ? ' is-under-limit' : ''}`}
-          title={limit ? `已识别题干字数要求：${limit.label}` : undefined}
-        >
-          {limit ? `${wordCount} / ${limit.label}` : `${wordCount} 字`}
-        </span>
+        <div className="shenlun-sheet-tools">
+          <button
+            type="button"
+            className="shenlun-sheet-indent"
+            title="在光标处插入段首空两格（快捷键 Tab）"
+            onMouseDown={(event) => {
+              event.preventDefault()
+              insertIndent()
+            }}
+          >
+            空两格
+          </button>
+          <span
+            className={`shenlun-sheet-counter${overLimit ? ' is-over-limit' : underLimit ? ' is-under-limit' : ''}`}
+            title={limit ? `已识别题干字数要求：${limit.label}` : undefined}
+          >
+            {limit ? `${wordCount} / ${limit.label}` : `${wordCount} 字`}
+          </span>
+        </div>
       </div>
 
       {!value && <div className="shenlun-sheet-subbar">{placeholder}</div>}
@@ -145,6 +168,12 @@ export function ShenlunAnswerSheet({
             }
             onChange(nextVal)
             setCaretIndex(event.target.selectionStart ?? nextVal.length)
+          }}
+          onKeyDown={(event) => {
+            if (event.key === 'Tab') {
+              event.preventDefault()
+              insertIndent()
+            }
           }}
           onKeyUp={syncCaretFromDom}
           onSelect={syncCaretFromDom}

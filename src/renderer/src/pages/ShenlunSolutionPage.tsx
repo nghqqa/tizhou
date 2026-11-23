@@ -1,6 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Button, Field, Input, Spinner, Tab, TabList } from '@fluentui/react-components'
-import { ArrowLeftIcon, ArrowRightIcon, FloppyDiskIcon, SparkleIcon } from '@phosphor-icons/react'
+import {
+  ArrowLeftIcon,
+  ArrowRightIcon,
+  ClockIcon,
+  FloppyDiskIcon,
+  SparkleIcon
+} from '@phosphor-icons/react'
 import { useSearchParams } from 'react-router-dom'
 import type {
   ConstructedAttemptRecord,
@@ -19,6 +25,7 @@ import {
   type ShenlunQuestionType
 } from '@shared/shenlun'
 import { formatFullDate, invoke } from '../api'
+import { HighlightableMaterial } from '../components/HighlightableMaterial'
 import { MarkdownContent } from '../components/MarkdownContent'
 import { RegionCascadePicker } from '../components/RegionCascadePicker'
 import { ShenlunAnswerSheet } from '../components/ShenlunAnswerSheet'
@@ -87,6 +94,14 @@ export function ShenlunSolutionPage(): React.JSX.Element {
         : 'sheet'
     } catch {
       return 'sheet'
+    }
+  })
+  const [elapsedSeconds, setElapsedSeconds] = useState(0)
+  const [showTimer, setShowTimer] = useState<boolean>(() => {
+    try {
+      return window.localStorage.getItem('tizhou:shenlun-show-timer') !== '0'
+    } catch {
+      return true
     }
   })
   const saveTimer = useRef<number | undefined>(undefined)
@@ -197,6 +212,35 @@ export function ShenlunSolutionPage(): React.JSX.Element {
     ? classifyShenlunType(current.category, current.stem)
     : '单一题'
   const currentLimit = current ? extractWordLimit(current.stem) : null
+
+  useEffect(() => {
+    setElapsedSeconds(0)
+    if (!promptId) return
+    const timer = window.setInterval(() => {
+      setElapsedSeconds((sec) => sec + 1)
+    }, 1000)
+    return () => window.clearInterval(timer)
+  }, [promptId])
+
+  function toggleTimerVisibility(): void {
+    setShowTimer((prev) => {
+      const next = !prev
+      try {
+        window.localStorage.setItem('tizhou:shenlun-show-timer', next ? '1' : '0')
+      } catch {
+        /* 忽略 */
+      }
+      return next
+    })
+  }
+
+  function handleExtractToDraft(excerpt: string): void {
+    const clean = excerpt.trim()
+    if (!clean) return
+    const sep = content.trim().length > 0 ? '\n' : ''
+    updateDraftContent(`${content}${sep}· ${clean}`)
+    if (view !== 'write') setView('write')
+  }
 
   useEffect(() => {
     try {
@@ -654,6 +698,25 @@ export function ShenlunSolutionPage(): React.JSX.Element {
             )}
           </div>
           <div className="solution-nav-actions">
+            {(() => {
+              const overtimeThreshold = activeQuestionType === '作文题' ? 3600 : 1200
+              const timerText = `${String(Math.floor(elapsedSeconds / 60)).padStart(2, '0')}:${String(elapsedSeconds % 60).padStart(2, '0')}`
+              return (
+                <button
+                  type="button"
+                  className={`practice-timer${showTimer && elapsedSeconds >= overtimeThreshold ? ' is-overtime' : ''}`}
+                  title={
+                    showTimer
+                      ? `单题建议用时 ${activeQuestionType === '作文题' ? '60' : '20'} 分钟（点击隐藏计时）`
+                      : '点击显示单题计时'
+                  }
+                  onClick={toggleTimerVisibility}
+                >
+                  <ClockIcon size={12} />
+                  {showTimer ? timerText : '计时已隐藏'}
+                </button>
+              )
+            })()}
             <Button
               size="small"
               appearance={officialTypography ? 'primary' : 'outline'}
@@ -727,45 +790,51 @@ export function ShenlunSolutionPage(): React.JSX.Element {
                     activeBlock ? activeBlock.raw : current.material
                   )
                   return (
-                    <div className="essay-material">
-                      {blocks.length >= 2 ? (
-                        <div className="essay-material-head">
-                          <h3>给定资料</h3>
-                          <div className="essay-material-tabs" role="tablist" aria-label="材料分段">
-                            <button
-                              type="button"
-                              role="tab"
-                              aria-selected={materialTab === 'all'}
-                              className={`essay-material-tab${materialTab === 'all' ? ' is-active' : ''}`}
-                              onClick={() => setMaterialTab('all')}
+                    <HighlightableMaterial
+                      promptId={current.id}
+                      content={displayedMaterial}
+                      sourceFilePath={current.filePath}
+                      onExtract={handleExtractToDraft}
+                      headerLeft={
+                        blocks.length >= 2 ? (
+                          <div className="essay-material-head">
+                            <h3>给定资料</h3>
+                            <div
+                              className="essay-material-tabs"
+                              role="tablist"
+                              aria-label="材料分段"
                             >
-                              全部 ({blocks.length})
-                            </button>
-                            {blocks.map((block, idx) => (
                               <button
-                                key={`${block.title}-${idx}`}
                                 type="button"
                                 role="tab"
-                                aria-selected={materialTab === idx}
-                                className={`essay-material-tab${materialTab === idx ? ' is-active' : ''}`}
-                                onClick={() => setMaterialTab(idx)}
+                                aria-selected={materialTab === 'all'}
+                                className={`essay-material-tab${materialTab === 'all' ? ' is-active' : ''}`}
+                                onClick={() => setMaterialTab('all')}
                               >
-                                {block.title}
-                                {recSet.has(idx) && (
-                                  <span className="essay-material-badge">相关</span>
-                                )}
+                                全部 ({blocks.length})
                               </button>
-                            ))}
+                              {blocks.map((block, idx) => (
+                                <button
+                                  key={`${block.title}-${idx}`}
+                                  type="button"
+                                  role="tab"
+                                  aria-selected={materialTab === idx}
+                                  className={`essay-material-tab${materialTab === idx ? ' is-active' : ''}`}
+                                  onClick={() => setMaterialTab(idx)}
+                                >
+                                  {block.title}
+                                  {recSet.has(idx) && (
+                                    <span className="essay-material-badge">相关</span>
+                                  )}
+                                </button>
+                              ))}
+                            </div>
                           </div>
-                        </div>
-                      ) : (
-                        <h3>给定资料</h3>
-                      )}
-                      <MarkdownContent
-                        content={displayedMaterial}
-                        sourceFilePath={current.filePath}
-                      />
-                    </div>
+                        ) : (
+                          <h3>给定资料</h3>
+                        )
+                      }
+                    />
                   )
                 })()}
               <MarkdownContent

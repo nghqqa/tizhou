@@ -17,12 +17,14 @@ import {
   CheckCircleIcon,
   ClockIcon,
   ExamIcon,
-  FlagIcon
+  FlagIcon,
+  PaintBrushIcon
 } from '@phosphor-icons/react'
 import type { ExamSession, Question, QuestionFacets } from '@shared/contracts'
 import { useNavigate } from 'react-router-dom'
 import { formatDate, formatFullDate, invoke } from '../api'
 import { MarkdownContent } from '../components/MarkdownContent'
+import { ScratchpadDrawer } from '../components/ScratchpadDrawer'
 import { OptionContent } from '../components/OptionContent'
 import { RegionCascadePicker } from '../components/RegionCascadePicker'
 import { ReadingTypographyBar, useReadingTypography } from '../components/ReadingTypographyControl'
@@ -362,6 +364,7 @@ export function ExamRunPage(): React.JSX.Element {
   const [error, setError] = useState('')
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [finishing, setFinishing] = useState(false)
+  const [showScratchpad, setShowScratchpad] = useState(false)
   const [saveStatus, setSaveStatus] = useState<'idle' | 'dirty' | 'saving' | 'saved' | 'error'>(
     'idle'
   )
@@ -763,6 +766,15 @@ export function ExamRunPage(): React.JSX.Element {
               <ClockIcon /> {timeText}
             </span>
             <Button
+              size="small"
+              appearance={showScratchpad ? 'secondary' : 'outline'}
+              icon={<PaintBrushIcon />}
+              title="打开/收起随手草稿纸（手写涂鸦 + 速算便签）"
+              onClick={() => setShowScratchpad((value) => !value)}
+            >
+              草稿纸
+            </Button>
+            <Button
               appearance="primary"
               data-testid="exam-submit"
               onClick={() => setConfirmOpen(true)}
@@ -940,6 +952,7 @@ export function ExamRunPage(): React.JSX.Element {
           </DialogBody>
         </DialogSurface>
       </Dialog>
+      <ScratchpadDrawer open={showScratchpad} onClose={() => setShowScratchpad(false)} />
     </div>
   )
 }
