@@ -1283,6 +1283,12 @@ a {
   background: rgba(201, 59, 49, 0.11);
   color: var(--tz-vermillion);
 }
+.shenlun-sheet-cell.is-selected {
+  background: rgba(59, 130, 246, 0.22);
+}
+[data-theme='dark'] .shenlun-sheet-cell.is-selected {
+  background: rgba(96, 165, 250, 0.28);
+}
 .shenlun-sheet-cell.is-caret::before {
   content: '';
   position: absolute;
@@ -1430,6 +1436,21 @@ a {
   color: var(--tz-ink-3);
   font-size: 11px;
   cursor: pointer;
+}
+.essay-hl-toolbar-extract {
+  padding: 2px 9px;
+  border: 1px solid var(--tz-border-strong);
+  border-radius: 999px;
+  background: var(--tz-surface-2);
+  color: var(--tz-ink);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.5;
+  cursor: pointer;
+}
+.essay-hl-toolbar-extract:hover {
+  border-color: var(--tz-vermillion);
+  color: var(--tz-vermillion);
 }
 .essay-hl-clear:hover {
   border-color: var(--tz-vermillion);

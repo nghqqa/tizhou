@@ -146,7 +146,7 @@ interface HighlightableMaterialProps {
   content: string
   sourceFilePath?: string
   headerLeft?: React.ReactNode
-  onExtract?: (text: string) => void
+  onExtract?: (excerpts: string[]) => void
 }
 
 export function HighlightableMaterial({
@@ -247,8 +247,11 @@ export function HighlightableMaterial({
     setPopover({
       text: selectedText,
       occurrence,
-      x: Math.max(8, Math.min(rect.left - hostRect.left + rect.width / 2, hostRect.width - 140)),
-      y: Math.max(4, rect.top - hostRect.top - 38)
+      x: Math.max(
+        80,
+        Math.min(rect.left - hostRect.left + rect.width / 2, Math.max(120, hostRect.width - 95))
+      ),
+      y: Math.max(4, rect.top - hostRect.top + container.scrollTop - 38)
     })
   }
 
@@ -285,6 +288,16 @@ export function HighlightableMaterial({
               />
             ))}
           </div>
+          {highlights.length > 0 && onExtract && (
+            <button
+              type="button"
+              className="essay-hl-toolbar-extract"
+              title="将当前已勾画的要点一键摘录到右侧作答草稿"
+              onClick={() => onExtract(highlights.map((hl) => hl.text))}
+            >
+              摘录勾画
+            </button>
+          )}
           {highlights.length > 0 && (
             <button
               type="button"
@@ -344,7 +357,7 @@ export function HighlightableMaterial({
                 title="标黄并摘录到右侧作答草稿"
                 onClick={() => {
                   addHighlight(popover.text, popover.occurrence, 'yellow')
-                  onExtract(popover.text)
+                  onExtract([popover.text])
                   window.getSelection()?.removeAllRanges()
                   setPopover(null)
                 }}

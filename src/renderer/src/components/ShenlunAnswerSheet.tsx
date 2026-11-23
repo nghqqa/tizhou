@@ -1,5 +1,10 @@
-import { useMemo, useRef, useState } from 'react'
-import { SHENLUN_SHEET_COLS, buildShenlunSheetGrid } from '@shared/shenlun'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import {
+  SHENLUN_SHEET_COLS,
+  buildShenlunSheetGrid,
+  type ShenlunSheetCell,
+  type ShenlunSheetRow
+} from '@shared/shenlun'
 import type { extractWordLimit } from '../services/study-helpers'
 
 type WordLimit = NonNullable<ReturnType<typeof extractWordLimit>>
@@ -19,11 +24,17 @@ export function ShenlunAnswerSheet({
   limit,
   headerTitle = '申论作答',
   officialTypography = false,
-  placeholder = '点击下方任意方格开始作答 · 25 格/行 · 回车换行 · 自动保存'
+  placeholder = '点击下方任意方格开始作答 · 支持拖动框选、Ctrl+A 批量删除 · 回车换行'
 }: ShenlunAnswerSheetProps): React.JSX.Element {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const [focused, setFocused] = useState(false)
   const [caretIndex, setCaretIndex] = useState(value.length)
+  const [selection, setSelection] = useState<{ start: number; end: number }>({
+    start: value.length,
+    end: value.length
+  })
+  const draggingRef = useRef(false)
+  const dragAnchorRef = useRef(value.length)
 
   // 中文输入法组合态：在选字上屏前不把拼音字母拆进方格，而是显示在光标处悬浮预览条中
   const [composing, setComposing] = useState(false)
@@ -31,6 +42,14 @@ export function ShenlunAnswerSheet({
   const [imePreviewText, setImePreviewText] = useState('')
   const preComposeValueRef = useRef(value)
   const preComposeCaretRef = useRef(value.length)
+
+  useEffect(() => {
+    const stopDrag = (): void => {
+      draggingRef.current = false
+    }
+    window.addEventListener('mouseup', stopDrag)
+    return () => window.removeEventListener('mouseup', stopDrag)
+  }, [])
 
   const displayValue = composing ? preComposeValueRef.current : value
   const displayCaret = composing ? preComposeCaretRef.current : caretIndex
@@ -49,32 +68,57 @@ export function ShenlunAnswerSheet({
     if (composing) return
     const el = textareaRef.current
     if (!el) return
-    setCaretIndex(el.selectionStart ?? value.length)
+    const start = el.selectionStart ?? value.length
+    const end = el.selectionEnd ?? start
+    setCaretIndex(end)
+    setSelection({ start, end })
+  }
+
+  function applySelectionRange(anchor: number, focus: number): void {
+    const el = textareaRef.current
+    if (!el) return
+    const a = Math.max(0, Math.min(anchor, value.length))
+    const f = Math.max(0, Math.min(focus, value.length))
+    const start = Math.min(a, f)
+    const end = Math.max(a, f)
+    el.focus()
+    window.requestAnimationFrame(() => {
+      el.setSelectionRange(start, end)
+      setCaretIndex(f)
+      setSelection({ start, end })
+    })
   }
 
   function focusAt(index: number): void {
-    const el = textareaRef.current
-    if (!el) return
-    const clamped = Math.max(0, Math.min(index, value.length))
-    el.focus()
-    window.requestAnimationFrame(() => {
-      el.setSelectionRange(clamped, clamped)
-      setCaretIndex(clamped)
-    })
+    applySelectionRange(index, index)
   }
 
   function insertIndent(): void {
     const el = textareaRef.current
-    const pos = el ? (el.selectionStart ?? value.length) : caretIndex
-    const end = el ? (el.selectionEnd ?? pos) : pos
+    const start = el ? (el.selectionStart ?? value.length) : selection.start
+    const end = el ? (el.selectionEnd ?? start) : selection.end
     const indent = '\u3000\u3000'
-    const next = value.slice(0, pos) + indent + value.slice(end)
+    const next = value.slice(0, start) + indent + value.slice(end)
     onChange(next)
-    focusAt(pos + indent.length)
+    focusAt(start + indent.length)
+  }
+
+  function indexFromCellEvent(
+    cell: ShenlunSheetCell,
+    row: ShenlunSheetRow,
+    event: React.MouseEvent<HTMLDivElement>
+  ): number {
+    if (cell.charIndex !== null) {
+      const rect = event.currentTarget.getBoundingClientRect()
+      const clickRightHalf = event.clientX - rect.left > rect.width / 2
+      return clickRightHalf ? cell.charIndex + 1 : cell.charIndex
+    }
+    return row.lineEndCharIndex
   }
 
   const caretLeftPct = Math.min(92, (grid.caretCol / SHENLUN_SHEET_COLS) * 100)
   const caretTopPx = grid.caretRow * 29 + 12
+  const hasRangeSelection = !composing && selection.end > selection.start
 
   return (
     <div
@@ -136,6 +180,7 @@ export function ShenlunAnswerSheet({
           }}
           onBlur={() => {
             setFocused(false)
+            draggingRef.current = false
             if (composing) {
               setComposing(false)
               setImePreviewText('')
@@ -158,16 +203,18 @@ export function ShenlunAnswerSheet({
             setImePreviewText('')
             onChange(committed)
             setCaretIndex(nextCaret)
+            setSelection({ start: nextCaret, end: nextCaret })
           }}
           onChange={(event) => {
             const nextVal = event.target.value
-            // 某些平台下 nativeEvent.isComposing 为 true 时仅更新本地 IME 缓冲
             if (composing || (event.nativeEvent as InputEvent).isComposing) {
               setImeRawValue(nextVal)
               return
             }
+            const nextPos = event.target.selectionStart ?? nextVal.length
             onChange(nextVal)
-            setCaretIndex(event.target.selectionStart ?? nextVal.length)
+            setCaretIndex(nextPos)
+            setSelection({ start: nextPos, end: nextPos })
           }}
           onKeyDown={(event) => {
             if (event.key === 'Tab') {
@@ -197,7 +244,15 @@ export function ShenlunAnswerSheet({
               <div className="shenlun-sheet-row" role="row">
                 {row.cells.map((cell) => {
                   const isCaretHere =
-                    focused && grid.caretRow === cell.row && grid.caretCol === cell.col
+                    focused &&
+                    !hasRangeSelection &&
+                    grid.caretRow === cell.row &&
+                    grid.caretCol === cell.col
+                  const isSelected =
+                    hasRangeSelection &&
+                    cell.charIndex !== null &&
+                    cell.charIndex >= selection.start &&
+                    cell.charIndex < selection.end
                   return (
                     <div
                       key={cell.col}
@@ -206,19 +261,26 @@ export function ShenlunAnswerSheet({
                         'shenlun-sheet-cell',
                         cell.isLimitBoundary ? 'is-limit-boundary' : '',
                         cell.isOverLimit ? 'is-over-limit' : '',
+                        isSelected ? 'is-selected' : '',
                         isCaretHere ? 'is-caret' : ''
                       ]
                         .filter(Boolean)
                         .join(' ')}
                       onMouseDown={(event) => {
                         event.preventDefault()
-                        if (cell.charIndex !== null) {
-                          const rect = event.currentTarget.getBoundingClientRect()
-                          const clickRightHalf = event.clientX - rect.left > rect.width / 2
-                          focusAt(clickRightHalf ? cell.charIndex + 1 : cell.charIndex)
+                        const idx = indexFromCellEvent(cell, row, event)
+                        if (event.shiftKey) {
+                          applySelectionRange(dragAnchorRef.current, idx)
                         } else {
-                          focusAt(row.lineEndCharIndex)
+                          draggingRef.current = true
+                          dragAnchorRef.current = idx
+                          applySelectionRange(idx, idx)
                         }
+                      }}
+                      onMouseEnter={(event) => {
+                        if (!draggingRef.current) return
+                        const idx = indexFromCellEvent(cell, row, event)
+                        applySelectionRange(dragAnchorRef.current, idx)
                       }}
                     >
                       {cell.char && <span className="shenlun-sheet-char">{cell.char}</span>}

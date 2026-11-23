@@ -234,11 +234,17 @@ export function ShenlunSolutionPage(): React.JSX.Element {
     })
   }
 
-  function handleExtractToDraft(excerpt: string): void {
-    const clean = excerpt.trim()
-    if (!clean) return
-    const sep = content.trim().length > 0 ? '\n' : ''
-    updateDraftContent(`${content}${sep}· ${clean}`)
+  function handleExtractToDraft(excerpts: string[]): void {
+    let next = content
+    let added = false
+    for (const raw of excerpts) {
+      const clean = raw.trim()
+      if (!clean || next.includes(clean)) continue
+      const sep = next.trim().length > 0 ? '\n' : ''
+      next = `${next}${sep}· ${clean}`
+      added = true
+    }
+    if (added) updateDraftContent(next)
     if (view !== 'write') setView('write')
   }
 
