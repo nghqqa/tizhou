@@ -802,6 +802,18 @@ a {
 .question-reading-surface .markdown.question-stem {
   font-size: calc(var(--tz-text-lg) * var(--tz-read-scale, 1));
 }
+.page-solution .question-reading-surface .essay-material .markdown {
+  font-size: calc(var(--tz-text-md) * var(--tz-read-scale, 1));
+  line-height: 1.9;
+}
+.page-solution .question-reading-surface .essay-material .markdown h3,
+.page-solution .question-reading-surface .essay-material .markdown h4 {
+  font-size: calc(var(--tz-text-md) * var(--tz-read-scale, 1) * 1.08);
+}
+.page-solution .question-reading-surface .markdown.question-stem {
+  font-size: calc(var(--tz-text-md) * var(--tz-read-scale, 1) * 1.06);
+  line-height: 1.75;
+}
 .question-reading-surface .option-button .markdown,
 .question-reading-surface .option-content,
 .question-reading-surface .answer-panel .markdown,
@@ -1389,8 +1401,12 @@ a {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 12px 18px 16px;
+  padding: 20px 28px 28px;
   scrollbar-gutter: stable;
+}
+.essay-material-body .markdown {
+  max-width: 760px;
+  margin-inline: auto;
 }
 .essay-hl-toolbar {
   display: inline-flex;
@@ -3311,14 +3327,14 @@ mark.tz-hl-red {
 }
 .page-solution .essay-material {
   max-width: none;
-  max-height: min(52vh, 640px);
+  max-height: min(58vh, 680px);
 }
 .page-solution .solution-tabs {
   border-bottom: 1px solid var(--tz-border);
   margin-bottom: 12px;
 }
 .page-solution .essay-editor {
-  min-height: min(56vh, 620px);
+  min-height: min(58vh, 660px);
 }
 .page-solution .essay-col .answer-panel {
   margin-top: 0;
@@ -3328,10 +3344,10 @@ mark.tz-hl-red {
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 10px 16px;
-  margin-top: 14px;
-  padding-bottom: 14px;
-  margin-bottom: 18px;
+  gap: 8px 14px;
+  margin-top: 10px;
+  padding-bottom: 10px;
+  margin-bottom: 14px;
   border-bottom: 1px solid var(--tz-border);
 }
 .solution-nav-bar .question-meta {
@@ -3441,14 +3457,14 @@ mark.tz-hl-red {
 .essay-columns.is-official-doc .answer-panel > p,
 .essay-columns.is-official-doc .solution-history-preview {
   font-family: var(--tz-font-official-body);
-  font-size: 16px;
+  font-size: calc(16px * var(--tz-read-scale, 1));
   line-height: 1.9;
 }
 .essay-columns.is-official-doc .markdown.question-stem {
   font-family: var(--tz-font-official-body);
-  font-size: 18px;
+  font-size: calc(17px * var(--tz-read-scale, 1));
   font-weight: 600;
-  line-height: 1.9;
+  line-height: 1.85;
 }
 .essay-columns.is-official-doc .essay-material h3,
 .essay-columns.is-official-doc .answer-panel h3,
@@ -4321,20 +4337,43 @@ mark.tz-hl-red {
 /* ── 申论作答顶部三列筛选与分类切换条 ── */
 .shenlun-filter-grid {
   display: grid;
-  grid-template-columns: minmax(190px, 240px) minmax(0, 1fr) minmax(240px, 1.1fr);
+  grid-template-columns: minmax(180px, 230px) minmax(0, 1fr) minmax(0, 1.15fr);
   gap: 12px;
   align-items: end;
+}
+.shenlun-filter-grid > *,
+.shenlun-filter-grid .fui-Field {
+  min-width: 0;
+  max-width: 100%;
 }
 @media (max-width: 1080px) {
   .shenlun-filter-grid {
     grid-template-columns: 1fr;
   }
 }
+.shenlun-chip-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  margin-top: 10px;
+}
+.shenlun-chip-divider {
+  width: 1px;
+  height: 16px;
+  background: var(--tz-border-strong);
+  flex-shrink: 0;
+}
+@media (max-width: 960px) {
+  .shenlun-chip-divider {
+    display: none;
+  }
+}
 .shenlun-type-bar {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin-top: 8px;
+  margin-top: 0;
 }
 .shenlun-type-chip {
   display: inline-flex;
@@ -4373,7 +4412,7 @@ mark.tz-hl-red {
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
-  margin-top: 8px;
+  margin-top: 0;
 }
 .shenlun-quality-label {
   font-size: var(--tz-text-xs);
@@ -4426,12 +4465,17 @@ mark.tz-hl-red {
 .prompt-picker-wrap {
   position: relative;
   width: 100%;
+  min-width: 0;
+  max-width: 100%;
 }
 .prompt-picker-trigger {
   display: flex;
   align-items: center;
   gap: 8px;
   width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
   height: 32px;
   padding: 0 11px;
   border-radius: var(--tz-radius);
@@ -4461,7 +4505,8 @@ mark.tz-hl-red {
 .prompt-picker-summary {
   flex: 1;
   min-width: 0;
-  display: inline-flex;
+  overflow: hidden;
+  display: flex;
   align-items: center;
   gap: 7px;
 }
@@ -4497,14 +4542,34 @@ mark.tz-hl-red {
 .prompt-picker-popover {
   position: absolute;
   top: calc(100% + 6px);
-  left: 0;
+  left: auto;
   right: 0;
+  width: max(100%, min(460px, calc(100vw - 48px)));
   z-index: 1200;
   background: var(--tz-surface);
   border: 1px solid var(--tz-border-strong);
   border-radius: var(--tz-radius-lg);
   box-shadow: 0 12px 32px rgba(40, 37, 32, 0.16);
   overflow: hidden;
+}
+.essay-stem-card {
+  padding: 14px 20px;
+  border: 1px solid var(--tz-border);
+  border-left: 3px solid var(--tz-vermillion);
+  border-radius: var(--tz-radius);
+  background: var(--tz-surface);
+}
+.essay-stem-label {
+  max-width: 760px;
+  margin: 0 auto 6px;
+  font-size: var(--tz-text-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--tz-vermillion);
+}
+.essay-stem-card .markdown.question-stem {
+  max-width: 760px;
+  margin: 0 auto;
 }
 .prompt-picker-list {
   display: flex;

@@ -754,60 +754,63 @@ export function ShenlunSolutionPage(): React.JSX.Element {
             />
           </Field>
         </div>
-        <div className="shenlun-type-bar" role="tablist" aria-label="申论题型分类">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={shenlunType === ''}
-            className={`shenlun-type-chip${shenlunType === '' ? ' is-active' : ''}`}
-            disabled={evaluating}
-            onClick={() => setShenlunType('')}
-          >
-            全部题型 ({qualityFilteredPrompts?.length ?? prompts.length})
-          </button>
-          {SHENLUN_QUESTION_TYPES.map((kind) => (
+        <div className="shenlun-chip-strip">
+          <div className="shenlun-type-bar" role="tablist" aria-label="申论题型分类">
             <button
-              key={kind}
               type="button"
               role="tab"
-              aria-selected={shenlunType === kind}
-              className={`shenlun-type-chip${shenlunType === kind ? ' is-active' : ''}`}
+              aria-selected={shenlunType === ''}
+              className={`shenlun-type-chip${shenlunType === '' ? ' is-active' : ''}`}
               disabled={evaluating}
-              onClick={() => setShenlunType(kind)}
+              onClick={() => setShenlunType('')}
             >
-              {kind} ({typeCounts[kind]})
+              全部题型 ({qualityFilteredPrompts?.length ?? prompts.length})
             </button>
-          ))}
-        </div>
-        <div className="shenlun-quality-bar" role="group" aria-label="材料完整度筛选">
-          <span className="shenlun-quality-label">材料完整度：</span>
-          <button
-            type="button"
-            aria-pressed={qualityFilter === 'all'}
-            className={`shenlun-quality-chip${qualityFilter === 'all' ? ' is-active' : ''}`}
-            disabled={evaluating}
-            onClick={() => void selectQualityFilter('all')}
-          >
-            全部材料 ({qualityCounts.all})
-          </button>
-          <button
-            type="button"
-            aria-pressed={qualityFilter === 'hide-incomplete'}
-            className={`shenlun-quality-chip${qualityFilter === 'hide-incomplete' ? ' is-active' : ''}`}
-            disabled={evaluating}
-            onClick={() => void selectQualityFilter('hide-incomplete')}
-          >
-            隐藏残缺 ({qualityCounts.cleanable})
-          </button>
-          <button
-            type="button"
-            aria-pressed={qualityFilter === 'verified'}
-            className={`shenlun-quality-chip${qualityFilter === 'verified' ? ' is-active' : ''}`}
-            disabled={evaluating}
-            onClick={() => void selectQualityFilter('verified')}
-          >
-            精校带解析 ({qualityCounts.verified})
-          </button>
+            {SHENLUN_QUESTION_TYPES.map((kind) => (
+              <button
+                key={kind}
+                type="button"
+                role="tab"
+                aria-selected={shenlunType === kind}
+                className={`shenlun-type-chip${shenlunType === kind ? ' is-active' : ''}`}
+                disabled={evaluating}
+                onClick={() => setShenlunType(kind)}
+              >
+                {kind} ({typeCounts[kind]})
+              </button>
+            ))}
+          </div>
+          <span className="shenlun-chip-divider" aria-hidden="true" />
+          <div className="shenlun-quality-bar" role="group" aria-label="材料完整度筛选">
+            <span className="shenlun-quality-label">材料完整度：</span>
+            <button
+              type="button"
+              aria-pressed={qualityFilter === 'all'}
+              className={`shenlun-quality-chip${qualityFilter === 'all' ? ' is-active' : ''}`}
+              disabled={evaluating}
+              onClick={() => void selectQualityFilter('all')}
+            >
+              全部材料 ({qualityCounts.all})
+            </button>
+            <button
+              type="button"
+              aria-pressed={qualityFilter === 'hide-incomplete'}
+              className={`shenlun-quality-chip${qualityFilter === 'hide-incomplete' ? ' is-active' : ''}`}
+              disabled={evaluating}
+              onClick={() => void selectQualityFilter('hide-incomplete')}
+            >
+              隐藏残缺 ({qualityCounts.cleanable})
+            </button>
+            <button
+              type="button"
+              aria-pressed={qualityFilter === 'verified'}
+              className={`shenlun-quality-chip${qualityFilter === 'verified' ? ' is-active' : ''}`}
+              disabled={evaluating}
+              onClick={() => void selectQualityFilter('verified')}
+            >
+              精校带解析 ({qualityCounts.verified})
+            </button>
+          </div>
         </div>
         {prompts.length === 0 ? (
           loadingPrompts ? (
@@ -871,15 +874,26 @@ export function ShenlunSolutionPage(): React.JSX.Element {
                       {(current?.year ?? currentSummary?.year) && (
                         <span className="pill">{current?.year ?? currentSummary?.year}</span>
                       )}
-                      {(current?.paper ?? currentSummary?.paper) && (
-                        <span className="pill">{current?.paper ?? currentSummary?.paper}</span>
-                      )}
-                      {(current?.source ?? currentSummary?.source) && (
-                        <span className="pill" title={current?.source ?? currentSummary?.source}>
-                          教材来源：
-                          {formatMaterialSource(current?.source ?? currentSummary?.source)}
-                        </span>
-                      )}
+                      {(() => {
+                        const paperName = (current?.paper ?? currentSummary?.paper ?? '').trim()
+                        const rawSource = current?.source ?? currentSummary?.source ?? ''
+                        const sourceLabel = formatMaterialSource(rawSource)
+                        const showSource = Boolean(
+                          sourceLabel &&
+                          sourceLabel !== paperName &&
+                          !paperName.includes(sourceLabel)
+                        )
+                        return (
+                          <>
+                            {paperName && <span className="pill">{paperName}</span>}
+                            {showSource && (
+                              <span className="pill" title={rawSource}>
+                                教材来源：{sourceLabel}
+                              </span>
+                            )}
+                          </>
+                        )
+                      })()}
                       {summaryOrDetail.category && summaryOrDetail.category !== kind && (
                         <span className="pill">{summaryOrDetail.category}</span>
                       )}
@@ -1065,11 +1079,14 @@ export function ShenlunSolutionPage(): React.JSX.Element {
                       />
                     )
                   })()}
-                <MarkdownContent
-                  className="question-stem"
-                  content={current?.stem ?? ''}
-                  sourceFilePath={current?.filePath}
-                />
+                <div className="essay-stem-card">
+                  <div className="essay-stem-label">作答要求</div>
+                  <MarkdownContent
+                    className="question-stem"
+                    content={current?.stem ?? ''}
+                    sourceFilePath={current?.filePath}
+                  />
+                </div>
               </div>
               <div className="essay-col">
                 <div className="solution-tabs-bar">
