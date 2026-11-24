@@ -1,6 +1,23 @@
 import { useEffect, useState } from 'react'
 import { release } from './release'
 import { UserGuide } from './UserGuide'
+import { ChangelogPage } from './ChangelogPage'
+
+type PageView = 'home' | 'guide' | 'changelog'
+
+function resolveRouteFromHash(hash: string): { view: PageView; targetVersion: string | null } {
+  if (hash === '#guide') {
+    return { view: 'guide', targetVersion: null }
+  }
+  if (hash === '#changelog') {
+    return { view: 'changelog', targetVersion: null }
+  }
+  const versionMatch = hash.match(/^#changelog-([\d.]+)$/)
+  if (versionMatch?.[1]) {
+    return { view: 'changelog', targetVersion: versionMatch[1] }
+  }
+  return { view: 'home', targetVersion: null }
+}
 
 const shot = (name: string): string => `./screenshots/${name}.webp`
 
@@ -309,13 +326,14 @@ function FlowTabs({ onZoom }: { onZoom: (zoom: ZoomState) => void }): React.JSX.
 export function App(): React.JSX.Element {
   const [zoom, setZoom] = useState<ZoomState | null>(null)
   const [copiedCmd, setCopiedCmd] = useState(false)
-  const [showGuide, setShowGuide] = useState(() => window.location.hash === '#guide')
+  const [route, setRoute] = useState(() => resolveRouteFromHash(window.location.hash))
+  const view = route.view
 
   useEffect(() => {
     const syncHash = (): void => {
-      const isGuide = window.location.hash === '#guide'
-      setShowGuide(isGuide)
-      if (isGuide) {
+      const next = resolveRouteFromHash(window.location.hash)
+      setRoute(next)
+      if (next.view === 'guide' || (next.view === 'changelog' && !next.targetVersion)) {
         window.scrollTo({ top: 0, behavior: 'auto' })
       }
     }
@@ -323,18 +341,45 @@ export function App(): React.JSX.Element {
     return () => window.removeEventListener('hashchange', syncHash)
   }, [])
 
+  useEffect(() => {
+    if (view === 'guide') {
+      document.title = '用户手册 · 题舟 Tizhou'
+    } else if (view === 'changelog') {
+      document.title = '更新日志 · 题舟 Tizhou'
+    } else {
+      document.title = '题舟 Tizhou · 本地优先的开源考公学习工作台'
+    }
+  }, [view])
+
   function openGuide(): void {
     if (window.location.hash !== '#guide') {
       window.location.hash = '#guide'
     }
-    setShowGuide(true)
+    setRoute({ view: 'guide', targetVersion: null })
     window.scrollTo({ top: 0, behavior: 'auto' })
   }
 
+  function openChangelog(version?: string): void {
+    const targetHash = version ? `#changelog-${version}` : '#changelog'
+    if (window.location.hash !== targetHash) {
+      window.location.hash = targetHash
+    }
+    setRoute({ view: 'changelog', targetVersion: version ?? null })
+    if (!version) {
+      window.scrollTo({ top: 0, behavior: 'auto' })
+    }
+  }
+
   function backToHome(anchor?: string): void {
-    setShowGuide(false)
+    setRoute({ view: 'home', targetVersion: null })
     if (anchor) {
       window.location.hash = anchor
+      window.requestAnimationFrame(() => {
+        document.getElementById(anchor.replace(/^#/, ''))?.scrollIntoView({
+          behavior: 'smooth',
+          block: 'start'
+        })
+      })
     } else {
       window.history.replaceState(null, '', window.location.pathname + window.location.search)
       window.scrollTo({ top: 0, behavior: 'auto' })
@@ -361,7 +406,7 @@ export function App(): React.JSX.Element {
             className="brand"
             href="#top"
             onClick={(e) => {
-              if (showGuide) {
+              if (view !== 'home') {
                 e.preventDefault()
                 backToHome()
               }
@@ -371,27 +416,37 @@ export function App(): React.JSX.Element {
             <span className="brand-name">题舟 Tizhou</span>
           </a>
           <nav className="site-nav" aria-label="页面导航">
-            <a href="#flow" onClick={() => showGuide && backToHome('#flow')}>
+            <a href="#flow" onClick={() => view !== 'home' && backToHome('#flow')}>
               核心流程
             </a>
-            <a href="#why" onClick={() => showGuide && backToHome('#why')}>
+            <a href="#why" onClick={() => view !== 'home' && backToHome('#why')}>
               为什么用题舟
             </a>
-            <a href="#start" onClick={() => showGuide && backToHome('#start')}>
+            <a href="#start" onClick={() => view !== 'home' && backToHome('#start')}>
               快速上手
             </a>
-            <a href="#faq" onClick={() => showGuide && backToHome('#faq')}>
+            <a href="#faq" onClick={() => view !== 'home' && backToHome('#faq')}>
               常见问题
             </a>
             <a
               href="#guide"
-              className={showGuide ? 'active' : undefined}
+              aria-current={view === 'guide' ? 'page' : undefined}
               onClick={(e) => {
                 e.preventDefault()
                 openGuide()
               }}
             >
               用户手册
+            </a>
+            <a
+              href="#changelog"
+              aria-current={view === 'changelog' ? 'page' : undefined}
+              onClick={(e) => {
+                e.preventDefault()
+                openChangelog()
+              }}
+            >
+              更新日志
             </a>
           </nav>
           <div className="header-links">
@@ -401,7 +456,16 @@ export function App(): React.JSX.Element {
             <a href="https://cnb.cool/nghqqa/tizhou" className="header-link">
               CNB
             </a>
-            <a href="#download" className="btn btn-primary btn-small">
+            <a
+              href="#download"
+              className="btn btn-primary btn-small"
+              onClick={(e) => {
+                if (view !== 'home') {
+                  e.preventDefault()
+                  backToHome('#download')
+                }
+              }}
+            >
               下载 v{release.version}
             </a>
           </div>
@@ -409,8 +473,14 @@ export function App(): React.JSX.Element {
       </header>
 
       <main id="top">
-        {showGuide ? (
-          <UserGuide onBack={() => backToHome()} />
+        {view === 'guide' ? (
+          <UserGuide onBack={() => backToHome()} onOpenChangelog={() => openChangelog()} />
+        ) : view === 'changelog' ? (
+          <ChangelogPage
+            onBack={() => backToHome()}
+            onOpenGuide={() => openGuide()}
+            targetVersion={route.targetVersion}
+          />
         ) : (
           <>
             {/* Hero 首屏 */}
@@ -448,7 +518,16 @@ export function App(): React.JSX.Element {
                     全量文件与{' '}
                     <a href={release.checksumUrls.cnb}>{release.asset.checksumFile}（国内源）</a> /{' '}
                     <a href={release.checksumUrls.github}>GitHub 源</a> 同步公开，v{release.version}{' '}
-                    · {release.platform} · {release.license}
+                    · {release.platform} · {release.license} ·{' '}
+                    <a
+                      href="#changelog"
+                      onClick={(e) => {
+                        e.preventDefault()
+                        openChangelog()
+                      }}
+                    >
+                      查看更新日志
+                    </a>
                   </p>
                   <details className="hero-trust">
                     <summary>
@@ -641,6 +720,15 @@ export function App(): React.JSX.Element {
               }}
             >
               用户手册
+            </a>
+            <a
+              href="#changelog"
+              onClick={(e) => {
+                e.preventDefault()
+                openChangelog()
+              }}
+            >
+              更新日志
             </a>
           </nav>
           <div className="footer-meta">

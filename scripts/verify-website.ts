@@ -260,6 +260,64 @@ async function checkViewport(
       .first()
       .evaluate((node) => node.hasAttribute('open'))
     if (!opened) fail('[desktop] FAQ 无法展开')
+
+    // 更新日志页导航、检索筛选与历史手风琴交互
+    const expectedVer = releaseSource.match(/version:\s*'([^']+)'/)?.[1] ?? ''
+    await page.locator('.site-nav a[href="#changelog"]').click()
+    await page.locator('.changelog-section').waitFor({ state: 'visible', timeout: 10_000 })
+    const ariaCurrent = await page
+      .locator('.site-nav a[href="#changelog"]')
+      .getAttribute('aria-current')
+    if (ariaCurrent !== 'page') fail('[desktop] 更新日志导航缺少 aria-current="page"')
+    const latestText = await page.locator('.cl-card-latest').innerText()
+    if (expectedVer && !latestText.includes(`v${expectedVer}`)) {
+      fail(`[desktop] 更新日志未包含当前版本 v${expectedVer}`)
+    }
+    const desktopClOverflow = await page.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth
+    )
+    if (desktopClOverflow > 1) {
+      fail(`[desktop] 更新日志页存在横向溢出：${desktopClOverflow}px`)
+    }
+
+    await page.locator('#cl-search').fill('资料分析')
+    const statusFiltered = await page.locator('.cl-status').innerText()
+    if (!statusFiltered.includes('匹配到')) {
+      fail(`[desktop] 更新日志关键词检索状态异常：${statusFiltered}`)
+    }
+    await page.locator('.cl-clear-btn').click()
+    await page.locator('.cl-history-item summary').first().waitFor({
+      state: 'visible',
+      timeout: 5_000
+    })
+
+    await page.locator('.cl-history-item summary').first().click()
+    const historyItemOpened = await page
+      .locator('.cl-history-item')
+      .first()
+      .evaluate((node) => node.hasAttribute('open'))
+    if (!historyItemOpened) fail('[desktop] 更新日志历史版本无法展开')
+
+    await page.locator('.cl-toggle-all-btn').click()
+    const allExpandedAttr = await page.locator('.cl-toggle-all-btn').getAttribute('aria-expanded')
+    if (allExpandedAttr !== 'true') {
+      fail(`[desktop] 展开全部历史版本按钮状态异常：aria-expanded=${allExpandedAttr ?? 'null'}`)
+    }
+
+    await page.locator('.changelog-section .guide-topbar button').click()
+    await page.locator('#download').waitFor({ state: 'visible', timeout: 10_000 })
+  } else {
+    // 移动端进入更新日志页并校验零横向溢出
+    await page.locator('.hero-meta a[href="#changelog"]').click()
+    await page.locator('.changelog-section').waitFor({ state: 'visible', timeout: 10_000 })
+    const mobileClOverflow = await page.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth
+    )
+    if (mobileClOverflow > 1) {
+      fail(`[${label}] 更新日志页存在横向溢出：${mobileClOverflow}px`)
+    }
+    await page.locator('.changelog-section .guide-topbar button').click()
+    await page.locator('#download').waitFor({ state: 'visible', timeout: 10_000 })
   }
 
   consoleErrors.forEach((error) => fail(`[${label}] console error: ${error.slice(0, 200)}`))

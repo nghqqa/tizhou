@@ -1,5 +1,6 @@
-import { Fragment, useMemo, type ReactNode } from 'react'
+import { Fragment, useMemo } from 'react'
 import guideMarkdown from '../../docs/user-guide.md?raw'
+import { renderInline } from './markdown-inline'
 
 const GITHUB_DOCS_BASE = 'https://github.com/nghqqa/tizhou/blob/master/docs/'
 
@@ -9,60 +10,6 @@ function slugify(text: string): string {
     .toLowerCase()
     .replace(/[^\p{L}\p{N}\s-]/gu, '')
     .replace(/\s+/g, '-')
-}
-
-function renderInline(text: string): ReactNode[] {
-  const nodes: ReactNode[] = []
-  const tokenRe = /(\*\*[^*]+\*\*|`[^`]+`|\[[^\]]+\]\([^)]+\))/g
-  let lastIndex = 0
-  let match: RegExpExecArray | null
-  let key = 0
-
-  while ((match = tokenRe.exec(text)) !== null) {
-    if (match.index > lastIndex) {
-      nodes.push(text.slice(lastIndex, match.index))
-    }
-    const token = match[0]
-    if (token.startsWith('**') && token.endsWith('**')) {
-      nodes.push(<strong key={key++}>{token.slice(2, -2)}</strong>)
-    } else if (token.startsWith('`') && token.endsWith('`')) {
-      nodes.push(<code key={key++}>{token.slice(1, -1)}</code>)
-    } else if (token.startsWith('[')) {
-      const linkMatch = token.match(/^\[([^\]]+)\]\(([^)]+)\)$/)
-      if (linkMatch) {
-        const [, label, rawHref] = linkMatch
-        const href = rawHref ?? '#'
-        if (href.startsWith('#')) {
-          nodes.push(
-            <a
-              key={key++}
-              href={href}
-              onClick={(e) => {
-                e.preventDefault()
-                const target = document.getElementById(href.slice(1))
-                target?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-              }}
-            >
-              {label}
-            </a>
-          )
-        } else {
-          const resolved = /^https?:\/\//i.test(href) ? href : `${GITHUB_DOCS_BASE}${href}`
-          nodes.push(
-            <a key={key++} href={resolved} target="_blank" rel="noreferrer">
-              {label}
-            </a>
-          )
-        }
-      }
-    }
-    lastIndex = match.index + token.length
-  }
-
-  if (lastIndex < text.length) {
-    nodes.push(text.slice(lastIndex))
-  }
-  return nodes
 }
 
 type Block =
@@ -199,7 +146,13 @@ function parseMarkdown(md: string): { blocks: Block[]; toc: Array<{ id: string; 
   return { blocks, toc }
 }
 
-export function UserGuide({ onBack }: { onBack: () => void }): React.JSX.Element {
+export function UserGuide({
+  onBack,
+  onOpenChangelog
+}: {
+  onBack: () => void
+  onOpenChangelog?: () => void
+}): React.JSX.Element {
   const { blocks, toc } = useMemo(() => parseMarkdown(guideMarkdown), [])
 
   return (
@@ -209,6 +162,18 @@ export function UserGuide({ onBack }: { onBack: () => void }): React.JSX.Element
           ← 返回官网首页
         </button>
         <div className="guide-topbar-links">
+          {onOpenChangelog && (
+            <a
+              href="#changelog"
+              className="header-link"
+              onClick={(e) => {
+                e.preventDefault()
+                onOpenChangelog()
+              }}
+            >
+              更新日志
+            </a>
+          )}
           <a
             href={`${GITHUB_DOCS_BASE}question-bank-import.md`}
             target="_blank"
@@ -277,7 +242,9 @@ export function UserGuide({ onBack }: { onBack: () => void }): React.JSX.Element
               )
             }
             if (block.type === 'paragraph') {
-              return <p key={idx}>{renderInline(block.text)}</p>
+              return (
+                <p key={idx}>{renderInline(block.text, { relativeLinkBase: GITHUB_DOCS_BASE })}</p>
+              )
             }
             if (block.type === 'code') {
               return (
@@ -293,7 +260,7 @@ export function UserGuide({ onBack }: { onBack: () => void }): React.JSX.Element
               return (
                 <blockquote key={idx} className="guide-quote">
                   {block.lines.map((l, li) => (
-                    <p key={li}>{renderInline(l)}</p>
+                    <p key={li}>{renderInline(l, { relativeLinkBase: GITHUB_DOCS_BASE })}</p>
                   ))}
                 </blockquote>
               )
@@ -307,7 +274,7 @@ export function UserGuide({ onBack }: { onBack: () => void }): React.JSX.Element
                       {item.split('\n').map((sub, si) => (
                         <Fragment key={si}>
                           {si > 0 && <br />}
-                          {renderInline(sub)}
+                          {renderInline(sub, { relativeLinkBase: GITHUB_DOCS_BASE })}
                         </Fragment>
                       ))}
                     </li>
@@ -321,7 +288,7 @@ export function UserGuide({ onBack }: { onBack: () => void }): React.JSX.Element
                   <thead>
                     <tr>
                       {block.headers.map((h, hi) => (
-                        <th key={hi}>{renderInline(h)}</th>
+                        <th key={hi}>{renderInline(h, { relativeLinkBase: GITHUB_DOCS_BASE })}</th>
                       ))}
                     </tr>
                   </thead>
@@ -329,7 +296,9 @@ export function UserGuide({ onBack }: { onBack: () => void }): React.JSX.Element
                     {block.rows.map((row, ri) => (
                       <tr key={ri}>
                         {row.map((cell, ci) => (
-                          <td key={ci}>{renderInline(cell)}</td>
+                          <td key={ci}>
+                            {renderInline(cell, { relativeLinkBase: GITHUB_DOCS_BASE })}
+                          </td>
                         ))}
                       </tr>
                     ))}

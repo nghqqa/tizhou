@@ -27,10 +27,48 @@ function injectSocialMeta(): Plugin {
   }
 }
 
+function sanitizeChangelogText(text: string): string {
+  const emDash = String.fromCharCode(0x2014)
+  const enDash = String.fromCharCode(0x2013)
+  const doubleEmRe = new RegExp(emDash + emDash, 'g')
+  const singleDashRe = new RegExp(`[${emDash}${enDash}]`, 'g')
+
+  return text
+    .replace(doubleEmRe, '，')
+    .replace(singleDashRe, '-')
+    .replace(/\b(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}\b/g, (full, a: string, b: string) =>
+      full === '127.0.0.1' || full === '0.0.0.0' ? full : `${a}.${b}.x.x`
+    )
+    .replace(/[Cc]:[\\/]+Users[\\/][^\s`"')，。；]*/g, '<USER_HOME>')
+}
+
+// 构建期清洗根目录 CHANGELOG.md?raw，避免把历史文档里的特殊连接号、网段数字或本地路径原样打进静态产物
+function sanitizeChangelogPlugin(): Plugin {
+  return {
+    name: 'tizhou-changelog-sanitize',
+    transform(code, id) {
+      const normalizedId = id.replace(/\\/g, '/')
+      if (!normalizedId.endsWith('/CHANGELOG.md?raw')) {
+        return null
+      }
+      const rawMatch = code.match(/^export default\s+("[\s\S]*");?\s*$/)
+      if (!rawMatch?.[1]) {
+        throw new Error(`[tizhou-changelog-sanitize] 未预期的 ?raw 模块格式：${id}`)
+      }
+      const raw = JSON.parse(rawMatch[1]) as string
+      const sanitized = sanitizeChangelogText(raw)
+      return {
+        code: `export default ${JSON.stringify(sanitized)};`,
+        map: null
+      }
+    }
+  }
+}
+
 // base 使用相对路径：无论部署在根路径、Nginx/Caddy 子目录还是本地静态服务器，资源都不会 404
 export default defineConfig({
   base: './',
-  plugins: [react(), injectSocialMeta()],
+  plugins: [react(), injectSocialMeta(), sanitizeChangelogPlugin()],
   server: { port: 5173 },
   preview: { port: 4173 }
 })
