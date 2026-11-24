@@ -37,6 +37,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { MarkdownContent } from '../components/MarkdownContent'
 import { formatDate, formatFullDate, invoke } from '../api'
 import {
+  ConfirmDialog,
   EmptyState,
   ErrorState,
   LoadingState,
@@ -68,12 +69,15 @@ export function AiPage(): React.JSX.Element {
   const [searchParams, setSearchParams] = useSearchParams()
   const requestedQuestionId = searchParams.get('questionId') ?? ''
   const ai = useAppStore((state) => state.data!.ai)
+  const showToast = useAppStore((state) => state.showToast)
   const [conversations, setConversations] = useState<AiConversation[]>([])
   const [activeConvId, setActiveConvId] = useState<string | undefined>(undefined)
   const [activeTitle, setActiveTitle] = useState('新对话')
   const [messages, setMessages] = useState<AiMessage[]>([])
   const [contextQuestion, setContextQuestion] = useState<Question | null>(null)
   const [showContextDetail, setShowContextDetail] = useState(false)
+  const [pendingDeleteConv, setPendingDeleteConv] = useState<AiConversation | null>(null)
+  const [deleteBusy, setDeleteBusy] = useState(false)
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -179,17 +183,21 @@ export function AiPage(): React.JSX.Element {
     }
   }
 
-  async function removeConversation(convId: string, event: React.MouseEvent): Promise<void> {
-    event.stopPropagation()
-    if (busy) return
+  async function confirmRemoveConversation(): Promise<void> {
+    if (!pendingDeleteConv || busy) return
+    setDeleteBusy(true)
     try {
-      await invoke({ method: 'ai.conversations.delete', params: { id: convId } })
-      setConversations((prev) => prev.filter((item) => item.id !== convId))
-      if (activeConvId === convId) {
+      await invoke({ method: 'ai.conversations.delete', params: { id: pendingDeleteConv.id } })
+      setConversations((prev) => prev.filter((item) => item.id !== pendingDeleteConv.id))
+      if (activeConvId === pendingDeleteConv.id) {
         startNewConversation()
       }
+      setPendingDeleteConv(null)
+      showToast('已删除对话记录')
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '删除对话失败')
+    } finally {
+      setDeleteBusy(false)
     }
   }
 
@@ -283,18 +291,13 @@ export function AiPage(): React.JSX.Element {
                   conversations.map((conv) => (
                     <div
                       key={conv.id}
-                      role="button"
-                      tabIndex={0}
                       className={`ai-conv-item${conv.id === activeConvId ? ' is-active' : ''}`}
-                      onClick={() => selectConversation(conv)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' || e.key === ' ') {
-                          e.preventDefault()
-                          selectConversation(conv)
-                        }
-                      }}
                     >
-                      <div className="ai-conv-item-main">
+                      <button
+                        type="button"
+                        className="ai-conv-select"
+                        onClick={() => selectConversation(conv)}
+                      >
                         <ChatCircleTextIcon size={14} className="muted" />
                         <div className="ai-conv-item-text">
                           <strong>{conv.title}</strong>
@@ -302,13 +305,13 @@ export function AiPage(): React.JSX.Element {
                             {conv.messages.length} 条 · {formatDate(conv.updatedAt)}
                           </small>
                         </div>
-                      </div>
+                      </button>
                       <button
                         type="button"
                         className="ai-conv-del"
                         aria-label="删除对话"
                         title="删除对话"
-                        onClick={(event) => void removeConversation(conv.id, event)}
+                        onClick={() => setPendingDeleteConv(conv)}
                       >
                         <TrashIcon size={13} />
                       </button>
@@ -346,6 +349,15 @@ export function AiPage(): React.JSX.Element {
                   </div>
                   {showContextDetail && (
                     <div className="ai-context-body">
+                      {contextQuestion.material && (
+                        <div className="ai-context-material">
+                          <strong>给定材料</strong>
+                          <MarkdownContent
+                            content={contextQuestion.material}
+                            sourceFilePath={contextQuestion.filePath}
+                          />
+                        </div>
+                      )}
                       <MarkdownContent
                         content={contextQuestion.stem}
                         sourceFilePath={contextQuestion.filePath}
@@ -420,10 +432,17 @@ export function AiPage(): React.JSX.Element {
                 <Textarea
                   value={input}
                   resize="none"
-                  placeholder="输入你的学习问题，Ctrl+Enter 发送"
+                  placeholder="输入你的学习问题，Ctrl+Enter / ⌘+Enter 发送"
                   onChange={(_, data) => setInput(data.value)}
                   onKeyDown={(event) => {
-                    if (event.ctrlKey && event.key === 'Enter') void send()
+                    if (
+                      (event.ctrlKey || event.metaKey) &&
+                      event.key === 'Enter' &&
+                      !event.nativeEvent.isComposing
+                    ) {
+                      event.preventDefault()
+                      void send()
+                    }
                   }}
                 />
                 <Button
@@ -437,6 +456,16 @@ export function AiPage(): React.JSX.Element {
               </div>
             </Section>
           </div>
+          <ConfirmDialog
+            open={Boolean(pendingDeleteConv)}
+            title="删除历史对话？"
+            description={`确认删除对话「${pendingDeleteConv?.title ?? ''}」？删除后无法恢复。`}
+            confirmLabel="确认删除"
+            danger
+            busy={deleteBusy}
+            onCancel={() => setPendingDeleteConv(null)}
+            onConfirm={() => void confirmRemoveConversation()}
+          />
         </>
       )}
     </div>
@@ -494,6 +523,7 @@ export function AiTrainingPage(): React.JSX.Element {
   const [selected, setSelected] = useState<string[]>([])
   const [record, setRecord] = useState<AiTrainingRecord>()
   const [history, setHistory] = useState<AiTrainingRecord[]>([])
+  const [expandedHistoryId, setExpandedHistoryId] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   useEffect(() => {
@@ -636,18 +666,31 @@ export function AiTrainingPage(): React.JSX.Element {
                 </div>
                 <MarkdownContent className="question-stem" content={variant.stem} />
                 <div className="options">
-                  {variant.options.map((option) => (
-                    <button
-                      type="button"
-                      key={option.key}
-                      className={`option-button ${selected.includes(option.key) ? 'selected' : ''}`}
-                      disabled={Boolean(record)}
-                      onClick={() => setSelected([option.key])}
-                    >
-                      <span className="option-key">{option.key}</span>
-                      <MarkdownContent content={option.text} />
-                    </button>
-                  ))}
+                  {variant.options.map((option) => {
+                    const isSelected = selected.includes(option.key)
+                    const isAnswer = Boolean(record?.answer.includes(option.key))
+                    const stateClass = record
+                      ? isAnswer
+                        ? 'correct'
+                        : isSelected
+                          ? 'wrong'
+                          : 'dimmed'
+                      : isSelected
+                        ? 'selected'
+                        : ''
+                    return (
+                      <button
+                        type="button"
+                        key={option.key}
+                        className={`option-button ${stateClass}`.trim()}
+                        disabled={Boolean(record)}
+                        onClick={() => setSelected([option.key])}
+                      >
+                        <span className="option-key">{option.key}</span>
+                        <MarkdownContent content={option.text} />
+                      </button>
+                    )
+                  })}
                 </div>
                 {record && (
                   <div className="answer-panel">
@@ -680,20 +723,52 @@ export function AiTrainingPage(): React.JSX.Element {
               </Section>
             </div>
           )}
-          <Section title="最近变式记录">
+          <Section title="最近变式记录" description="点击记录可展开题面、作答情况与解析对照。">
             {history.length ? (
               <ul className="data-list">
-                {history.slice(0, 8).map((item) => (
-                  <li className="data-row" key={item.id}>
-                    <div>
-                      <strong>{item.stem}</strong>
-                      <span>{formatFullDate(item.createdAt)}</span>
-                    </div>
-                    <span className={item.correct ? 'positive' : 'negative'}>
-                      {item.correct ? '正确' : '错误'}
-                    </span>
-                  </li>
-                ))}
+                {history.slice(0, 8).map((item) => {
+                  const expanded = expandedHistoryId === item.id
+                  return (
+                    <li className="similar-row-item" key={item.id}>
+                      <button
+                        type="button"
+                        className="similar-row-btn"
+                        onClick={() =>
+                          setExpandedHistoryId((prev) => (prev === item.id ? '' : item.id))
+                        }
+                      >
+                        <div className="ai-history-head">
+                          <strong>{item.stem}</strong>
+                          <span className={item.correct ? 'positive' : 'negative'}>
+                            {item.correct ? '正确' : '错误'}
+                          </span>
+                        </div>
+                        <span>
+                          {formatFullDate(item.createdAt)} · {expanded ? '收起详情' : '查看解析'}
+                        </span>
+                      </button>
+                      {expanded && (
+                        <div className="similar-preview-box">
+                          <MarkdownContent content={item.stem} />
+                          {item.options.length > 0 && (
+                            <ul className="ai-context-options">
+                              {item.options.map((opt) => (
+                                <li key={opt.key}>
+                                  <strong>{opt.key}.</strong> {opt.text}
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                          <p>
+                            你的作答：{item.userAnswer.join('、') || '未作答'} · 参考答案：
+                            {item.answer.join('、')}
+                          </p>
+                          <MarkdownContent content={item.explanation} />
+                        </div>
+                      )}
+                    </li>
+                  )
+                })}
               </ul>
             ) : (
               <EmptyState title="暂无变式训练记录" description="完成并提交一道变式题后显示。" />
@@ -708,6 +783,7 @@ export function AiTrainingPage(): React.JSX.Element {
 export function ModelSettingsPage(): React.JSX.Element {
   const initial = useAppStore((state) => state.data!.ai)
   const initialize = useAppStore((state) => state.initialize)
+  const showToast = useAppStore((state) => state.showToast)
   const [config, setConfig] = useState<AiConfigView>(initial)
   const [providers, setProviders] = useState<AiProviderInfo[]>([])
   const [models, setModels] = useState<string[]>([])
@@ -724,6 +800,7 @@ export function ModelSettingsPage(): React.JSX.Element {
   const [vlmModel, setVlmModel] = useState('')
   const [vlmApiKey, setVlmApiKey] = useState('')
   const [vlmBusy, setVlmBusy] = useState(false)
+  const [pendingClearKind, setPendingClearKind] = useState<'main' | 'vlm' | null>(null)
 
   useEffect(() => {
     void invoke<AiProviderInfo[]>({ method: 'ai.providers' })
@@ -815,8 +892,7 @@ export function ModelSettingsPage(): React.JSX.Element {
     }
   }
 
-  async function clearCredential(): Promise<void> {
-    if (!window.confirm('确认删除此工作台保存的模型凭据？此操作不会影响提供商账户。')) return
+  async function performClearCredential(): Promise<void> {
     setBusy(true)
     setError('')
     setMessage('')
@@ -824,6 +900,8 @@ export function ModelSettingsPage(): React.JSX.Element {
       setConfig(await invoke<AiConfigView>({ method: 'ai.config.clearCredential' }))
       setApiKey('')
       setMessage('已删除本机加密凭据。')
+      setPendingClearKind(null)
+      showToast('已删除工作台模型凭据')
       await initialize()
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '凭据删除失败')
@@ -899,8 +977,7 @@ export function ModelSettingsPage(): React.JSX.Element {
     }
   }
 
-  async function clearVlmCredential(): Promise<void> {
-    if (!window.confirm('确认删除视觉模型的加密凭据？')) return
+  async function performClearVlmCredential(): Promise<void> {
     setVlmBusy(true)
     setError('')
     setMessage('')
@@ -909,6 +986,8 @@ export function ModelSettingsPage(): React.JSX.Element {
       setVlm(view)
       setVlmApiKey('')
       setMessage('已删除视觉模型的加密凭据。')
+      setPendingClearKind(null)
+      showToast('已删除视觉模型加密凭据')
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '凭据删除失败')
     } finally {
@@ -1053,7 +1132,11 @@ export function ModelSettingsPage(): React.JSX.Element {
               测试连接
             </Button>
             {config.hasApiKey && (
-              <Button disabled={busy} onClick={() => void clearCredential()}>
+              <Button
+                className="btn-danger"
+                disabled={busy}
+                onClick={() => setPendingClearKind('main')}
+              >
                 删除凭据
               </Button>
             )}
@@ -1221,7 +1304,11 @@ export function ModelSettingsPage(): React.JSX.Element {
             测试视觉模型
           </Button>
           {vlm?.hasApiKey && vlmMode === 'custom' && (
-            <Button disabled={vlmBusy} onClick={() => void clearVlmCredential()}>
+            <Button
+              className="btn-danger"
+              disabled={vlmBusy}
+              onClick={() => setPendingClearKind('vlm')}
+            >
               删除视觉凭据
             </Button>
           )}
@@ -1260,6 +1347,23 @@ export function ModelSettingsPage(): React.JSX.Element {
           </div>
         )}
       </Section>
+      <ConfirmDialog
+        open={Boolean(pendingClearKind)}
+        title={pendingClearKind === 'main' ? '删除主模型加密凭据？' : '删除视觉模型加密凭据？'}
+        description={
+          pendingClearKind === 'main'
+            ? '确认删除此工作台保存的主模型 API 凭据？此操作不会影响提供商账户，也不会影响本地训练。'
+            : '确认删除视觉模型（VLM）的本地加密凭据？'
+        }
+        confirmLabel="确认删除"
+        danger
+        busy={pendingClearKind === 'main' ? busy : vlmBusy}
+        onCancel={() => setPendingClearKind(null)}
+        onConfirm={() => {
+          if (pendingClearKind === 'main') return performClearCredential()
+          if (pendingClearKind === 'vlm') return performClearVlmCredential()
+        }}
+      />
     </div>
   )
 }

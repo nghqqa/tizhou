@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Button, Field, Input, Select, Spinner, Switch } from '@fluentui/react-components'
 import {
   ArrowClockwiseIcon,
@@ -23,6 +23,7 @@ import { UI_SCALE_PRESETS } from '@shared/defaults'
 import { formatBytes, formatFullDate, invoke } from '../api'
 import { RegionCascadePicker } from '../components/RegionCascadePicker'
 import {
+  ConfirmDialog,
   EmptyState,
   ErrorState,
   LoadingState,
@@ -40,6 +41,9 @@ export function EnvironmentPage(): React.JSX.Element {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
+  const [pendingConfirm, setPendingConfirm] = useState<
+    { kind: 'safeMode' } | { kind: 'restoreObsidian'; id: string } | null
+  >(null)
   async function load(): Promise<void> {
     setError('')
     try {
@@ -102,8 +106,7 @@ export function EnvironmentPage(): React.JSX.Element {
       setBusy(false)
     }
   }
-  async function safeMode(): Promise<void> {
-    if (!window.confirm('将先备份 .obsidian，再禁用社区插件。插件文件不会删除，是否继续？')) return
+  async function performSafeMode(): Promise<void> {
     setBusy(true)
     setError('')
     setMessage('')
@@ -111,14 +114,14 @@ export function EnvironmentPage(): React.JSX.Element {
       await invoke<ObsidianBackupInfo>({ method: 'obsidian.safeMode' })
       await load()
       setMessage('已进入 Obsidian 安全模式，社区插件列表已停用，可随时从备份恢复。')
+      setPendingConfirm(null)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '安全模式启用失败')
     } finally {
       setBusy(false)
     }
   }
-  async function restoreObsidian(id: string): Promise<void> {
-    if (!window.confirm('恢复前会再次备份当前 .obsidian 配置。确认继续？')) return
+  async function performRestoreObsidian(id: string): Promise<void> {
     setBusy(true)
     setError('')
     setMessage('')
@@ -126,6 +129,7 @@ export function EnvironmentPage(): React.JSX.Element {
       await invoke<ObsidianBackupInfo>({ method: 'obsidian.restore', params: { id } })
       await load()
       setMessage('Obsidian 配置已恢复。')
+      setPendingConfirm(null)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Obsidian 配置恢复失败')
     } finally {
@@ -171,14 +175,17 @@ export function EnvironmentPage(): React.JSX.Element {
               <span>{status.appVersion}</span>
             </li>
             <li className="data-row">
-              <div>
+              <div className="data-row-main-ellipsis">
                 <strong>本地数据库</strong>
-                <span title={status.databasePath}>{status.databasePath}</span>
+                <span className="path-ellipsis" title={status.databasePath}>
+                  {status.databasePath}
+                </span>
               </div>
               <StatusDot status="ok" />
             </li>
           </ul>
           <Button
+            className="field-gap-top"
             icon={<FolderOpenIcon />}
             onClick={() =>
               void invoke({ method: 'shell.openPath', params: { path: status.dataDirectory } })
@@ -286,7 +293,11 @@ export function EnvironmentPage(): React.JSX.Element {
           >
             备份配置
           </Button>
-          <Button disabled={busy || !status.obsidian.vaultReady} onClick={() => void safeMode()}>
+          <Button
+            className="btn-danger"
+            disabled={busy || !status.obsidian.vaultReady}
+            onClick={() => setPendingConfirm({ kind: 'safeMode' })}
+          >
             安全模式
           </Button>
           <Button
@@ -328,7 +339,7 @@ export function EnvironmentPage(): React.JSX.Element {
                   <Button
                     size="small"
                     disabled={busy}
-                    onClick={() => void restoreObsidian(backup.id)}
+                    onClick={() => setPendingConfirm({ kind: 'restoreObsidian', id: backup.id })}
                   >
                     恢复
                   </Button>
@@ -354,12 +365,32 @@ export function EnvironmentPage(): React.JSX.Element {
           </div>
         </Section>
       )}
+      <ConfirmDialog
+        open={Boolean(pendingConfirm)}
+        title={
+          pendingConfirm?.kind === 'safeMode' ? '启用 Obsidian 安全模式？' : '恢复 Obsidian 配置？'
+        }
+        description={
+          pendingConfirm?.kind === 'safeMode'
+            ? '将先备份 .obsidian，再禁用社区插件。插件文件不会被删除，可随时恢复。'
+            : '恢复前会再次备份当前 .obsidian 配置，确认继续？'
+        }
+        confirmLabel={pendingConfirm?.kind === 'safeMode' ? '启用安全模式' : '确认恢复'}
+        danger={pendingConfirm?.kind === 'safeMode'}
+        busy={busy}
+        onCancel={() => setPendingConfirm(null)}
+        onConfirm={() => {
+          if (pendingConfirm?.kind === 'safeMode') return performSafeMode()
+          if (pendingConfirm?.kind === 'restoreObsidian')
+            return performRestoreObsidian(pendingConfirm.id)
+        }}
+      />
     </div>
   )
 }
 
 export function SettingsPage(): React.JSX.Element {
-  const { data, updateSettings, initialize } = useAppStore()
+  const { data, updateSettings, initialize, showToast } = useAppStore()
   const [settings, setSettings] = useState<AppSettings>(data!.settings)
   const [backups, setBackups] = useState<BackupInfo[]>()
   const [vaults, setVaults] = useState<VaultInfo[]>([])
@@ -370,6 +401,17 @@ export function SettingsPage(): React.JSX.Element {
   const [showWarnings, setShowWarnings] = useState(false)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
+  const [pendingConfirm, setPendingConfirm] = useState<
+    | { kind: 'importMigration'; source: string; vaultTarget: string }
+    | { kind: 'rollbackSnapshot'; snapshotId: string }
+    | { kind: 'restoreBackup'; path: string }
+    | { kind: 'resetLearningData' }
+    | null
+  >(null)
+  const settingsDirty = useMemo(
+    () => JSON.stringify(settings) !== JSON.stringify(data!.settings),
+    [settings, data]
+  )
   // 快捷键（Ctrl +/-/0）在主进程修改界面缩放时同步表单显示
   useEffect(() => {
     if (data?.settings.uiScale !== undefined) {
@@ -445,17 +487,25 @@ export function SettingsPage(): React.JSX.Element {
         params: { title: '选择知识库在新机器的存放位置（如 E:\\tizhou-vaults）' }
       })
       if (!vaultTarget) return
-      if (
-        !window.confirm(
-          '导入将替换本机全部学习数据与知识库注册，并自动重启应用完成迁移。确定继续？'
-        )
-      )
-        return
+      setPendingConfirm({ kind: 'importMigration', source, vaultTarget })
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : '导入迁移包失败')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function performImportMigration(source: string, vaultTarget: string): Promise<void> {
+    setBusy(true)
+    setError('')
+    setMessage('')
+    try {
       const result = await invoke<{ message: string }>({
         method: 'migration.import',
         params: { sourcePath: source, vaultTargetPath: vaultTarget }
       })
       setMessage(result.message)
+      setPendingConfirm(null)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '导入迁移包失败')
     } finally {
@@ -477,6 +527,11 @@ export function SettingsPage(): React.JSX.Element {
     try {
       await updateSettings(settings)
       setMessage('应用设置已保存。')
+      showToast('应用设置已保存')
+    } catch (cause) {
+      const msg = cause instanceof Error ? cause.message : '应用设置保存失败'
+      setError(msg)
+      showToast(msg)
     } finally {
       setBusy(false)
     }
@@ -580,8 +635,7 @@ export function SettingsPage(): React.JSX.Element {
       setBusy(false)
     }
   }
-  async function rollbackSnapshot(snapshotId: string): Promise<void> {
-    if (!window.confirm('将活动索引回滚到所选快照。源目录文件不会被修改，是否继续？')) return
+  async function performRollbackSnapshot(snapshotId: string): Promise<void> {
     setBusy(true)
     setError('')
     try {
@@ -592,37 +646,39 @@ export function SettingsPage(): React.JSX.Element {
       await initialize()
       await refreshVaultState(result.vault.id)
       setMessage('知识库索引已回滚。重新索引时会再次读取源目录。')
+      setPendingConfirm(null)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '索引回滚失败')
     } finally {
       setBusy(false)
     }
   }
-  async function restore(path: string): Promise<void> {
-    if (!window.confirm('恢复会先创建当前数据快照，然后用所选备份替换数据库。是否继续？')) return
+  async function performRestore(path: string): Promise<void> {
     setBusy(true)
     setError('')
     try {
       await invoke({ method: 'backup.restore', params: { path } })
       await initialize()
       setMessage('备份恢复完成。')
+      setPendingConfirm(null)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '备份恢复失败')
     } finally {
       setBusy(false)
     }
   }
-  async function resetLearningData(): Promise<void> {
-    const confirmation = window.prompt(
-      '此操作会先备份，然后清空作答、错题、笔记、计划和考试。请输入：清空学习数据'
-    )
-    if (confirmation !== '清空学习数据') return
+  async function performResetLearningData(): Promise<void> {
     setBusy(true)
     setError('')
     try {
-      await invoke({ method: 'user.resetLearningData', params: { confirmation } })
+      await invoke({
+        method: 'user.resetLearningData',
+        params: { confirmation: '清空学习数据' }
+      })
       await initialize()
       setMessage('学习数据已清空，知识库、模型凭据和应用设置保持不变。')
+      setPendingConfirm(null)
+      showToast('学习数据已清空')
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '学习数据清理失败')
     } finally {
@@ -767,14 +823,12 @@ export function SettingsPage(): React.JSX.Element {
               onChange={(_, value) => setSettings({ ...settings, autoBackup: value.checked })}
             />
           </div>
-          <Button
-            appearance="primary"
-            style={{ marginTop: 16 }}
-            disabled={busy}
-            onClick={() => void saveSettings()}
-          >
-            保存应用设置
-          </Button>
+          <div className="button-row" style={{ marginTop: 16 }}>
+            <Button appearance="primary" disabled={busy} onClick={() => void saveSettings()}>
+              保存应用设置
+            </Button>
+            {settingsDirty && <span className="pill is-warning">有未保存更改</span>}
+          </div>
         </Section>
         <Section
           title="Markdown 知识库"
@@ -892,7 +946,9 @@ export function SettingsPage(): React.JSX.Element {
                     <Button
                       size="small"
                       disabled={busy}
-                      onClick={() => void rollbackSnapshot(snapshot.id)}
+                      onClick={() =>
+                        setPendingConfirm({ kind: 'rollbackSnapshot', snapshotId: snapshot.id })
+                      }
                     >
                       回滚索引
                     </Button>
@@ -950,7 +1006,9 @@ export function SettingsPage(): React.JSX.Element {
                           size="small"
                           appearance="subtle"
                           disabled={busy}
-                          onClick={() => void restore(backup.path)}
+                          onClick={() =>
+                            setPendingConfirm({ kind: 'restoreBackup', path: backup.path })
+                          }
                         >
                           恢复
                         </Button>
@@ -1017,11 +1075,64 @@ B. 选项二
           title="危险操作"
           description="只清空学习证据，不删除知识库目录、模型凭据和应用设置。操作前自动创建本地快照。"
         >
-          <Button appearance="secondary" disabled={busy} onClick={() => void resetLearningData()}>
+          <Button
+            className="btn-danger"
+            appearance="secondary"
+            disabled={busy}
+            onClick={() => setPendingConfirm({ kind: 'resetLearningData' })}
+          >
             清空学习数据
           </Button>
         </Section>
       </div>
+      <ConfirmDialog
+        open={Boolean(pendingConfirm)}
+        title={
+          pendingConfirm?.kind === 'importMigration'
+            ? '导入迁移包并覆盖当前数据？'
+            : pendingConfirm?.kind === 'rollbackSnapshot'
+              ? '回滚知识库活动索引？'
+              : pendingConfirm?.kind === 'restoreBackup'
+                ? '从所选备份恢复数据库？'
+                : '确认清空全部学习数据？'
+        }
+        description={
+          pendingConfirm?.kind === 'importMigration'
+            ? '导入将替换本机全部学习数据与知识库注册，并自动重启应用完成迁移。确定继续？'
+            : pendingConfirm?.kind === 'rollbackSnapshot'
+              ? '将活动索引回滚到所选快照。源目录文件不会被修改，重新索引后会再次同步最新文件。'
+              : pendingConfirm?.kind === 'restoreBackup'
+                ? '恢复会先创建当前数据快照，然后用所选备份替换数据库。'
+                : '此操作会先自动创建数据库备份，然后清空全部作答、错题、笔记、计划和模考记录（不删除知识库与模型凭据）。'
+        }
+        confirmLabel={
+          pendingConfirm?.kind === 'resetLearningData'
+            ? '永久清空'
+            : pendingConfirm?.kind === 'importMigration'
+              ? '导入并重启'
+              : '确认继续'
+        }
+        confirmPhrase={pendingConfirm?.kind === 'resetLearningData' ? '清空学习数据' : undefined}
+        danger={
+          pendingConfirm?.kind === 'importMigration' || pendingConfirm?.kind === 'resetLearningData'
+        }
+        busy={busy}
+        onCancel={() => setPendingConfirm(null)}
+        onConfirm={() => {
+          if (pendingConfirm?.kind === 'importMigration') {
+            return performImportMigration(pendingConfirm.source, pendingConfirm.vaultTarget)
+          }
+          if (pendingConfirm?.kind === 'rollbackSnapshot') {
+            return performRollbackSnapshot(pendingConfirm.snapshotId)
+          }
+          if (pendingConfirm?.kind === 'restoreBackup') {
+            return performRestore(pendingConfirm.path)
+          }
+          if (pendingConfirm?.kind === 'resetLearningData') {
+            return performResetLearningData()
+          }
+        }}
+      />
     </div>
   )
 }

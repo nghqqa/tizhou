@@ -157,6 +157,8 @@ function Trainer({
   const [similar, setSimilar] = useState<Question[]>([])
   const [aiExplanation, setAiExplanation] = useState('')
   const [aiBusy, setAiBusy] = useState(false)
+  const [summaryOnlyWrong, setSummaryOnlyWrong] = useState(false)
+  const [previewSimilarId, setPreviewSimilarId] = useState('')
   const reading = useReadingTypography()
   const [wrongCause, setWrongCause] = useState('')
   const [reviewFeedback, setReviewFeedback] = useState<'forgot' | 'hard' | 'normal' | 'easy'>(
@@ -310,14 +312,16 @@ function Trainer({
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
-      // 焦点在表单控件上或提交在途时不抢键盘：避免误提交或提交中跳题串状态
+      const targetEl = event.target as HTMLElement | null
+      const isOptionButton = Boolean(targetEl?.closest('.option-button'))
+      // 焦点在表单控件或非选项按钮上，或提交在途时不抢键盘：避免误提交或提交中跳题串状态
       if (
         !current ||
         loading ||
         event.target instanceof HTMLInputElement ||
         event.target instanceof HTMLTextAreaElement ||
         event.target instanceof HTMLSelectElement ||
-        event.target instanceof HTMLButtonElement
+        (event.target instanceof HTMLButtonElement && !isOptionButton)
       )
         return
       if (event.key === 'ArrowLeft' && index > 0) {
@@ -342,8 +346,10 @@ function Trainer({
         !result &&
         !currentRecord &&
         (selected.length || essayAnswer.trim())
-      )
+      ) {
+        event.preventDefault()
         void submit()
+      }
       if (event.key.toLowerCase() === 'n' && (result || currentRecord)) void next()
     }
     window.addEventListener('keydown', onKeyDown)
@@ -653,6 +659,7 @@ function Trainer({
     if (!current) return
     try {
       await invoke({ method: 'note.save', params: { questionId: current.id, content: note } })
+      showToast('笔记已保存')
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '笔记保存失败')
     }
@@ -699,12 +706,7 @@ function Trainer({
     }
   }
 
-  if (loading && !current)
-    return (
-      <div className="page">
-        <LoadingState label="正在准备题目" />
-      </div>
-    )
+  if (loading && !current) return <LoadingState label="正在准备题目" />
 
   if (summaryComplete) {
     // 分母基于完整题目列表（快照恢复后内存态 sessionResults 可能缺失历史作答）
@@ -713,6 +715,7 @@ function Trainer({
       const item = sessionResults.find((entry) => entry.questionId === question.id)
       return !item || !item.result.correct
     })
+    const summaryVisible = summaryOnlyWrong ? wrongQuestions : questions
     return (
       <Section
         title={`本组完成：${correctCount}/${questions.length} 正确`}
@@ -721,9 +724,18 @@ function Trainer({
           <div className="button-row">
             {wrongQuestions.length > 0 && (
               <Button
+                appearance={summaryOnlyWrong ? 'primary' : 'outline'}
+                onClick={() => setSummaryOnlyWrong((v) => !v)}
+              >
+                仅看错题 ({wrongQuestions.length})
+              </Button>
+            )}
+            {wrongQuestions.length > 0 && (
+              <Button
                 appearance="secondary"
                 onClick={() => {
                   setSummaryComplete(false)
+                  setSummaryOnlyWrong(false)
                   setQuestions(wrongQuestions)
                   setIndex(0)
                   setSelected([])
@@ -743,6 +755,7 @@ function Trainer({
               appearance="primary"
               onClick={() => {
                 setSummaryComplete(false)
+                setSummaryOnlyWrong(false)
                 setQuestions([])
                 setSession(undefined)
                 setSessionResults([])
@@ -753,7 +766,8 @@ function Trainer({
           </div>
         }
       >
-        {questions.map((question, questionIndex) => {
+        {summaryVisible.map((question) => {
+          const questionIndex = questions.findIndex((entry) => entry.id === question.id)
           const item = sessionResults.find((entry) => entry.questionId === question.id)
           return (
             <div className="answer-panel" key={question.id}>
@@ -1293,6 +1307,9 @@ function Trainer({
             </Button>
           )}
         </div>
+        <div className="shortcut-hint">
+          快捷键：A–D / 1–4 选答案 · Enter 提交 · N 下一题 · ←/→ 切题
+        </div>
       </Section>
       <div className="side-stack">
         <Section
@@ -1324,25 +1341,49 @@ function Trainer({
             })}
           </div>
         </Section>
-        <Section title="错因标注" description="标注会进入报告，用于区分知识和操作问题。">
-          <Field label="本题主要风险">
-            <Select
-              value={wrongCause}
-              onChange={(_, data) => setWrongCause(data.value)}
-              disabled={Boolean(result)}
-            >
-              <option value="">暂不标注</option>
-              <option value="知识缺口">知识缺口</option>
-              <option value="概念混淆">概念混淆</option>
-              <option value="审题失误">审题失误</option>
-              <option value="计算失误">计算失误</option>
-              <option value="时间压力">时间压力</option>
-              <option value="猜测">猜测</option>
-              <option value="未知">未知</option>
-            </Select>
-          </Field>
+        <Section
+          title="错因标注"
+          description="标注会进入报告，用于区分知识和操作问题；答错后仍可补标修改。"
+        >
+          {(() => {
+            const submitted = Boolean(result || currentRecord)
+            const isWrongSubmitted = Boolean(
+              (result && !result.correct) || (currentRecord && !currentRecord.result.correct)
+            )
+            return (
+              <Field label="本题主要风险">
+                <Select
+                  value={wrongCause}
+                  disabled={submitted && !isWrongSubmitted}
+                  onChange={(_, data) => {
+                    const nextCause = data.value
+                    setWrongCause(nextCause)
+                    if (current && isWrongSubmitted) {
+                      void invoke({
+                        method: 'wrongQuestion.setCause',
+                        params: { questionId: current.id, wrongCause: nextCause }
+                      })
+                        .then(() => showToast('错因标注已更新'))
+                        .catch((cause) =>
+                          setError(cause instanceof Error ? cause.message : '错因更新失败')
+                        )
+                    }
+                  }}
+                >
+                  <option value="">暂不标注</option>
+                  <option value="知识缺口">知识缺口</option>
+                  <option value="概念混淆">概念混淆</option>
+                  <option value="审题失误">审题失误</option>
+                  <option value="计算失误">计算失误</option>
+                  <option value="时间压力">时间压力</option>
+                  <option value="猜测">猜测</option>
+                  <option value="未知">未知</option>
+                </Select>
+              </Field>
+            )
+          })()}
           {review && (
-            <Field label="本次记忆反馈" style={{ marginTop: 12 }}>
+            <Field label="本次记忆反馈" className="field-gap-top">
               <Select
                 value={reviewFeedback}
                 onChange={(_, data) =>
@@ -1368,25 +1409,52 @@ function Trainer({
           />
           <Button
             icon={<NotePencilIcon />}
-            style={{ marginTop: 10 }}
+            className="field-gap-top"
             onClick={() => void saveNote()}
           >
             保存笔记
           </Button>
         </Section>
         {result && similar.length > 0 && (
-          <Section title="相似题" description="按模块、标签与难度在本地匹配。">
+          <Section title="相似题" description="按模块、标签与难度在本地匹配，点击查看解析。">
             <ul className="data-list">
-              {similar.map((question) => (
-                <li className="data-row" key={question.id}>
-                  <div>
-                    <strong>{question.stem}</strong>
-                    <span>
-                      {question.category} · 难度 {question.difficulty}
-                    </span>
-                  </div>
-                </li>
-              ))}
+              {similar.map((question) => {
+                const open = previewSimilarId === question.id
+                return (
+                  <li className="similar-row-item" key={question.id}>
+                    <button
+                      type="button"
+                      className="similar-row-btn"
+                      onClick={() =>
+                        setPreviewSimilarId((prev) => (prev === question.id ? '' : question.id))
+                      }
+                    >
+                      <strong>{question.stem}</strong>
+                      <span>
+                        {question.category} · 难度 {question.difficulty} · {open ? '收起' : '查看'}
+                      </span>
+                    </button>
+                    {open && (
+                      <div className="similar-preview-box">
+                        <MarkdownContent
+                          content={question.stem}
+                          sourceFilePath={question.filePath}
+                        />
+                        {question.answer.length > 0 && (
+                          <p>
+                            <strong>参考答案：</strong>
+                            {question.answer.join('、')}
+                          </p>
+                        )}
+                        <MarkdownContent
+                          content={question.explanation}
+                          sourceFilePath={question.filePath}
+                        />
+                      </div>
+                    )}
+                  </li>
+                )
+              })}
             </ul>
           </Section>
         )}
@@ -1498,6 +1566,9 @@ function QuestionLibraryView({ tab }: { tab: 'wrong' | 'favorite' | 'notes' }): 
   const search = useImeSearchInput({ delayMs: 200 })
   const activeQuery = search.debouncedValue.trim()
   const [expandedId, setExpandedId] = useState('')
+  const [fullStemIds, setFullStemIds] = useState<Record<string, boolean>>({})
+  const [page, setPage] = useState(1)
+  const PAGE_SIZE = 20
   const [noteDrafts, setNoteDrafts] = useState<Record<string, string>>({})
   const [savingNoteId, setSavingNoteId] = useState('')
   const [exportIncludeAnswers, setExportIncludeAnswers] = useState(true)
@@ -1509,6 +1580,10 @@ function QuestionLibraryView({ tab }: { tab: 'wrong' | 'favorite' | 'notes' }): 
       .then(setCategories)
       .catch(() => setCategories([]))
   }, [])
+
+  useEffect(() => {
+    setPage(1)
+  }, [tab, category, wrongCause, activeQuery])
 
   useEffect(() => {
     let cancelled = false
@@ -1576,6 +1651,7 @@ function QuestionLibraryView({ tab }: { tab: 'wrong' | 'favorite' | 'notes' }): 
         }
         return prev.map((row) => (row.question.id === questionId ? { ...row, note: content } : row))
       })
+      showToast('笔记已保存')
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '笔记保存失败')
     } finally {
@@ -1730,114 +1806,150 @@ function QuestionLibraryView({ tab }: { tab: 'wrong' | 'favorite' | 'notes' }): 
       ) : items.length === 0 ? (
         <EmptyState title={emptyTitle} description={emptyDescription} />
       ) : (
-        <div className="library-list">
-          {items.map((item) => {
-            const q = item.question
-            const expanded = expandedId === q.id
-            const noteValue = noteDrafts[q.id] ?? item.note
-            return (
-              <div key={q.id} className="library-card">
-                <div className="library-card-head">
-                  <div className="question-meta" style={{ marginBottom: 0 }}>
-                    <span className="pill">{q.category}</span>
-                    <span className="pill">难度 {q.difficulty}</span>
-                    {item.wrongCount > 0 && (
-                      <span className="pill warning">错 {item.wrongCount} 次</span>
-                    )}
-                    {item.lastWrongCause && <span className="pill">{item.lastWrongCause}</span>}
-                    {item.dueAt && <span className="pill">复习 {formatDate(item.dueAt)}</span>}
-                    {q.year && <span className="pill">{q.year}</span>}
-                  </div>
-                  <div className="button-row">
-                    <Button
-                      size="small"
-                      appearance="subtle"
-                      icon={<RobotIcon />}
-                      onClick={() => navigate(`/ai?questionId=${encodeURIComponent(q.id)}`)}
-                    >
-                      AI 追问
-                    </Button>
-                    <Button
-                      size="small"
-                      appearance={item.favorite ? 'secondary' : 'subtle'}
-                      icon={<BookmarkSimpleIcon weight={item.favorite ? 'fill' : undefined} />}
-                      onClick={() => void toggleFavoriteItem(item)}
-                    >
-                      {item.favorite ? '已收藏' : '收藏'}
-                    </Button>
-                    <Button
-                      size="small"
-                      appearance="subtle"
-                      onClick={() => setExpandedId(expanded ? '' : q.id)}
-                    >
-                      {expanded ? '收起解析' : '展开解析与笔记'}
-                    </Button>
-                  </div>
-                </div>
-                <div className="library-stem">
-                  <MarkdownContent content={q.stem} sourceFilePath={q.filePath} />
-                </div>
-                {item.note && !expanded && (
-                  <p className="library-note-preview">笔记：{item.note}</p>
-                )}
-                {expanded && (
-                  <div className="answer-panel">
-                    {q.material && (
-                      <div style={{ marginBottom: 10 }}>
-                        <strong>给定材料</strong>
-                        <MarkdownContent content={q.material} sourceFilePath={q.filePath} />
-                      </div>
-                    )}
-                    {q.options.length > 0 && (
-                      <div className="review-options">
-                        {q.options.map((option) => {
-                          const isAnswer = q.answer.includes(option.key)
-                          return (
-                            <div
-                              key={option.key}
-                              className={`review-option ${isAnswer ? 'correct' : ''}`.trim()}
-                            >
-                              <span className="option-key">{option.key}</span>
-                              <OptionContent option={option} sourceFilePath={q.filePath} />
-                              <span className="muted">{isAnswer ? '参考答案' : ''}</span>
-                            </div>
-                          )
-                        })}
-                      </div>
-                    )}
-                    <p>
-                      <strong>参考答案：</strong>
-                      {q.answer.length ? q.answer.join('、') : '见下方参考解析'}
-                    </p>
-                    <MarkdownContent content={q.explanation} sourceFilePath={q.filePath} />
-                    <div className="library-note-box">
-                      <Field label="本题笔记">
-                        <Textarea
-                          rows={3}
-                          value={noteValue}
-                          onChange={(_, data) =>
-                            setNoteDrafts((prev) => ({ ...prev, [q.id]: data.value }))
-                          }
-                          placeholder="记录解题套路、陷阱或复盘结论"
-                        />
-                      </Field>
+        <>
+          <div className="library-list">
+            {items.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE).map((item) => {
+              const q = item.question
+              const expanded = expandedId === q.id
+              const stemExpanded = expanded || Boolean(fullStemIds[q.id])
+              const isLongStem = q.stem.replace(/\s+/g, '').length > 110
+              const noteValue = noteDrafts[q.id] ?? item.note
+              return (
+                <div key={q.id} className="library-card">
+                  <div className="library-card-head">
+                    <div className="question-meta">
+                      <span className="pill">{q.category}</span>
+                      <span className="pill">难度 {q.difficulty}</span>
+                      {item.wrongCount > 0 && (
+                        <span className="pill warning">错 {item.wrongCount} 次</span>
+                      )}
+                      {item.lastWrongCause && <span className="pill">{item.lastWrongCause}</span>}
+                      {item.dueAt && <span className="pill">复习 {formatDate(item.dueAt)}</span>}
+                      {q.year && <span className="pill">{q.year}</span>}
+                    </div>
+                    <div className="button-row">
                       <Button
                         size="small"
-                        appearance="secondary"
-                        icon={<NotePencilIcon />}
-                        disabled={savingNoteId === q.id}
-                        style={{ marginTop: 8 }}
-                        onClick={() => void saveLibraryNote(q.id)}
+                        appearance="subtle"
+                        icon={<RobotIcon />}
+                        onClick={() => navigate(`/ai?questionId=${encodeURIComponent(q.id)}`)}
                       >
-                        {savingNoteId === q.id ? '保存中…' : '保存笔记'}
+                        AI 追问
+                      </Button>
+                      <Button
+                        size="small"
+                        appearance={item.favorite ? 'secondary' : 'subtle'}
+                        icon={<BookmarkSimpleIcon weight={item.favorite ? 'fill' : undefined} />}
+                        onClick={() => void toggleFavoriteItem(item)}
+                      >
+                        {item.favorite ? '已收藏' : '收藏'}
+                      </Button>
+                      <Button
+                        size="small"
+                        appearance="subtle"
+                        onClick={() => setExpandedId(expanded ? '' : q.id)}
+                      >
+                        {expanded ? '收起解析' : '展开解析与笔记'}
                       </Button>
                     </div>
                   </div>
-                )}
-              </div>
-            )
-          })}
-        </div>
+                  <div className={`library-stem${stemExpanded ? '' : ' is-clamped'}`}>
+                    <MarkdownContent content={q.stem} sourceFilePath={q.filePath} />
+                  </div>
+                  {isLongStem && !expanded && (
+                    <button
+                      type="button"
+                      className="library-stem-toggle"
+                      onClick={() => setFullStemIds((prev) => ({ ...prev, [q.id]: !prev[q.id] }))}
+                    >
+                      {stemExpanded ? '收起题干' : '展开全文'}
+                    </button>
+                  )}
+                  {item.note && !expanded && (
+                    <p className="library-note-preview">笔记：{item.note}</p>
+                  )}
+                  {expanded && (
+                    <div className="answer-panel">
+                      {q.material && (
+                        <div className="library-material-block">
+                          <strong>给定材料</strong>
+                          <MarkdownContent content={q.material} sourceFilePath={q.filePath} />
+                        </div>
+                      )}
+                      {q.options.length > 0 && (
+                        <div className="review-options">
+                          {q.options.map((option) => {
+                            const isAnswer = q.answer.includes(option.key)
+                            return (
+                              <div
+                                key={option.key}
+                                className={`review-option ${isAnswer ? 'correct' : ''}`.trim()}
+                              >
+                                <span className="option-key">{option.key}</span>
+                                <OptionContent option={option} sourceFilePath={q.filePath} />
+                                <span className="muted">{isAnswer ? '参考答案' : ''}</span>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      )}
+                      <p>
+                        <strong>参考答案：</strong>
+                        {q.answer.length ? q.answer.join('、') : '见下方参考解析'}
+                      </p>
+                      <MarkdownContent content={q.explanation} sourceFilePath={q.filePath} />
+                      <div className="library-note-box">
+                        <Field label="本题笔记">
+                          <Textarea
+                            rows={3}
+                            value={noteValue}
+                            onChange={(_, data) =>
+                              setNoteDrafts((prev) => ({ ...prev, [q.id]: data.value }))
+                            }
+                            placeholder="记录解题套路、陷阱或复盘结论"
+                          />
+                        </Field>
+                        <Button
+                          size="small"
+                          appearance="secondary"
+                          icon={<NotePencilIcon />}
+                          disabled={savingNoteId === q.id}
+                          className="field-gap-top-sm"
+                          onClick={() => void saveLibraryNote(q.id)}
+                        >
+                          {savingNoteId === q.id ? '保存中…' : '保存笔记'}
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+          {items.length > PAGE_SIZE && (
+            <div className="list-pagination">
+              <Button
+                size="small"
+                appearance="subtle"
+                disabled={page <= 1}
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+              >
+                上一页
+              </Button>
+              <span className="muted">
+                第 {page} / {Math.ceil(items.length / PAGE_SIZE)} 页（共 {items.length} 题）
+              </span>
+              <Button
+                size="small"
+                appearance="subtle"
+                disabled={page >= Math.ceil(items.length / PAGE_SIZE)}
+                onClick={() => setPage((p) => Math.min(Math.ceil(items.length / PAGE_SIZE), p + 1))}
+              >
+                下一页
+              </Button>
+            </div>
+          )}
+        </>
       )}
     </Section>
   )
@@ -1850,7 +1962,7 @@ export function ReviewPage(): React.JSX.Element {
     void invoke<ReviewItem[]>({ method: 'review.due', params: { limit: 500 } }).then(setDue)
   }, [])
   return (
-    <div className="page">
+    <div className="page page-wide">
       <PageHeader
         eyebrow="训练 · 错题复习"
         title="错题复习"

@@ -1,6 +1,14 @@
-import type { ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import {
   Button,
+  Dialog,
+  DialogActions,
+  DialogBody,
+  DialogContent,
+  DialogSurface,
+  DialogTitle,
+  Field,
+  Input,
   MessageBar,
   MessageBarBody,
   ProgressBar,
@@ -130,5 +138,80 @@ export function StatusDot({
               : '未配置'
       }
     />
+  )
+}
+
+export interface ConfirmDialogProps {
+  open: boolean
+  title: string
+  description: ReactNode
+  confirmLabel?: string
+  cancelLabel?: string
+  danger?: boolean
+  confirmPhrase?: string
+  busy?: boolean
+  onConfirm: () => void | Promise<void>
+  onCancel: () => void
+}
+
+export function ConfirmDialog({
+  open,
+  title,
+  description,
+  confirmLabel = '确认',
+  cancelLabel = '取消',
+  danger = false,
+  confirmPhrase,
+  busy = false,
+  onConfirm,
+  onCancel
+}: ConfirmDialogProps): React.JSX.Element {
+  const [typedPhrase, setTypedPhrase] = useState('')
+
+  useEffect(() => {
+    setTypedPhrase('')
+  }, [open, confirmPhrase])
+
+  const phraseMismatch = Boolean(confirmPhrase && typedPhrase.trim() !== confirmPhrase)
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(_, data) => {
+        if (!data.open && !busy) onCancel()
+      }}
+    >
+      <DialogSurface>
+        <DialogBody>
+          <DialogTitle>{title}</DialogTitle>
+          <DialogContent>
+            <div className="confirm-dialog-desc">{description}</div>
+            {confirmPhrase && (
+              <Field className="confirm-phrase-field" label={`请输入「${confirmPhrase}」以确认`}>
+                <Input
+                  value={typedPhrase}
+                  disabled={busy}
+                  placeholder={confirmPhrase}
+                  onChange={(_, data) => setTypedPhrase(data.value)}
+                />
+              </Field>
+            )}
+          </DialogContent>
+          <DialogActions>
+            <Button appearance="subtle" disabled={busy} onClick={onCancel}>
+              {cancelLabel}
+            </Button>
+            <Button
+              appearance="primary"
+              className={danger ? 'btn-danger is-primary' : undefined}
+              disabled={busy || phraseMismatch}
+              onClick={() => void onConfirm()}
+            >
+              {busy ? '处理中…' : confirmLabel}
+            </Button>
+          </DialogActions>
+        </DialogBody>
+      </DialogSurface>
+    </Dialog>
   )
 }

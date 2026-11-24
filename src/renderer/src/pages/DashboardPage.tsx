@@ -466,7 +466,7 @@ export function DashboardPage(): React.JSX.Element {
                 <div>
                   <strong>{dashboard.activeExam.title}</strong>
                   <span>
-                    已答 {Object.keys(dashboard.activeExam.answers).length} of{' '}
+                    已答 {Object.keys(dashboard.activeExam.answers).length} /{' '}
                     {dashboard.activeExam.questionIds.length} 题
                   </span>
                 </div>

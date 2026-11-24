@@ -1,3 +1,5 @@
+import type { ShenlunMaterialQualityLevel } from './shenlun'
+
 export type Subject = 'xingce' | 'shenlun'
 export type QuestionType = 'single' | 'multiple' | 'judge' | 'essay'
 export type Difficulty = 1 | 2 | 3 | 4 | 5
@@ -321,6 +323,9 @@ export interface QuestionSummary {
   region?: string
   paper?: string
   stemPreview: string
+  materialQuality?: ShenlunMaterialQualityLevel
+  materialIssues?: string[]
+  hasReferenceAnswer?: boolean
 }
 
 export interface QuestionFacets {

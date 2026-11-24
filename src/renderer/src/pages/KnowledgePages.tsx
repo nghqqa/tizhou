@@ -1,6 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Field, Input } from '@fluentui/react-components'
-import { MagnifyingGlassIcon, XIcon } from '@phosphor-icons/react'
+import { Button, Field, Input } from '@fluentui/react-components'
+import {
+  ArrowLeftIcon,
+  ArrowRightIcon,
+  CheckIcon,
+  CopyIcon,
+  MagnifyingGlassIcon,
+  XIcon
+} from '@phosphor-icons/react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import type { KnowledgeDocument, Subject } from '@shared/contracts'
 import { matchesSearchTerms } from '@shared/search'
@@ -9,7 +16,13 @@ import { MarkdownContent } from '../components/MarkdownContent'
 import { ReadingTypographyBar, useReadingTypography } from '../components/ReadingTypographyControl'
 import { EmptyState, ErrorState, LoadingState, PageHeader, Section } from '../components/ui'
 import { useImeSearchInput } from '../services/search-input'
-import { extractSearchSnippet } from '../services/study-helpers'
+import {
+  classifyDocumentFilters,
+  extractSearchSnippet,
+  filterDocumentsByCategory,
+  sortDocumentsForReading
+} from '../services/study-helpers'
+import { useAppStore } from '../store'
 
 interface KnowledgePageProps {
   subject: Subject
@@ -18,46 +31,68 @@ interface KnowledgePageProps {
 
 export function KnowledgePage({ subject, kind }: KnowledgePageProps): React.JSX.Element {
   const navigate = useNavigate()
+  const showToast = useAppStore((state) => state.showToast)
   const [searchParams] = useSearchParams()
   const requestedDocId = searchParams.get('docId') ?? ''
   const [documents, setDocuments] = useState<KnowledgeDocument[]>()
   const [selectedId, setSelectedId] = useState(requestedDocId)
+  const [categoryFilter, setCategoryFilter] = useState('all')
+  const [copiedId, setCopiedId] = useState('')
   const search = useImeSearchInput({ delayMs: 0 })
   const [error, setError] = useState('')
   const reading = useReadingTypography()
+
   useEffect(() => {
-    if (requestedDocId) setSelectedId(requestedDocId)
+    if (requestedDocId) {
+      setSelectedId(requestedDocId)
+      setCategoryFilter('all')
+    }
   }, [requestedDocId])
+
   useEffect(() => {
     setDocuments(undefined)
     setError('')
+    setCategoryFilter('all')
     void invoke<KnowledgeDocument[]>({ method: 'documents.list', params: { subject, kind } })
       .then((items) => {
-        setDocuments(items)
+        const sorted = sortDocumentsForReading(items)
+        setDocuments(sorted)
         setSelectedId((prev) =>
-          prev && items.some((item) => item.id === prev) ? prev : (items[0]?.id ?? '')
+          prev && sorted.some((item) => item.id === prev) ? prev : (sorted[0]?.id ?? '')
         )
       })
       .catch((cause) => setError(cause instanceof Error ? cause.message : '文档读取失败'))
   }, [subject, kind])
+
+  const categoryBuckets = useMemo(() => {
+    if (!documents) return []
+    return classifyDocumentFilters(documents, subject, kind)
+  }, [documents, subject, kind])
+
   const filtered = useMemo(() => {
     if (!documents) return []
+    const byCategory = filterDocumentsByCategory(documents, categoryFilter, subject, kind)
     const committed = search.committedValue.trim()
-    if (!committed) return documents
-    return documents.filter((document) =>
+    if (!committed) return byCategory
+    return byCategory.filter((document) =>
       matchesSearchTerms(
         `${document.title}\n${document.summary}\n${document.tags.join(' ')}\n${document.content}`,
         committed
       )
     )
-  }, [documents, search.committedValue])
+  }, [documents, categoryFilter, subject, kind, search.committedValue])
+
   const selected = filtered.find((item) => item.id === selectedId) ?? filtered[0]
+  const selectedIndex = selected ? filtered.findIndex((item) => item.id === selected.id) : -1
+  const hasPrev = selectedIndex > 0
+  const hasNext = selectedIndex >= 0 && selectedIndex < filtered.length - 1
+
   const contentRef = useRef<HTMLElement>(null)
   const [headings, setHeadings] = useState<
     Array<{ level: 2 | 3; text: string; element: HTMLElement }>
   >([])
+
   useEffect(() => {
-    // 切换文档后内容区回到顶部，避免停留在上一篇的滚动位置
     const container = contentRef.current
     container?.scrollTo({ top: 0 })
     if (!container || !selected) {
@@ -82,7 +117,25 @@ export function KnowledgePage({ subject, kind }: KnowledgePageProps): React.JSX.
   function scrollToHeading(element: HTMLElement): void {
     element.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }
+
+  async function copyContent(): Promise<void> {
+    if (!selected) return
+    try {
+      await navigator.clipboard.writeText(selected.content)
+      setCopiedId(selected.id)
+      showToast('已复制文档正文')
+      window.setTimeout(() => {
+        setCopiedId((prev) => (prev === selected.id ? '' : prev))
+      }, 1500)
+    } catch {
+      showToast('复制失败，请手动选中文本复制')
+    }
+  }
+
   const title = `${subject === 'xingce' ? '行测' : '申论'}${kind === 'knowledge' ? '知识' : '方法'}中心`
+  const totalCount = documents?.length ?? 0
+  const charCount = selected ? selected.content.replace(/\s+/g, '').length : 0
+
   if (error)
     return (
       <div className="page">
@@ -109,35 +162,67 @@ export function KnowledgePage({ subject, kind }: KnowledgePageProps): React.JSX.
       ) : (
         <Section className="document-layout">
           <div className="document-list">
-            <Field label="搜索文档（含正文）">
-              <Input
-                value={search.value}
-                contentBefore={<MagnifyingGlassIcon />}
-                contentAfter={
-                  search.value ? (
+            <div className="document-list-head">
+              <Field label="搜索文档（含正文）">
+                <Input
+                  value={search.value}
+                  contentBefore={<MagnifyingGlassIcon />}
+                  contentAfter={
+                    search.value ? (
+                      <button
+                        type="button"
+                        className="search-clear-btn"
+                        aria-label="清除搜索关键词"
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={() => search.clear()}
+                      >
+                        <XIcon size={13} />
+                      </button>
+                    ) : undefined
+                  }
+                  onChange={(event, data) => search.handleChange(data.value, event.nativeEvent)}
+                  onCompositionStart={search.handleCompositionStart}
+                  onCompositionEnd={search.handleCompositionEnd}
+                  onKeyDown={search.handleKeyDown}
+                  placeholder="标题、摘要、标签或正文关键词（空格分隔多词）"
+                />
+              </Field>
+              {categoryBuckets.length > 1 && (
+                <div className="doc-filter-chips" role="tablist" aria-label="文档分类筛选">
+                  {categoryBuckets.map((bucket) => (
                     <button
+                      key={bucket.key}
                       type="button"
-                      className="search-clear-btn"
-                      aria-label="清除搜索关键词"
-                      onMouseDown={(event) => event.preventDefault()}
-                      onClick={() => search.clear()}
+                      role="tab"
+                      aria-selected={categoryFilter === bucket.key}
+                      className={`doc-filter-chip${categoryFilter === bucket.key ? ' is-active' : ''}`}
+                      onClick={() => setCategoryFilter(bucket.key)}
                     >
-                      <XIcon size={13} />
+                      <span>{bucket.label}</span>
+                      <small>{bucket.count}</small>
                     </button>
-                  ) : undefined
-                }
-                onChange={(event, data) => search.handleChange(data.value, event.nativeEvent)}
-                onCompositionStart={search.handleCompositionStart}
-                onCompositionEnd={search.handleCompositionEnd}
-                onKeyDown={search.handleKeyDown}
-                placeholder="标题、摘要、标签或正文关键词（空格分隔多词）"
-              />
-            </Field>
-            <div style={{ marginTop: 12 }}>
+                  ))}
+                </div>
+              )}
+              <div className="doc-list-meta">
+                <span>
+                  {filtered.length === totalCount
+                    ? `共 ${totalCount} 篇`
+                    : `当前命中 ${filtered.length} / ${totalCount} 篇`}
+                </span>
+                {selectedIndex >= 0 && (
+                  <span>
+                    第 {selectedIndex + 1} / {filtered.length} 篇
+                  </span>
+                )}
+              </div>
+            </div>
+            <div className="document-list-items">
               {filtered.map((document) => {
                 const snippet = search.committedValue.trim()
                   ? extractSearchSnippet(document.content, search.committedValue)
                   : null
+                const visibleTags = document.tags.slice(0, 2)
                 return (
                   <button
                     type="button"
@@ -146,6 +231,15 @@ export function KnowledgePage({ subject, kind }: KnowledgePageProps): React.JSX.
                     onClick={() => setSelectedId(document.id)}
                   >
                     <strong>{document.title}</strong>
+                    {visibleTags.length > 0 && (
+                      <div className="doc-item-tags">
+                        {visibleTags.map((tag) => (
+                          <span className="doc-item-tag" key={tag}>
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
+                    )}
                     <small className={snippet ? 'doc-snippet' : undefined}>
                       {snippet ?? document.summary}
                     </small>
@@ -158,12 +252,53 @@ export function KnowledgePage({ subject, kind }: KnowledgePageProps): React.JSX.
             {selected ? (
               <>
                 <div className="doc-header-bar">
-                  <ReadingTypographyBar
-                    typography={reading.typography}
-                    onUpdate={reading.update}
-                    onStepScale={reading.stepScale}
-                    onResetScale={reading.resetScale}
-                  />
+                  <div className="doc-meta-bar">
+                    {selected.tags.slice(0, 4).map((tag) => (
+                      <span className="pill" key={tag}>
+                        {tag}
+                      </span>
+                    ))}
+                    <span className="doc-word-count">
+                      约 {charCount.toLocaleString('zh-CN')} 字
+                    </span>
+                  </div>
+                  <div className="doc-header-tools">
+                    <ReadingTypographyBar
+                      contextLabel="文档"
+                      typography={reading.typography}
+                      onUpdate={reading.update}
+                      onStepScale={reading.stepScale}
+                      onResetScale={reading.resetScale}
+                    />
+                    <div className="doc-pager-actions">
+                      <Button
+                        size="small"
+                        appearance="subtle"
+                        icon={copiedId === selected.id ? <CheckIcon /> : <CopyIcon />}
+                        onClick={() => void copyContent()}
+                      >
+                        {copiedId === selected.id ? '已复制' : '复制正文'}
+                      </Button>
+                      <Button
+                        size="small"
+                        appearance="subtle"
+                        icon={<ArrowLeftIcon />}
+                        disabled={!hasPrev}
+                        aria-label="上一篇"
+                        title="上一篇"
+                        onClick={() => hasPrev && setSelectedId(filtered[selectedIndex - 1]!.id)}
+                      />
+                      <Button
+                        size="small"
+                        appearance="subtle"
+                        icon={<ArrowRightIcon />}
+                        disabled={!hasNext}
+                        aria-label="下一篇"
+                        title="下一篇"
+                        onClick={() => hasNext && setSelectedId(filtered[selectedIndex + 1]!.id)}
+                      />
+                    </div>
+                  </div>
                 </div>
                 {headings.length >= 2 && (
                   <nav className="doc-toc" aria-label="文档目录">
@@ -192,7 +327,10 @@ export function KnowledgePage({ subject, kind }: KnowledgePageProps): React.JSX.
                 </div>
               </>
             ) : (
-              <EmptyState title="没有匹配文档" description="尝试缩短搜索词。" />
+              <EmptyState
+                title="没有匹配文档"
+                description="尝试切换上方的分类筛选，或缩短搜索关键词。"
+              />
             )}
           </article>
         </Section>
@@ -213,7 +351,6 @@ export function PatternsPage(): React.JSX.Element {
       setSelectedId(items[0]?.id ?? '')
     })
   }, [])
-  const selected = documents?.find((item) => item.id === selectedId)
   return (
     <div className="page">
       <PageHeader
@@ -230,36 +367,40 @@ export function PatternsPage(): React.JSX.Element {
         />
       ) : (
         <div className={documents.length > 1 ? 'grid two' : undefined}>
-          {documents.map((document) => (
-            <Section
-              key={document.id}
-              title={document.title}
-              description={document.summary}
-              actions={
-                <button type="button" className="pill" onClick={() => setSelectedId(document.id)}>
-                  展开
-                </button>
-              }
-            >
-              {selectedId === document.id ? (
-                <MarkdownContent content={document.content} sourceFilePath={document.filePath} />
-              ) : (
-                <div className="button-row">
-                  {document.tags.map((tag) => (
-                    <span className="pill" key={tag}>
-                      {tag}
-                    </span>
-                  ))}
-                </div>
-              )}
-            </Section>
-          ))}
+          {documents.map((document) => {
+            const expanded = selectedId === document.id
+            return (
+              <Section
+                key={document.id}
+                title={document.title}
+                description={document.summary}
+                actions={
+                  <button
+                    type="button"
+                    className="pill"
+                    onClick={() =>
+                      setSelectedId((prev) => (prev === document.id ? '' : document.id))
+                    }
+                  >
+                    {expanded ? '收起' : '展开'}
+                  </button>
+                }
+              >
+                {expanded ? (
+                  <MarkdownContent content={document.content} sourceFilePath={document.filePath} />
+                ) : (
+                  <div className="button-row">
+                    {document.tags.map((tag) => (
+                      <span className="pill" key={tag}>
+                        {tag}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </Section>
+            )
+          })}
         </div>
-      )}
-      {selected && documents && documents.length > 4 && (
-        <Section title={selected.title}>
-          <MarkdownContent content={selected.content} sourceFilePath={selected.filePath} />
-        </Section>
       )}
     </div>
   )

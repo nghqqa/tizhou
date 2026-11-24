@@ -54,7 +54,14 @@ import type {
 } from '@shared/contracts'
 import { formatBytes, invoke } from '../api'
 import { MarkdownContent } from '../components/MarkdownContent'
-import { EmptyState, ErrorState, LoadingState, PageHeader, Section } from '../components/ui'
+import {
+  ConfirmDialog,
+  EmptyState,
+  ErrorState,
+  LoadingState,
+  PageHeader,
+  Section
+} from '../components/ui'
 import { useImeSearchInput } from '../services/search-input'
 import { useAppStore } from '../store'
 
@@ -195,6 +202,14 @@ function hasProofreadPages(artifact: KnowledgeArtifactSummary): boolean {
 
 export function KnowledgeBuilderPage(): React.JSX.Element {
   const initialize = useAppStore((state) => state.initialize)
+  const showToast = useAppStore((state) => state.showToast)
+  const [confirmAction, setConfirmAction] = useState<
+    | { kind: 'clearCacheAll' }
+    | { kind: 'revertImport' }
+    | { kind: 'reviewAll'; status: 'approved' | 'rejected'; count: number }
+    | { kind: 'cancelJob' }
+    | null
+  >(null)
   const [engine, setEngine] = useState<KnowledgeEngineStatus>()
   const [scan, setScan] = useState<KnowledgeSourceScan>()
   const [sourcePath, setSourcePath] = useState('')
@@ -416,22 +431,23 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
     }
   }
 
-  async function clearCacheAll(): Promise<void> {
-    if (
-      !window.confirm(
-        '确定清空全部转换缓存？清空后下次导入会重新转换所有文件（OCR/结构解析耗时与首次相同）。'
-      )
-    )
-      return
+  function clearCacheAll(): void {
+    setConfirmAction({ kind: 'clearCacheAll' })
+  }
+
+  async function performClearCacheAll(): Promise<void> {
+    setConfirmAction(null)
     try {
       const removed = await invoke<{ removed: number }>({
         method: 'knowledgeBuilder.cache.clear',
         params: {}
       })
-      window.alert(`已清空 ${removed.removed} 条转换缓存。`)
+      showToast(`已清空 ${removed.removed} 条转换缓存。`)
       await refreshCacheStats()
     } catch (cause) {
-      window.alert(cause instanceof Error ? cause.message : '清空缓存失败')
+      const msg = cause instanceof Error ? cause.message : '清空缓存失败'
+      setError(msg)
+      showToast(msg)
     }
   }
 
@@ -441,14 +457,16 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
         method: 'knowledgeBuilder.cache.clear',
         params: { sourceName }
       })
-      window.alert(
+      showToast(
         removed.removed > 0
           ? `已清除「${sourceName}」的 ${removed.removed} 条转换缓存，重新导入时将重新转换。`
           : `「${sourceName}」没有可清除的转换缓存。`
       )
       await refreshCacheStats()
     } catch (cause) {
-      window.alert(cause instanceof Error ? cause.message : '清除缓存失败')
+      const msg = cause instanceof Error ? cause.message : '清除缓存失败'
+      setError(msg)
+      showToast(msg)
     }
   }
 
@@ -683,14 +701,14 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
     }
   }
 
-  async function revertImport(): Promise<void> {
+  function revertImport(): void {
     if (!job) return
-    if (
-      !window.confirm(
-        '确认撤销本次导入？将从当前题库删除该任务发布的全部题目文件并重新索引（不影响其他题目）。'
-      )
-    )
-      return
+    setConfirmAction({ kind: 'revertImport' })
+  }
+
+  async function performRevertImport(): Promise<void> {
+    if (!job) return
+    setConfirmAction(null)
     setBusy('publish')
     setError('')
     try {
@@ -698,6 +716,7 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
       await initialize()
       setJob(await invoke({ method: 'knowledgeBuilder.job.get', params: { id: job.id } }))
       setArtifact(undefined)
+      showToast('已撤销本次导入并重建索引')
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '撤销导入失败')
     } finally {
@@ -705,14 +724,19 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
     }
   }
 
-  async function reviewAll(status: 'approved' | 'rejected'): Promise<void> {
+  function reviewAll(status: 'approved' | 'rejected'): void {
     if (!job) return
     const pendingIds = job.artifacts
       .filter((item) => item.status === 'pending')
       .map((item) => item.id)
     if (!pendingIds.length) return
+    setConfirmAction({ kind: 'reviewAll', status, count: pendingIds.length })
+  }
+
+  async function performReviewAll(status: 'approved' | 'rejected'): Promise<void> {
+    if (!job) return
     const action = status === 'approved' ? '批准' : '拒绝'
-    if (!window.confirm(`确认${action}全部 ${pendingIds.length} 个待审核产物？`)) return
+    setConfirmAction(null)
     setBusy('review')
     setError('')
     setMessage('')
@@ -829,21 +853,7 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
         </div>
       )}
 
-      <div
-        className="builder-vlm-row"
-        data-testid="builder-vlm-row"
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 12,
-          flexWrap: 'wrap',
-          padding: '10px 14px',
-          marginBottom: 14,
-          border: '1px solid var(--tz-line, #d1d5d3)',
-          borderRadius: 12,
-          background: 'var(--tz-paper, #fff)'
-        }}
-      >
+      <div className="builder-vlm-row" data-testid="builder-vlm-row">
         <SparkleIcon size={18} aria-hidden />
         <Switch
           checked={vlmConfig?.enabled === true}
@@ -1015,7 +1025,7 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
               </div>
             </div>
 
-            <div className="builder-scan-summary" aria-label="转换缓存状态">
+            <div className="builder-scan-summary is-three" aria-label="转换缓存状态">
               <div>
                 <strong>{cacheInfo ? cacheInfo.entries.length : '…'}</strong>
                 <span>转换缓存条目</span>
@@ -1250,9 +1260,7 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
                 <Button
                   appearance="subtle"
                   icon={<StopIcon />}
-                  onClick={() => {
-                    if (window.confirm('确认停止当前任务？已完成的文件会保留。')) void cancelJob()
-                  }}
+                  onClick={() => setConfirmAction({ kind: 'cancelJob' })}
                 >
                   停止
                 </Button>
@@ -1530,50 +1538,6 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
                           </Button>
                         </div>
                       )}
-                      {artifact.status === 'pending' && isPublishGated(artifact) && (
-                        <div className="builder-warning-list">
-                          <span>
-                            系统能力边界：此资料包含图片型内容。题舟不会自动猜测图形规律、图表数字或图片选项。请以原始页面为准，人工核对后再批准。
-                          </span>
-                          <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                            <input
-                              type="checkbox"
-                              checked={humanConfirmed}
-                              onChange={(event) => setHumanConfirmed(event.target.checked)}
-                            />
-                            我已查看原始页面并确认内容正确
-                          </label>
-                        </div>
-                      )}
-                      {artifact.status === 'approved' && isPublishGated(artifact) && (
-                        <div className="builder-warning-list">
-                          {artifact.humanConfirmed ? (
-                            <span className="positive">已人工确认：发布限制已解除。</span>
-                          ) : (
-                            <>
-                              <span>
-                                已批准但受发布门禁限制：批量批准不会带入人工确认，勾选后提交确认才会解除发布限制。
-                              </span>
-                              <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                                <input
-                                  type="checkbox"
-                                  checked={humanConfirmed}
-                                  onChange={(event) => setHumanConfirmed(event.target.checked)}
-                                />
-                                我已查看原始页面并确认内容正确
-                              </label>
-                              <Button
-                                size="small"
-                                appearance="primary"
-                                disabled={busy === 'review' || !humanConfirmed}
-                                onClick={() => void reviewArtifact('approved')}
-                              >
-                                提交人工确认
-                              </Button>
-                            </>
-                          )}
-                        </div>
-                      )}
                       {artifact.status === 'rejected' && (
                         <div className="builder-status-row">
                           <span className="pill">已拒绝</span>
@@ -1602,6 +1566,50 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
                       )}
                       {artifact.status === 'published' && <span className="pill">已发布</span>}
                     </div>
+                    {artifact.status === 'pending' && isPublishGated(artifact) && (
+                      <div className="builder-warning-list">
+                        <span>
+                          系统能力边界：此资料包含图片型内容。题舟不会自动猜测图形规律、图表数字或图片选项。请以原始页面为准，人工核对后再批准。
+                        </span>
+                        <label className="builder-confirm-check">
+                          <input
+                            type="checkbox"
+                            checked={humanConfirmed}
+                            onChange={(event) => setHumanConfirmed(event.target.checked)}
+                          />
+                          我已查看原始页面并确认内容正确
+                        </label>
+                      </div>
+                    )}
+                    {artifact.status === 'approved' && isPublishGated(artifact) && (
+                      <div className="builder-warning-list">
+                        {artifact.humanConfirmed ? (
+                          <span className="positive">已人工确认：发布限制已解除。</span>
+                        ) : (
+                          <>
+                            <span>
+                              已批准但受发布门禁限制：批量批准不会带入人工确认，勾选后提交确认才会解除发布限制。
+                            </span>
+                            <label className="builder-confirm-check">
+                              <input
+                                type="checkbox"
+                                checked={humanConfirmed}
+                                onChange={(event) => setHumanConfirmed(event.target.checked)}
+                              />
+                              我已查看原始页面并确认内容正确
+                            </label>
+                            <Button
+                              size="small"
+                              appearance="primary"
+                              disabled={busy === 'review' || !humanConfirmed}
+                              onClick={() => void reviewArtifact('approved')}
+                            >
+                              提交人工确认
+                            </Button>
+                          </>
+                        )}
+                      </div>
+                    )}
                     {artifact.warnings.length > 0 && (
                       <div className="builder-warning-list">
                         {artifact.warnings.map((warning) => (
@@ -1649,11 +1657,7 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
                       </div>
                     )}
                     {editorMode === 'vlm' && vlmSuggestion && (
-                      <div
-                        className="builder-warning-list"
-                        data-testid="vlm-suggestion-panel"
-                        style={{ gap: 6 }}
-                      >
+                      <div className="builder-editor-panel" data-testid="vlm-suggestion-panel">
                         <strong>精校建议（未落盘，对比后采纳）</strong>
                         {vlmSuggestion.summary && <span>{vlmSuggestion.summary}</span>}
                         {vlmSuggestion.changes.length > 0 && (
@@ -1698,11 +1702,7 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
                       </div>
                     )}
                     {editorMode === 'manual' && (
-                      <div
-                        className="builder-warning-list"
-                        data-testid="manual-editor-panel"
-                        style={{ gap: 6 }}
-                      >
+                      <div className="builder-editor-panel" data-testid="manual-editor-panel">
                         <strong>编辑正文</strong>
                         <span className="muted-copy">
                           可直接修正错别字与错数字；frontmatter 中的
@@ -1847,6 +1847,55 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
           </DialogBody>
         </DialogSurface>
       </Dialog>
+      <ConfirmDialog
+        open={Boolean(confirmAction)}
+        title={
+          confirmAction?.kind === 'clearCacheAll'
+            ? '清空全部转换缓存？'
+            : confirmAction?.kind === 'revertImport'
+              ? '撤销本次导入？'
+              : confirmAction?.kind === 'reviewAll'
+                ? `确认${confirmAction.status === 'approved' ? '批准' : '拒绝'}全部待审核产物？`
+                : '停止当前转换任务？'
+        }
+        description={
+          confirmAction?.kind === 'clearCacheAll'
+            ? '清空后下次导入会重新转换所有文件（OCR 与结构解析耗时与首次相同）。'
+            : confirmAction?.kind === 'revertImport'
+              ? '将从当前题库删除本次任务发布的全部题目文件并重新索引，不影响其他题目。'
+              : confirmAction?.kind === 'reviewAll'
+                ? `本次将批量${confirmAction.status === 'approved' ? '批准' : '拒绝'} ${confirmAction.count} 个待审核产物。`
+                : '已完成转换的文件会保留在任务目录中。'
+        }
+        confirmLabel={
+          confirmAction?.kind === 'clearCacheAll'
+            ? '清空缓存'
+            : confirmAction?.kind === 'revertImport'
+              ? '撤销导入'
+              : confirmAction?.kind === 'reviewAll'
+                ? confirmAction.status === 'approved'
+                  ? '全部批准'
+                  : '全部拒绝'
+                : '确认停止'
+        }
+        danger={
+          confirmAction?.kind === 'clearCacheAll' ||
+          confirmAction?.kind === 'revertImport' ||
+          confirmAction?.kind === 'cancelJob' ||
+          (confirmAction?.kind === 'reviewAll' && confirmAction.status === 'rejected')
+        }
+        busy={Boolean(busy)}
+        onCancel={() => setConfirmAction(null)}
+        onConfirm={() => {
+          if (confirmAction?.kind === 'clearCacheAll') return performClearCacheAll()
+          if (confirmAction?.kind === 'revertImport') return performRevertImport()
+          if (confirmAction?.kind === 'reviewAll') return performReviewAll(confirmAction.status)
+          if (confirmAction?.kind === 'cancelJob') {
+            setConfirmAction(null)
+            return cancelJob()
+          }
+        }}
+      />
     </div>
   )
 }

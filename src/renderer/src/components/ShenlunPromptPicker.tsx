@@ -109,6 +109,17 @@ export function ShenlunPromptPicker({
                       <span className={`prompt-badge kind-${kind}`}>{kind}</span>
                       {prompt.region && <span className="prompt-badge">{prompt.region}</span>}
                       {prompt.year && <span className="prompt-badge">{prompt.year}</span>}
+                      {prompt.materialQuality === 'verified' && (
+                        <span className="prompt-badge is-verified">完整精校</span>
+                      )}
+                      {prompt.materialQuality === 'incomplete' && (
+                        <span
+                          className="prompt-badge is-incomplete"
+                          title={prompt.materialIssues?.join('、') || '材料存在提取残缺'}
+                        >
+                          材料有残缺
+                        </span>
+                      )}
                       {status && (
                         <span className="prompt-badge is-score">已评 {status.latestScore} 分</span>
                       )}

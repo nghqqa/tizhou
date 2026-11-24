@@ -88,20 +88,21 @@ export function ReadingTypographyBar(props: {
   onUpdate: (patch: Partial<ReadingTypography>) => void
   onStepScale: (delta: number) => void
   onResetScale: () => void
+  contextLabel?: string
 }): React.JSX.Element {
-  const { typography, onUpdate, onStepScale, onResetScale } = props
+  const { typography, onUpdate, onStepScale, onResetScale, contextLabel = '题目阅读' } = props
   return (
     <div
       className="reading-toolbar"
       role="group"
-      aria-label="题目阅读字号与字体调节"
-      title="支持按钮、滑块或按住 Ctrl 滚动滚轮自由缩放题目字号"
+      aria-label={`${contextLabel}字号与字体调节`}
+      title={`支持按钮、滑块或按住 Ctrl 滚动滚轮自由缩放${contextLabel}字号`}
     >
       <div className="reading-scale-group">
         <button
           type="button"
           className="reading-scale-btn"
-          aria-label="缩小题目字号"
+          aria-label={`缩小${contextLabel}字号`}
           disabled={typography.scale <= READING_SCALE_MIN}
           onClick={() => onStepScale(-READING_SCALE_STEP)}
         >
@@ -110,7 +111,7 @@ export function ReadingTypographyBar(props: {
         <input
           type="range"
           className="reading-scale-slider"
-          aria-label="题目字号缩放比例"
+          aria-label={`${contextLabel}字号缩放比例`}
           min={READING_SCALE_MIN}
           max={READING_SCALE_MAX}
           step={READING_SCALE_STEP}
@@ -120,7 +121,7 @@ export function ReadingTypographyBar(props: {
         <button
           type="button"
           className="reading-scale-btn"
-          aria-label="放大题目字号"
+          aria-label={`放大${contextLabel}字号`}
           disabled={typography.scale >= READING_SCALE_MAX}
           onClick={() => onStepScale(READING_SCALE_STEP)}
         >
@@ -137,7 +138,7 @@ export function ReadingTypographyBar(props: {
       </div>
       <select
         className="reading-font-select"
-        aria-label="题目阅读字体"
+        aria-label={`${contextLabel}字体`}
         value={typography.font}
         onChange={(event) => onUpdate({ font: event.target.value as ReadingFontPreset })}
       >

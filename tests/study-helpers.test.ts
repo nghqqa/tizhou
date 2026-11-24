@@ -2,10 +2,14 @@ import { describe, expect, it } from 'vitest'
 import { escapeSqlLike, matchesSearchTerms, splitSearchTerms } from '../src/shared/search'
 import { isEventComposing } from '../src/renderer/src/services/search-input'
 import {
+  classifyDocumentFilters,
   computeExamCountdown,
   extractSearchSnippet,
   extractWordLimit,
-  formatMaterialSource
+  filterDocumentsByCategory,
+  formatMaterialSource,
+  isMaterialFragmentDoc,
+  sortDocumentsForReading
 } from '../src/renderer/src/services/study-helpers'
 
 describe('study-helpers（申论字数识别、正文检索、考试倒计时）', () => {
@@ -129,5 +133,54 @@ describe('study-helpers（申论字数识别、正文检索、考试倒计时）
     expect(classifyShenlunType('申论综合', '根据给定资料2，概括W市社区治理的主要做法。')).toBe(
       '单一题'
     )
+  })
+
+  it('知识中心文档分类、排序与过滤函数准确归类手册与碎片素材', () => {
+    const docs = [
+      { id: 'v1:kg-sc-02', title: '金句：基层治理微创新', tags: ['申论', '金句'] },
+      { id: 'v1:handbook-a', title: '申论大作文高分体系手册', tags: ['申论', '申论知识'] },
+      { id: 'kg-sc-01', title: '案例：数字政务改革', tags: ['申论知识', '政策理论'] },
+      { id: 'v1:handbook-b', title: '行政执法公文写作汇编', tags: ['申论'] }
+    ]
+
+    expect(isMaterialFragmentDoc(docs[0]!)).toBe(true)
+    expect(isMaterialFragmentDoc(docs[2]!)).toBe(true)
+    expect(isMaterialFragmentDoc(docs[1]!)).toBe(false)
+
+    const sorted = sortDocumentsForReading(docs)
+    expect(sorted.map((d) => d.id)).toEqual([
+      'v1:handbook-a',
+      'v1:handbook-b',
+      'kg-sc-01',
+      'v1:kg-sc-02'
+    ])
+
+    const shenlunBuckets = classifyDocumentFilters(sorted, 'shenlun', 'knowledge')
+    expect(shenlunBuckets).toEqual([
+      { key: 'all', label: '全部', count: 4 },
+      { key: 'handbook', label: '手册与汇编', count: 2 },
+      { key: '政策理论', label: '政策理论', count: 1 },
+      { key: '金句', label: '金句', count: 1 }
+    ])
+    expect(
+      filterDocumentsByCategory(sorted, 'handbook', 'shenlun', 'knowledge').map((d) => d.id)
+    ).toEqual(['v1:handbook-a', 'v1:handbook-b'])
+    expect(
+      filterDocumentsByCategory(sorted, '金句', 'shenlun', 'knowledge').map((d) => d.id)
+    ).toEqual(['v1:kg-sc-02'])
+
+    const methodDocs = [
+      { id: 'm1', title: '增长率速算口诀', tags: ['行测方法', '资料分析', '速算'] },
+      { id: 'm2', title: '两期比重差对比', tags: ['行测', '资料分析'] },
+      { id: 'm3', title: '图形对称性归纳', tags: ['行测方法', '判断推理'] }
+    ]
+    const methodBuckets = classifyDocumentFilters(methodDocs, 'xingce', 'method')
+    expect(methodBuckets).toEqual([
+      { key: 'all', label: '全部', count: 3 },
+      { key: 'tag:资料分析', label: '资料分析', count: 2 }
+    ])
+    expect(
+      filterDocumentsByCategory(methodDocs, 'tag:资料分析', 'xingce', 'method').map((d) => d.id)
+    ).toEqual(['m1', 'm2'])
   })
 })

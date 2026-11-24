@@ -16,6 +16,185 @@ const OFFICIAL_DOC_RE =
 const ANALYSIS_RE =
   /谈谈.{0,12}(?:理解|认识|看法|启示|体会|感悟)|如何理解|怎样理解|谈谈你对|评析|评价|辨析|启示/
 
+/**
+ * CJK 部首补充区（U+2E80–U+2EFF）字符向标准简化汉字映射表。
+ * 字符串整体调用 NFKC 不会转化此区块，且会把中文全角标点压成半角，因此需定向替换。
+ */
+export const CJK_RADICAL_SUPPLEMENT_MAP: Readonly<Record<string, string>> = {
+  '\u2e8e': '兀',
+  '\u2e93': '幺',
+  '\u2e95': '彐',
+  '\u2e9f': '母',
+  '\u2ea0': '民',
+  '\u2ec1': '虎',
+  '\u2ec4': '西',
+  '\u2ec5': '见',
+  '\u2ec6': '角',
+  '\u2ec9': '贝',
+  '\u2ecb': '车',
+  '\u2ed3': '长',
+  '\u2ed4': '门',
+  '\u2ed8': '青',
+  '\u2ed9': '韦',
+  '\u2eda': '页',
+  '\u2edb': '风',
+  '\u2edc': '飞',
+  '\u2edd': '食',
+  '\u2ee2': '马',
+  '\u2ee3': '骨',
+  '\u2ee4': '鬼',
+  '\u2ee5': '鱼',
+  '\u2ee6': '鸟',
+  '\u2ee7': '卤',
+  '\u2ee8': '麦',
+  '\u2ee9': '黄',
+  '\u2eec': '齐',
+  '\u2eee': '齿',
+  '\u2ef0': '龙',
+  '\u2ef3': '龟'
+}
+
+const PDF_FOOTER_RE = /第\s*\d+\s*页\s*[,，/]?\s*共\s*\d+\s*页/g
+
+/**
+ * 清洗申论材料/题干中的 PDF 抽取污染：
+ * - 将康熙部首（U+2F00–U+2FDF）与 CJK 部首补充区（U+2E80–U+2EFF）恢复为标准汉字；
+ * - 将全角数字与英文字母转为半角；
+ * - 剔除残留 PDF 页脚（如「第10页,共15页」）；
+ * - 绝不对整段调用 NFKC，完整保留中文全角标点（，：；？！（）《》）。
+ */
+export function normalizeShenlunText(text: string): string {
+  if (!text) return text
+  return text
+    .replace(/[\u2e80-\u2eff]/g, (ch) => CJK_RADICAL_SUPPLEMENT_MAP[ch] ?? ch)
+    .replace(/[\u2f00-\u2fdf\uff10-\uff19\uff21-\uff3a\uff41-\uff5a]/g, (ch) =>
+      ch.normalize('NFKC')
+    )
+    .replace(PDF_FOOTER_RE, '')
+}
+
+export type ShenlunMaterialQualityLevel = 'verified' | 'normal' | 'incomplete'
+
+export interface ShenlunMaterialQualityReport {
+  level: ShenlunMaterialQualityLevel
+  issues: string[]
+  hasReferenceAnswer: boolean
+}
+
+const VALID_MATERIAL_END_PUNCT_RE = /[。！？…”』」）》】.!?\)\]]$/
+const OFFICIAL_DATE_OR_BYLINE_END_RE =
+  /(?:\d{4}年\d{1,2}月(?:\d{1,2}日)?|[一二三四五六七八九〇○零]{2,4}年[一二三四五六七八九十]{1,3}月(?:[一二三四五六七八九十]{1,3}日)?|——[^\n]{2,20}|[（(]节选[）)])$/
+const BLOCK_FOOTER_DETECT_RE = /第\s*\d+\s*页\s*[,，/]?\s*共\s*\d+\s*页/
+const RADICAL_RESIDUE_RE = /[\u2e80-\u2fdf]/
+const HALFWIDTH_PUNCT_IN_CN_RE = /[\u4e00-\u9fff][,:;?!][\u4e00-\u9fff“「《（\d]/g
+
+function hasQuoteBalanceDefect(rawText: string): boolean {
+  const text = rawText.replace(/“([^“”\n]{1,40})[＂"]/g, '“$1”')
+  const cleaned = text.replace(/《[^《》\n]{1,60}》/g, (m) => m.replace(/[“”]/g, ''))
+
+  let openCount = 0
+  let closeCount = 0
+  let midSentenceNested = 0
+  let strayClose = 0
+  let depth = 0
+  let multiParaOpens = 0
+
+  for (let i = 0; i < cleaned.length; i += 1) {
+    const ch = cleaned[i]
+    if (ch === '“') {
+      openCount += 1
+      if (depth > 0) {
+        const prev = cleaned.slice(Math.max(0, i - 3), i)
+        if (/\n\s*$/.test(prev)) {
+          multiParaOpens += 1
+        } else {
+          midSentenceNested += 1
+        }
+      }
+      depth += 1
+    } else if (ch === '”') {
+      closeCount += 1
+      if (depth <= 0) strayClose += 1
+      else depth -= 1
+    }
+  }
+
+  const unexplainedOpenExcess = Math.max(0, openCount - closeCount - multiParaOpens)
+  const closeExcess = Math.max(0, closeCount - openCount)
+  return closeExcess > 0 || unexplainedOpenExcess > 0 || strayClose > 0 || midSentenceNested > 0
+}
+
+function hasBracketBalanceDefect(text: string): boolean {
+  for (const [left, right] of [
+    ['（', '）'],
+    ['《', '》']
+  ] as const) {
+    let lc = 0
+    let rc = 0
+    for (const ch of text) {
+      if (ch === left) lc += 1
+      else if (ch === right) rc += 1
+    }
+    if (lc !== rc) return true
+  }
+  return false
+}
+
+/** 评估申论给定材料的文本完整度与校对等级，供题库筛查与前台警示使用 */
+export function inspectShenlunMaterialQuality(
+  material?: string,
+  options?: { explanation?: string }
+): ShenlunMaterialQualityReport {
+  const exp = (options?.explanation ?? '').trim()
+  const hasReferenceAnswer = Boolean(exp && !exp.startsWith('暂无参考答案'))
+  const raw = (material ?? '').trim()
+  if (!raw) {
+    return { level: 'incomplete', issues: ['材料过短'], hasReferenceAnswer }
+  }
+
+  const parts = raw.split(/\n\n(?=### )/)
+  const issues = new Set<string>()
+  let totalBodyLen = 0
+
+  for (const part of parts) {
+    const matched = part.match(/^### [^\n]+\n+([\s\S]*)$/)
+    const body = (matched?.[1] ?? part).trim()
+    totalBodyLen += body.length
+    if (
+      body.length >= 80 &&
+      !VALID_MATERIAL_END_PUNCT_RE.test(body) &&
+      !OFFICIAL_DATE_OR_BYLINE_END_RE.test(body)
+    ) {
+      issues.add('段尾腰斩')
+    }
+    if (hasQuoteBalanceDefect(body)) {
+      issues.add('引号残缺')
+    }
+    if (hasBracketBalanceDefect(body)) {
+      issues.add('括号/书名号未闭合')
+    }
+    if (BLOCK_FOOTER_DETECT_RE.test(body)) {
+      issues.add('残留PDF页脚')
+    }
+  }
+
+  if (totalBodyLen < 200) {
+    issues.add('材料过短')
+  }
+
+  const issueList = [...issues]
+  if (issueList.length > 0) {
+    return { level: 'incomplete', issues: issueList, hasReferenceAnswer }
+  }
+
+  const halfPunctCount = (raw.match(HALFWIDTH_PUNCT_IN_CN_RE) || []).length
+  if (hasReferenceAnswer && !RADICAL_RESIDUE_RE.test(raw) && halfPunctCount < 3) {
+    return { level: 'verified', issues: [], hasReferenceAnswer }
+  }
+
+  return { level: 'normal', issues: [], hasReferenceAnswer }
+}
+
 /** 将各渠道导入的申论题目统一归类为「单一题 / 综合题 / 公文题 / 作文题」 */
 export function classifyShenlunType(category?: string, stem?: string): ShenlunQuestionType {
   const cat = (category ?? '').trim()
@@ -206,15 +385,15 @@ export function recommendShenlunMaterialIndices(
   }
 
   // 2) 基于题干（及参考解析）实体词与关键词相关性打分
-  const stemTokens = extractMatchTokens(stem.normalize('NFKC'))
+  const stemTokens = extractMatchTokens(normalizeShenlunText(stem))
   const cleanExp =
     explanation && !explanation.startsWith('暂无参考答案')
-      ? explanation.slice(0, 600).normalize('NFKC')
+      ? normalizeShenlunText(explanation.slice(0, 600))
       : ''
   const expTokens = cleanExp ? extractMatchTokens(cleanExp) : { quoted: [], terms: [] }
 
   const scored = blocks.map((block, idx) => {
-    const text = block.content.normalize('NFKC')
+    const text = normalizeShenlunText(block.content)
     let rawScore = 0
     for (const q of stemTokens.quoted) {
       rawScore += countOccurrences(text, q, 3) * 14

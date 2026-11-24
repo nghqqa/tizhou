@@ -65,6 +65,35 @@ describe('VaultService', () => {
     expect(database.listDocuments({ kind: 'method' })[0]?.title).toBe('检查步骤')
   })
 
+  it('does not misclassify explicit method documents containing Q/A option-like lines as questions', () => {
+    writeFileSync(
+      join(vaultDirectory, 'beikao-qa.md'),
+      [
+        '---',
+        'id: "sl-doc-beikao-qa"',
+        'kind: "method"',
+        'subject: "shenlun"',
+        'title: "申论备考问答"',
+        'tags: ["申论方法"]',
+        '---',
+        '# 申论备考问答',
+        '',
+        'Q：申论范文需要背诵全文吗？',
+        'A：不建议背全文。背框架、背金句、背素材即可。',
+        'A. 也可以按主题整理高频金句。'
+      ].join('\n'),
+      'utf8'
+    )
+    const result = vaults.connect(vaultDirectory)
+    expect(result.vault.questionCount).toBe(0)
+    expect(result.vault.documentCount).toBe(1)
+    expect(result.skipped).toBe(0)
+    expect(result.warnings).toEqual([])
+    const doc = database.listDocuments({ subject: 'shenlun', kind: 'method' })[0]
+    expect(doc?.title).toBe('申论备考问答')
+    expect(doc?.content).toContain('A：不建议背全文')
+  })
+
   it('keeps generated question IDs stable after a file rename', () => {
     const firstPath = join(vaultDirectory, 'first.md')
     const secondPath = join(vaultDirectory, 'renamed.md')

@@ -640,16 +640,27 @@ export class VaultService {
     const data = parsed.data as Record<string, unknown>
     const relativePath = relative(root, filePath).replace(/\\/g, '/')
     const declaredKind = normalizeText(data.kind || data.type || data.contentType).toLowerCase()
-    const options = parseOptions(data.options, parsed.content)
-    const hasQuestionSignals = Boolean(
-      data.answer ||
-      data.answers ||
-      data.correct ||
-      data.stem ||
-      options.length ||
-      declaredKind.includes('question') ||
-      declaredKind === '题目'
-    )
+    const isExplicitDocument = [
+      'knowledge',
+      'method',
+      'pattern',
+      'document',
+      '知识',
+      '方法',
+      '规律'
+    ].includes(declaredKind)
+    const options = isExplicitDocument ? [] : parseOptions(data.options, parsed.content)
+    const hasQuestionSignals =
+      !isExplicitDocument &&
+      Boolean(
+        data.answer ||
+        data.answers ||
+        data.correct ||
+        data.stem ||
+        options.length ||
+        declaredKind.includes('question') ||
+        declaredKind === '题目'
+      )
     const title = normalizeText(data.title) || firstTitle(parsed.content, basename(filePath, '.md'))
     if (!hasQuestionSignals) {
       const kind: KnowledgeDocument['kind'] =

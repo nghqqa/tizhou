@@ -51,6 +51,7 @@ export function RegionCascadePicker({
 }: RegionCascadePickerProps): React.JSX.Element {
   const [open, setOpen] = useState(false)
   const [alignRight, setAlignRight] = useState(false)
+  const [openUp, setOpenUp] = useState(false)
   const [hoverCategory, setHoverCategory] = useState<CategoryKey>('civil')
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE)
   const wrapRef = useRef<HTMLDivElement>(null)
@@ -128,6 +129,7 @@ export function RegionCascadePicker({
       setOpen(false)
       return
     }
+    setVisibleCount(PAGE_SIZE)
     if (value === UNLABELED_REGION_FILTER) setHoverCategory('unlabeled')
     else if (value && SPECIAL_NON_CIVIL_REGIONS.has(value)) setHoverCategory('public')
     else if (civilRegions.length > 0) setHoverCategory('civil')
@@ -138,6 +140,8 @@ export function RegionCascadePicker({
       setAlignRight(
         rect.left + panelWidth > window.innerWidth - 20 && rect.right >= panelWidth + 16
       )
+      const spaceBelow = window.innerHeight - rect.bottom
+      setOpenUp(spaceBelow < 380 && rect.top > spaceBelow)
     }
     setOpen(true)
   }
@@ -158,7 +162,7 @@ export function RegionCascadePicker({
 
       {open && (
         <div
-          className={`region-cascade-popover${alignRight ? ' is-align-right' : ''}`}
+          className={`region-cascade-popover${alignRight ? ' is-align-right' : ''}${openUp ? ' is-open-up' : ''}`}
           role="dialog"
           aria-label="选择考试地区与分类"
         >
@@ -174,6 +178,7 @@ export function RegionCascadePicker({
                     className={`region-cascade-option${isActive ? ' is-active' : ''}`}
                     onClick={() => {
                       setHoverCategory(cat.key)
+                      setVisibleCount(PAGE_SIZE)
                       if (cat.key === 'all') {
                         onChange('', '')
                         setOpen(false)
@@ -204,7 +209,10 @@ export function RegionCascadePicker({
                       key={item}
                       type="button"
                       className={`region-cascade-option${isSelected ? ' is-active' : ''}`}
-                      onClick={() => onChange(item, '')}
+                      onClick={() => {
+                        setVisibleCount(PAGE_SIZE)
+                        onChange(item, '')
+                      }}
                     >
                       <span>{item}</span>
                       <span className="region-cascade-right">
@@ -269,7 +277,7 @@ export function RegionCascadePicker({
                     </button>
                   )}
                   {items.length === 0 && (
-                    <div className="region-cascade-empty">当前地区暂无申论题目</div>
+                    <div className="region-cascade-empty">当前地区暂无匹配条目</div>
                   )}
                 </>
               ) : papers ? (
@@ -309,7 +317,7 @@ export function RegionCascadePicker({
                   )}
                 </>
               ) : (
-                <div className="region-cascade-empty">选定左侧地区后点击「确定」</div>
+                <div className="region-cascade-empty">点击左侧地区即可应用筛选</div>
               )}
             </div>
           </div>

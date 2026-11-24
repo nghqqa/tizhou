@@ -1,6 +1,6 @@
 {
   "name": "tizhou",
-  "version": "1.0.43",
+  "version": "1.0.44",
   "private": true,
   "license": "MIT",
   "author": "nghqqa",
@@ -24,6 +24,7 @@
     "test:watch": "vitest",
     "eval:ai": "vitest run tests/ai-eval.test.ts",
     "dedup:scan": "node tools/dedup-simhash.mjs",
+    "audit:shenlun": "node tools/direct-import.mjs audit-shenlun",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "smoke:packaged": "node tools/smoke-packaged.mjs",
     "format": "prettier --write .",

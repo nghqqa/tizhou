@@ -17,7 +17,7 @@ import { formatFullDate, invoke } from '../api'
 import { MarkdownContent } from '../components/MarkdownContent'
 import { OptionContent } from '../components/OptionContent'
 import { ReadingTypographyBar, useReadingTypography } from '../components/ReadingTypographyControl'
-import { EmptyState, ErrorState, LoadingState, Section } from '../components/ui'
+import { EmptyState, ErrorState, LoadingState, PageHeader, Section } from '../components/ui'
 import { useAppStore } from '../store'
 
 /** 与交卷判分同口径：去空格、大写、去重、排序后比较 */
@@ -31,7 +31,7 @@ function isAnswerCorrect(question: Question, answer: string[]): boolean {
 }
 
 function formatDurationBrief(seconds: number): string {
-  if (seconds <= 0) return '—'
+  if (seconds <= 0) return '未计时'
   const mins = Math.floor(seconds / 60)
   const secs = seconds % 60
   return mins > 0 ? `${mins}分${secs}秒` : `${secs}秒`
@@ -64,7 +64,9 @@ export function ExamResultPage(): React.JSX.Element {
   const [openNoteIds, setOpenNoteIds] = useState<Record<string, boolean>>({})
   const [savingNoteId, setSavingNoteId] = useState('')
   const [redoBusy, setRedoBusy] = useState(false)
+  const [reviewPage, setReviewPage] = useState(1)
   const [pendingScrollId, setPendingScrollId] = useState<string | null>(null)
+  const REVIEW_PAGE_SIZE = 20
 
   useEffect(() => {
     if (!id) return
@@ -248,6 +250,13 @@ export function ExamResultPage(): React.JSX.Element {
     }
   }
 
+  const totalReviewPages = Math.max(1, Math.ceil(filteredItems.length / REVIEW_PAGE_SIZE))
+  const safeReviewPage = Math.min(reviewPage, totalReviewPages)
+  const pagedItems = filteredItems.slice(
+    (safeReviewPage - 1) * REVIEW_PAGE_SIZE,
+    safeReviewPage * REVIEW_PAGE_SIZE
+  )
+
   useEffect(() => {
     if (!pendingScrollId) return
     const target = document.getElementById(`exam-review-q-${pendingScrollId}`)
@@ -255,11 +264,18 @@ export function ExamResultPage(): React.JSX.Element {
       target.scrollIntoView({ behavior: 'smooth', block: 'start' })
       setPendingScrollId(null)
     }
-  }, [pendingScrollId, filter, filteredItems.length])
+  }, [pendingScrollId, filter, safeReviewPage, pagedItems.length])
 
   function jumpToQuestion(questionId: string, isCorrect: boolean): void {
-    if (filter === 'wrong-unanswered' && isCorrect) {
+    const needSwitchFilter = filter === 'wrong-unanswered' && isCorrect
+    const targetList = needSwitchFilter ? reviewItems : filteredItems
+    const idx = targetList.findIndex((item) => item.question.id === questionId)
+    const targetPage = idx >= 0 ? Math.floor(idx / REVIEW_PAGE_SIZE) + 1 : 1
+    if (needSwitchFilter) {
       setFilter('all')
+    }
+    if (targetPage !== safeReviewPage || needSwitchFilter) {
+      setReviewPage(targetPage)
       setPendingScrollId(questionId)
       return
     }
@@ -314,31 +330,29 @@ export function ExamResultPage(): React.JSX.Element {
   ]
 
   return (
-    <div className="page">
-      <div className="dash-header">
-        <div className="dash-header-info">
-          <span className="dash-date">{formatFullDate(exam.startedAt)}</span>
-          <h1 className="dash-quote">{exam.title}</h1>
-          <p className="dash-subtitle">
-            {exam.status === 'finished' ? '考试已完成' : '考试未完成'} · 限时 {durationMin} 分钟
-          </p>
-        </div>
-        <div className="dash-header-action button-row">
-          {wrongIds.length > 0 && (
-            <Button
-              appearance="primary"
-              icon={<TargetIcon />}
-              disabled={redoBusy}
-              onClick={() => void redoWrongQuestions()}
-            >
-              {redoBusy ? '正在组卷…' : `重刷本场错题 (${wrongIds.length})`}
+    <div className="page page-wide">
+      <PageHeader
+        eyebrow={`训练 · 模考复盘 · ${formatFullDate(exam.startedAt)}`}
+        title={exam.title}
+        description={`${exam.status === 'finished' ? '考试已完成' : '考试未完成'} · 限时 ${durationMin} 分钟`}
+        actions={
+          <>
+            {wrongIds.length > 0 && (
+              <Button
+                appearance="primary"
+                icon={<TargetIcon />}
+                disabled={redoBusy}
+                onClick={() => void redoWrongQuestions()}
+              >
+                {redoBusy ? '正在组卷…' : `重刷本场错题 (${wrongIds.length})`}
+              </Button>
+            )}
+            <Button icon={<ArrowLeftIcon />} onClick={() => navigate('/exam')}>
+              返回模考
             </Button>
-          )}
-          <Button icon={<ArrowLeftIcon />} onClick={() => navigate('/exam')}>
-            返回模考
-          </Button>
-        </div>
-      </div>
+          </>
+        }
+      />
 
       <div className="stat-strip three">
         {stats.map((stat) => (
@@ -387,7 +401,10 @@ export function ExamResultPage(): React.JSX.Element {
           {categoryStats.length ? (
             <div className="mastery-list">
               {categoryStats.map((item) => (
-                <div className="mastery-row" key={item.category}>
+                <div
+                  className={`mastery-row${item.accuracy < 60 ? ' mastery-row-weak' : ''}`}
+                  key={item.category}
+                >
                   <div className="mastery-info">
                     <strong>{item.category}</strong>
                     <span className="mastery-detail">
@@ -424,59 +441,60 @@ export function ExamResultPage(): React.JSX.Element {
       </div>
 
       {reviewItems.length > 0 && (
-        <div style={{ marginTop: 16 }}>
-          <Section
-            title="题号快速定位"
-            description="绿底为答对、红底为答错、灰底为未作答；点击题号直接定位到对应解析。"
-          >
-            <div className="exam-review-jumpbar">
-              {reviewItems.map((item) => (
-                <button
-                  key={item.question.id}
-                  type="button"
-                  className={`exam-jump-btn ${item.correct ? 'is-correct' : item.answered ? 'is-wrong' : 'is-unanswered'}`}
-                  title={`第 ${item.index} 题 · ${item.question.category}${item.durationSeconds > 0 ? ` · 用时 ${item.durationSeconds} 秒` : ''}`}
-                  onClick={() => jumpToQuestion(item.question.id, item.correct)}
-                >
-                  {item.index}
-                </button>
-              ))}
-            </div>
-          </Section>
-        </div>
+        <Section
+          title="题号快速定位"
+          description="绿底为答对、红底为答错、灰底为未作答；点击题号直接定位到对应解析。"
+        >
+          <div className="exam-review-jumpbar">
+            {reviewItems.map((item) => (
+              <button
+                key={item.question.id}
+                type="button"
+                className={`exam-jump-btn ${item.correct ? 'is-correct' : item.answered ? 'is-wrong' : 'is-unanswered'}`}
+                title={`第 ${item.index} 题 · ${item.question.category}${item.durationSeconds > 0 ? ` · 用时 ${item.durationSeconds} 秒` : ''}`}
+                onClick={() => jumpToQuestion(item.question.id, item.correct)}
+              >
+                {item.index}
+              </button>
+            ))}
+          </div>
+        </Section>
       )}
 
-      <div style={{ marginTop: 16 }}>
-        <Section
-          title="逐题复盘"
-          description="基于交卷时的题目快照展示每题作答、参考答案、耗时与解析，支持就地收藏、标注错因、记笔记与 AI 追问。"
-          actions={
-            <div className="button-row">
-              <ReadingTypographyBar
-                typography={reading.typography}
-                onUpdate={reading.update}
-                onStepScale={reading.stepScale}
-                onResetScale={reading.resetScale}
-              />
-              <Select
-                value={filter}
-                onChange={(_, data) => setFilter(data.value as ReviewFilter)}
-                aria-label="复盘筛选"
-              >
-                <option value="all">全部题目（{reviewItems.length}）</option>
-                <option value="wrong-unanswered">仅看错题与未答（{wrongIds.length}）</option>
-              </Select>
-            </div>
-          }
-        >
-          {filteredItems.length ? (
+      <Section
+        title="逐题复盘"
+        description="基于交卷时的题目快照展示每题作答、参考答案、耗时与解析，支持就地收藏、标注错因、记笔记与 AI 追问。"
+        actions={
+          <div className="button-row">
+            <ReadingTypographyBar
+              typography={reading.typography}
+              onUpdate={reading.update}
+              onStepScale={reading.stepScale}
+              onResetScale={reading.resetScale}
+            />
+            <Select
+              value={filter}
+              onChange={(_, data) => {
+                setFilter(data.value as ReviewFilter)
+                setReviewPage(1)
+              }}
+              aria-label="复盘筛选"
+            >
+              <option value="all">全部题目（{reviewItems.length}）</option>
+              <option value="wrong-unanswered">仅看错题与未答（{wrongIds.length}）</option>
+            </Select>
+          </div>
+        }
+      >
+        {pagedItems.length ? (
+          <>
             <div
               ref={reading.surfaceRef}
               className="question-reading-surface"
               data-reading-font={reading.typography.font}
               style={reading.surfaceStyle}
             >
-              {filteredItems.map((item) => {
+              {pagedItems.map((item) => {
                 const meta = userMeta[item.question.id] ?? { favorite: false, note: '' }
                 const noteOpen = Boolean(openNoteIds[item.question.id] || meta.note)
                 return (
@@ -486,10 +504,10 @@ export function ExamResultPage(): React.JSX.Element {
                     key={item.question.id}
                   >
                     <div className="exam-review-card-head">
-                      <h3 className={item.correct ? 'positive' : 'negative'} style={{ margin: 0 }}>
+                      <h3 className={`exam-review-title ${item.correct ? 'positive' : 'negative'}`}>
                         第 {item.index} 题：
                         {item.answered ? (item.correct ? '正确' : '错误') : '未作答'}
-                        <span className="muted" style={{ fontWeight: 400, marginLeft: 8 }}>
+                        <span className="muted exam-review-meta">
                           {item.question.category}
                           {item.durationSeconds > 0
                             ? ` · 用时 ${formatDurationBrief(item.durationSeconds)}`
@@ -616,7 +634,7 @@ export function ExamResultPage(): React.JSX.Element {
                           appearance="secondary"
                           icon={<NotePencilIcon />}
                           disabled={!userMetaLoaded || savingNoteId === item.question.id}
-                          style={{ marginTop: 8 }}
+                          className="field-gap-top-sm"
                           onClick={() => void saveNote(item.question.id)}
                         >
                           {savingNoteId === item.question.id
@@ -631,44 +649,65 @@ export function ExamResultPage(): React.JSX.Element {
                 )
               })}
             </div>
-          ) : (
-            <EmptyState
-              title={filter === 'wrong-unanswered' ? '没有错题' : '没有可复盘的题目'}
-              description={
-                filter === 'wrong-unanswered'
-                  ? '本场模考全部答对，切换筛选可查看全部题目。'
-                  : '该场模考没有保存题目快照。'
-              }
-            />
-          )}
-        </Section>
-      </div>
-
-      <div style={{ marginTop: 16 }}>
-        <Section title="下一步">
-          <div className="button-row">
-            {wrongIds.length > 0 && (
-              <Button
-                appearance="primary"
-                icon={<TargetIcon />}
-                disabled={redoBusy}
-                onClick={() => void redoWrongQuestions()}
-              >
-                重刷本场错题（{wrongIds.length} 题）
-              </Button>
+            {totalReviewPages > 1 && (
+              <div className="list-pagination">
+                <Button
+                  size="small"
+                  appearance="subtle"
+                  disabled={safeReviewPage <= 1}
+                  onClick={() => setReviewPage((p) => Math.max(1, p - 1))}
+                >
+                  上一页
+                </Button>
+                <span className="muted">
+                  第 {safeReviewPage} / {totalReviewPages} 页（共 {filteredItems.length} 题）
+                </span>
+                <Button
+                  size="small"
+                  appearance="subtle"
+                  disabled={safeReviewPage >= totalReviewPages}
+                  onClick={() => setReviewPage((p) => Math.min(totalReviewPages, p + 1))}
+                >
+                  下一页
+                </Button>
+              </div>
             )}
-            <Button icon={<CalendarCheckIcon />} onClick={() => navigate('/review')}>
-              进入错题复习
+          </>
+        ) : (
+          <EmptyState
+            title={filter === 'wrong-unanswered' ? '没有错题' : '没有可复盘的题目'}
+            description={
+              filter === 'wrong-unanswered'
+                ? '本场模考全部答对，切换筛选可查看全部题目。'
+                : '该场模考没有保存题目快照。'
+            }
+          />
+        )}
+      </Section>
+
+      <Section title="下一步">
+        <div className="button-row">
+          {wrongIds.length > 0 && (
+            <Button
+              appearance="primary"
+              icon={<TargetIcon />}
+              disabled={redoBusy}
+              onClick={() => void redoWrongQuestions()}
+            >
+              重刷本场错题（{wrongIds.length} 题）
             </Button>
-            <Button icon={<ChartLineUpIcon />} onClick={() => navigate('/reports')}>
-              查看学习报告
-            </Button>
-            <Button icon={<ExamIcon />} onClick={() => navigate('/exam')}>
-              再来一场模考
-            </Button>
-          </div>
-        </Section>
-      </div>
+          )}
+          <Button icon={<CalendarCheckIcon />} onClick={() => navigate('/review')}>
+            进入错题复习
+          </Button>
+          <Button icon={<ChartLineUpIcon />} onClick={() => navigate('/reports')}>
+            查看学习报告
+          </Button>
+          <Button icon={<ExamIcon />} onClick={() => navigate('/exam')}>
+            再来一场模考
+          </Button>
+        </div>
+      </Section>
     </div>
   )
 }

@@ -127,3 +127,92 @@ export function writeStoredRegion(storageKey: string, region: string): void {
     /* 忽略受限环境下的 localStorage 写入失败 */
   }
 }
+
+export interface DocumentCategoryBucket {
+  key: string
+  label: string
+  count: number
+}
+
+const GENERIC_DOC_TAGS = new Set([
+  '申论',
+  '行测',
+  '申论方法',
+  '申论知识',
+  '申论素材',
+  '行测方法',
+  '行测知识'
+])
+
+/** 判断知识文档是否为题库切分的碎片素材（如 kg-sc-* 政策/金句卡片） */
+export function isMaterialFragmentDoc(doc: { id: string }): boolean {
+  return doc.id.includes(':kg-sc-') || doc.id.startsWith('kg-sc-')
+}
+
+/** 知识中心阅读排序：体系手册/专题汇编优先展示，碎片素材排后；同组按中文标题排序 */
+export function sortDocumentsForReading<T extends { id: string; title: string }>(docs: T[]): T[] {
+  return [...docs].sort((a, b) => {
+    const fragA = isMaterialFragmentDoc(a) ? 1 : 0
+    const fragB = isMaterialFragmentDoc(b) ? 1 : 0
+    if (fragA !== fragB) return fragA - fragB
+    return a.title.localeCompare(b.title, 'zh-CN')
+  })
+}
+
+const SHENLUN_KNOWLEDGE_TYPES = ['政策理论', '金句', '案例', '范文'] as const
+
+/** 提取当前知识中心视图下的分类筛选胶囊及条数 */
+export function classifyDocumentFilters<T extends { id: string; tags: string[] }>(
+  docs: T[],
+  subject: 'xingce' | 'shenlun' | 'common',
+  kind: 'knowledge' | 'method' | 'pattern'
+): DocumentCategoryBucket[] {
+  const buckets: DocumentCategoryBucket[] = [{ key: 'all', label: '全部', count: docs.length }]
+  if (subject === 'shenlun' && kind === 'knowledge') {
+    const handbookCount = docs.filter((d) => !isMaterialFragmentDoc(d)).length
+    if (handbookCount > 0) {
+      buckets.push({ key: 'handbook', label: '手册与汇编', count: handbookCount })
+    }
+    for (const typeName of SHENLUN_KNOWLEDGE_TYPES) {
+      const cnt = docs.filter((d) => isMaterialFragmentDoc(d) && d.tags.includes(typeName)).length
+      if (cnt > 0) buckets.push({ key: typeName, label: typeName, count: cnt })
+    }
+    return buckets
+  }
+
+  const tagCounts = new Map<string, number>()
+  for (const doc of docs) {
+    for (const rawTag of doc.tags) {
+      const tag = rawTag.trim()
+      if (!tag || GENERIC_DOC_TAGS.has(tag)) continue
+      tagCounts.set(tag, (tagCounts.get(tag) ?? 0) + 1)
+    }
+  }
+  const topTags = [...tagCounts.entries()]
+    .filter(([, count]) => count >= 2)
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'zh-CN'))
+    .slice(0, 6)
+  for (const [tag, count] of topTags) {
+    buckets.push({ key: `tag:${tag}`, label: tag, count })
+  }
+  return buckets
+}
+
+/** 按分类键值过滤知识文档列表 */
+export function filterDocumentsByCategory<T extends { id: string; tags: string[] }>(
+  docs: T[],
+  categoryKey: string,
+  subject: 'xingce' | 'shenlun' | 'common',
+  kind: 'knowledge' | 'method' | 'pattern'
+): T[] {
+  if (!categoryKey || categoryKey === 'all') return docs
+  if (subject === 'shenlun' && kind === 'knowledge') {
+    if (categoryKey === 'handbook') return docs.filter((d) => !isMaterialFragmentDoc(d))
+    return docs.filter((d) => isMaterialFragmentDoc(d) && d.tags.includes(categoryKey))
+  }
+  if (categoryKey.startsWith('tag:')) {
+    const targetTag = categoryKey.slice(4)
+    return docs.filter((d) => d.tags.includes(targetTag))
+  }
+  return docs
+}

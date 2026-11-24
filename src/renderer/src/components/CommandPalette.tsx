@@ -188,6 +188,7 @@ export function CommandPalette({
   const [searchingQuestions, setSearchingQuestions] = useState(false)
   const [activeIndex, setActiveIndex] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
+  const resultsRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (!open) return
@@ -313,6 +314,14 @@ export function CommandPalette({
     setActiveIndex(0)
   }, [entries.length, search.committedValue])
 
+  useEffect(() => {
+    if (!open) return
+    const activeEl = resultsRef.current?.querySelector<HTMLElement>(
+      '.command-palette-item.is-active'
+    )
+    activeEl?.scrollIntoView({ block: 'nearest' })
+  }, [open, activeIndex])
+
   if (!open) return null
 
   const grouped: Array<{
@@ -369,7 +378,12 @@ export function CommandPalette({
           />
           <kbd className="command-kbd">Esc</kbd>
         </div>
-        <div className="command-palette-results">
+        <div
+          className="command-palette-results"
+          ref={resultsRef}
+          role="listbox"
+          aria-label="快捷检索结果"
+        >
           {grouped.length === 0 ? (
             <div className="command-palette-empty">
               {searchingQuestions ? '正在检索题库…' : '没有找到匹配的页面、文档或题目'}
@@ -382,6 +396,8 @@ export function CommandPalette({
                   <button
                     key={entry.id}
                     type="button"
+                    role="option"
+                    aria-selected={idx === activeIndex}
                     className={`command-palette-item${idx === activeIndex ? ' is-active' : ''}`}
                     onMouseEnter={() => setActiveIndex(idx)}
                     onClick={entry.run}

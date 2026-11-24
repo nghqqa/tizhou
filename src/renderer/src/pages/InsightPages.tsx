@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Button, Field, Input, Select, Spinner } from '@fluentui/react-components'
+import { Button, Field, Input, ProgressBar, Select, Spinner } from '@fluentui/react-components'
 import {
   ArrowRightIcon,
   CheckIcon,
@@ -12,6 +12,7 @@ import {
   Bar,
   CartesianGrid,
   ComposedChart,
+  Legend,
   Line,
   ResponsiveContainer,
   Tooltip as ChartTooltip,
@@ -31,22 +32,46 @@ import {
 import { FEATURE_PROMPTS, taskDataEnvelope } from '@shared/prompts'
 import { formatFullDate, invoke } from '../api'
 import { MarkdownContent } from '../components/MarkdownContent'
-import { EmptyState, ErrorState, LoadingState, PageHeader, Section, Stat } from '../components/ui'
+import {
+  ConfirmDialog,
+  EmptyState,
+  ErrorState,
+  LoadingState,
+  PageHeader,
+  Section,
+  Stat
+} from '../components/ui'
 import { useAppStore } from '../store'
 
 export function ReportsPage(): React.JSX.Element {
   const navigate = useNavigate()
+  const showToast = useAppStore((state) => state.showToast)
   const [range, setRange] = useState<ReportData['range']>('30d')
   const [report, setReport] = useState<ReportData>()
   const [essayRecords, setEssayRecords] = useState<ConstructedAttemptRecord[]>([])
   const [essayRecordsFailed, setEssayRecordsFailed] = useState(false)
   const [error, setError] = useState('')
+  async function exportMarkdown(): Promise<void> {
+    try {
+      const savedPath = await invoke<string | undefined>({
+        method: 'reports.exportMarkdown',
+        params: { range }
+      })
+      if (savedPath) showToast('学习报告已导出')
+    } catch (cause) {
+      const msg = `导出失败：${cause instanceof Error ? cause.message : '未知错误'}`
+      setError(msg)
+      showToast(msg)
+    }
+  }
   async function exportToObsidian(): Promise<void> {
     try {
       const target = await invoke<string>({ method: 'reports.exportObsidian', params: { range } })
-      window.alert(`已导出到 Obsidian：\n${target}\n\n可在 Vault 的「学习报告」文件夹查看。`)
+      showToast(`已导出到 Obsidian（学习报告）：${target}`)
     } catch (cause) {
-      window.alert(`导出到 Obsidian 失败：${cause instanceof Error ? cause.message : '未知错误'}`)
+      const msg = `导出到 Obsidian 失败：${cause instanceof Error ? cause.message : '未知错误'}`
+      setError(msg)
+      showToast(msg)
     }
   }
   useEffect(() => {
@@ -81,7 +106,7 @@ export function ReportsPage(): React.JSX.Element {
     return { count: essayRecords.length, uniquePrompts, average, best }
   }, [report?.essaySummary, essayRecords])
   return (
-    <div className="page">
+    <div className="page page-wide">
       <PageHeader
         eyebrow="提升 · 学习报告"
         title="学习报告"
@@ -96,18 +121,7 @@ export function ReportsPage(): React.JSX.Element {
               <option value="30d">最近 30 天</option>
               <option value="all">全部时间</option>
             </Select>
-            <Button
-              onClick={() =>
-                void invoke<string | undefined>({
-                  method: 'reports.exportMarkdown',
-                  params: { range }
-                }).catch((cause) =>
-                  window.alert(`导出失败：${cause instanceof Error ? cause.message : '未知错误'}`)
-                )
-              }
-            >
-              导出 Markdown
-            </Button>
+            <Button onClick={() => void exportMarkdown()}>导出 Markdown</Button>
             <Button
               appearance="primary"
               icon={<ClipboardTextIcon />}
@@ -125,6 +139,8 @@ export function ReportsPage(): React.JSX.Element {
         <EmptyState
           title="还没有可分析的作答"
           description="完成一组练习或申论评估后，这里会显示模块正确率、用时趋势、错因分布与申论做题记录。"
+          actionLabel="去专项练习"
+          onAction={() => navigate('/practice')}
         />
       ) : (
         <>
@@ -153,44 +169,46 @@ export function ReportsPage(): React.JSX.Element {
                   <ResponsiveContainer width="100%" height="100%">
                     <ComposedChart
                       data={report.dailyStats}
-                      margin={{ top: 12, right: 10, bottom: 0, left: -20 }}
+                      margin={{ top: 12, right: 16, bottom: 0, left: -12 }}
                     >
-                      <CartesianGrid vertical={false} stroke="var(--colorNeutralStroke2)" />
+                      <CartesianGrid vertical={false} stroke="var(--tz-border)" />
                       <XAxis
                         dataKey="date"
                         tickFormatter={(value: string) => value.slice(5)}
                         axisLine={false}
                         tickLine={false}
-                        tick={{ fill: 'var(--colorNeutralForeground3)', fontSize: 10 }}
+                        tick={{ fill: 'var(--tz-ink-3)', fontSize: 11 }}
                       />
                       <YAxis
                         yAxisId="left"
                         allowDecimals={false}
                         axisLine={false}
                         tickLine={false}
-                        tick={{ fill: 'var(--colorNeutralForeground3)', fontSize: 10 }}
+                        tick={{ fill: 'var(--tz-ink-3)', fontSize: 11 }}
                       />
                       <YAxis
                         yAxisId="right"
                         orientation="right"
                         domain={[0, 100]}
+                        tickFormatter={(value: number) => `${value}%`}
                         axisLine={false}
                         tickLine={false}
-                        tick={{ fill: 'var(--colorNeutralForeground3)', fontSize: 10 }}
+                        tick={{ fill: 'var(--tz-ink-3)', fontSize: 11 }}
                       />
                       <ChartTooltip
                         contentStyle={{
-                          background: 'var(--colorNeutralBackground2)',
-                          border: '1px solid var(--colorNeutralStroke1)',
-                          borderRadius: 8,
+                          background: 'var(--tz-surface)',
+                          border: '1px solid var(--tz-border-strong)',
+                          borderRadius: 6,
                           fontSize: 12
                         }}
                       />
+                      <Legend verticalAlign="top" height={28} />
                       <Bar
                         yAxisId="left"
                         dataKey="attempts"
                         name="题数"
-                        fill="#D65F35"
+                        fill="var(--tz-vermillion)"
                         radius={[3, 3, 0, 0]}
                         maxBarSize={48}
                       />
@@ -199,7 +217,7 @@ export function ReportsPage(): React.JSX.Element {
                         type="monotone"
                         dataKey="accuracy"
                         name="正确率"
-                        stroke="#77BFA3"
+                        stroke="var(--tz-pine)"
                         strokeWidth={2}
                         dot={false}
                       />
@@ -273,50 +291,56 @@ export function ReportsPage(): React.JSX.Element {
                     : '')
               }
             >
-              <table className="report-table">
-                <thead>
-                  <tr>
-                    <th>时间</th>
-                    <th>题目</th>
-                    <th>字数</th>
-                    <th>评估方式</th>
-                    <th>得分</th>
-                    <th>复盘</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {essayRecords.map((record) => {
-                    const score = record.evaluation.score
-                    const wordCount = record.content.replace(/\s/g, '').length
-                    return (
-                      <tr key={record.id}>
-                        <td className="muted">{formatFullDate(record.createdAt)}</td>
-                        <td>{record.title}</td>
-                        <td>{wordCount} 字</td>
-                        <td className="muted">{record.evaluation.provider}</td>
-                        <td className={score >= 80 ? 'positive' : score < 60 ? 'negative' : ''}>
-                          {score} 分
-                        </td>
-                        <td>
-                          <Button
-                            size="small"
-                            appearance="subtle"
-                            icon={<ArrowRightIcon />}
-                            iconPosition="after"
-                            onClick={() =>
-                              navigate(
-                                `/shenlun-solution?promptId=${encodeURIComponent(record.promptId)}`
-                              )
-                            }
-                          >
-                            查看复盘
-                          </Button>
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
+              <div className="table-scroll">
+                <table className="report-table report-table-essay">
+                  <thead>
+                    <tr>
+                      <th>时间</th>
+                      <th>题目</th>
+                      <th>字数</th>
+                      <th>评估方式</th>
+                      <th>得分</th>
+                      <th>复盘</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {essayRecords.map((record) => {
+                      const score = record.evaluation.score
+                      const wordCount = record.content.replace(/\s/g, '').length
+                      return (
+                        <tr key={record.id}>
+                          <td className="muted">{formatFullDate(record.createdAt)}</td>
+                          <td>
+                            <span className="table-title-ellipsis" title={record.title}>
+                              {record.title}
+                            </span>
+                          </td>
+                          <td>{wordCount} 字</td>
+                          <td className="muted">{record.evaluation.provider}</td>
+                          <td className={score >= 80 ? 'positive' : score < 60 ? 'negative' : ''}>
+                            {score} 分
+                          </td>
+                          <td>
+                            <Button
+                              size="small"
+                              appearance="subtle"
+                              icon={<ArrowRightIcon />}
+                              iconPosition="after"
+                              onClick={() =>
+                                navigate(
+                                  `/shenlun-solution?promptId=${encodeURIComponent(record.promptId)}`
+                                )
+                              }
+                            >
+                              查看复盘
+                            </Button>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
             </Section>
           )}
         </>
@@ -328,6 +352,7 @@ export function ReportsPage(): React.JSX.Element {
 export function DiagnosisPage(): React.JSX.Element {
   const navigate = useNavigate()
   const refreshDashboard = useAppStore((state) => state.refreshDashboard)
+  const showToast = useAppStore((state) => state.showToast)
   const ai = useAppStore((state) => state.data!.ai)
   const [diagnosis, setDiagnosis] = useState<DiagnosisResult>()
   const [activePlan, setActivePlan] = useState<LearningPlan>()
@@ -336,6 +361,7 @@ export function DiagnosisPage(): React.JSX.Element {
   const [dailyMinutes, setDailyMinutes] = useState(60)
   const [focusText, setFocusText] = useState('')
   const [busy, setBusy] = useState(false)
+  const [cancelConfirmOpen, setCancelConfirmOpen] = useState(false)
   const [error, setError] = useState('')
   const [aiInterpretation, setAiInterpretation] = useState('')
   const [aiBusy, setAiBusy] = useState(false)
@@ -449,12 +475,17 @@ export function DiagnosisPage(): React.JSX.Element {
   }
   async function cancelPlan(): Promise<void> {
     if (!activePlan) return
+    setBusy(true)
     try {
       await invoke({ method: 'plan.cancel', params: { planId: activePlan.id } })
       setActivePlan(undefined)
+      setCancelConfirmOpen(false)
+      showToast('已取消当前学习计划')
       await refreshDashboard()
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '计划取消失败')
+    } finally {
+      setBusy(false)
     }
   }
   return (
@@ -601,7 +632,7 @@ export function DiagnosisPage(): React.JSX.Element {
         }
         actions={
           activePlan ? (
-            <Button appearance="subtle" onClick={() => void cancelPlan()}>
+            <Button appearance="subtle" onClick={() => setCancelConfirmOpen(true)}>
               取消计划
             </Button>
           ) : preview ? (
@@ -658,6 +689,29 @@ export function DiagnosisPage(): React.JSX.Element {
           </div>
         ) : (
           <div>
+            {activePlan &&
+              activePlan.items.length > 0 &&
+              (() => {
+                const doneCount = activePlan.items.filter((i) => i.done).length
+                const totalCount = activePlan.items.length
+                const ratio = doneCount / totalCount
+                return (
+                  <div className="plan-progress-summary">
+                    <div className="progress-text">
+                      <span>整体进度</span>
+                      <span>
+                        已完成 {doneCount} / {totalCount} 项（{Math.round(ratio * 100)}%）
+                      </span>
+                    </div>
+                    <ProgressBar value={ratio} />
+                  </div>
+                )
+              })()}
+            {!activePlan && preview && (
+              <p className="muted plan-preview-hint">
+                预览状态仅供确认安排，点击右上角「应用计划」保存后即可从任务项直接跳转练习。
+              </p>
+            )}
             {groupedItems.map((group) => (
               <div className="plan-day" key={group.day}>
                 <strong>第 {group.day} 天</strong>
@@ -671,7 +725,7 @@ export function DiagnosisPage(): React.JSX.Element {
                         </small>
                       </div>
                       <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                        {!item.done && (
+                        {activePlan && !item.done && (
                           <button
                             type="button"
                             className="mastery-action"
@@ -710,6 +764,16 @@ export function DiagnosisPage(): React.JSX.Element {
           </div>
         )}
       </Section>
+      <ConfirmDialog
+        open={cancelConfirmOpen}
+        title="确认取消当前学习计划？"
+        description="取消后将停止追踪本次计划进度，后续仍可随时重新生成新计划。"
+        confirmLabel="确认取消"
+        danger
+        busy={busy}
+        onCancel={() => setCancelConfirmOpen(false)}
+        onConfirm={() => void cancelPlan()}
+      />
     </div>
   )
 }

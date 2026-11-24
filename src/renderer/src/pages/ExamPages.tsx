@@ -224,7 +224,7 @@ export function ExamHomePage(): React.JSX.Element {
           <Button
             appearance="primary"
             icon={<ExamIcon />}
-            style={{ marginTop: 18 }}
+            className="field-gap-top"
             disabled={busy || Boolean(active)}
             onClick={() => void createExam()}
           >
@@ -257,94 +257,90 @@ export function ExamHomePage(): React.JSX.Element {
           </ul>
         </Section>
       </div>
-      <div style={{ marginTop: 16 }}>
-        <Section
-          title="真题原卷模考"
-          description="按试卷原题号顺序整卷组卷、限时 120 分钟；题目来自当前知识库，联考共用题已去重，题量不足 30 的卷不出现在列表。"
-        >
-          <div className="toolbar" style={{ marginBottom: 0 }}>
-            <Field label="选择真题卷" className="grow">
-              <Select
-                value={paperChoice}
-                onChange={(_, dataValue) => setPaperChoice(dataValue.value)}
-              >
-                <option value="">选择试卷…</option>
-                {papers.map((item) => (
-                  <option key={item.paper} value={item.paper}>
-                    {item.paper}（{item.count} 题）
-                  </option>
-                ))}
-              </Select>
-            </Field>
-            <Button
-              appearance="primary"
-              icon={<ExamIcon />}
-              disabled={busy || !paperChoice || Boolean(active)}
-              onClick={() => void createPaperExam()}
+      <Section
+        title="真题原卷模考"
+        description="按试卷原题号顺序整卷组卷、限时 120 分钟；题目来自当前知识库，联考共用题已去重，题量不足 30 的卷不出现在列表。"
+      >
+        <div className="toolbar exam-paper-toolbar">
+          <Field label="选择真题卷" className="grow">
+            <Select
+              value={paperChoice}
+              onChange={(_, dataValue) => setPaperChoice(dataValue.value)}
             >
-              {active ? '请先完成当前模考' : '开始整卷模考'}
-            </Button>
-          </div>
-          {!papers.length && (
-            <p className="muted" style={{ margin: '10px 0 0' }}>
-              当前知识库没有带试卷归属信息的题目（真题库导入后自动出现）。
-            </p>
-          )}
-        </Section>
-      </div>
-      <div style={{ marginTop: 16 }}>
-        <Section title="历史模考">
-          {!history ? (
-            <LoadingState />
-          ) : history.length ? (
-            <table className="report-table">
-              <thead>
-                <tr>
-                  <th>名称</th>
-                  <th>科目</th>
-                  <th>进度</th>
-                  <th>分数</th>
-                  <th>更新时间</th>
-                  <th>操作</th>
+              <option value="">选择试卷…</option>
+              {papers.map((item) => (
+                <option key={item.paper} value={item.paper}>
+                  {item.paper}（{item.count} 题）
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Button
+            appearance="primary"
+            icon={<ExamIcon />}
+            disabled={busy || !paperChoice || Boolean(active)}
+            onClick={() => void createPaperExam()}
+          >
+            {active ? '请先完成当前模考' : '开始整卷模考'}
+          </Button>
+        </div>
+        {!papers.length && (
+          <p className="muted exam-empty-hint">
+            当前知识库没有带试卷归属信息的题目（真题库导入后自动出现）。
+          </p>
+        )}
+      </Section>
+      <Section title="历史模考">
+        {!history ? (
+          <LoadingState />
+        ) : history.length ? (
+          <table className="report-table">
+            <thead>
+              <tr>
+                <th>名称</th>
+                <th>科目</th>
+                <th>进度</th>
+                <th>分数</th>
+                <th>更新时间</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {history.map((exam) => (
+                <tr key={exam.id}>
+                  <td>{exam.title}</td>
+                  <td>{exam.subject === 'xingce' ? '行测' : '申论'}</td>
+                  <td>
+                    {exam.status === 'active'
+                      ? `已答 ${Object.values(exam.answers).filter((a) => a.answer.some((v) => v.trim())).length}/${exam.questionIds.length}`
+                      : '已交卷'}
+                  </td>
+                  <td>{exam.score === undefined ? '暂未评分' : `${exam.score} 分`}</td>
+                  <td>{formatFullDate(exam.updatedAt)}</td>
+                  <td>
+                    <Button
+                      size="small"
+                      appearance="secondary"
+                      onClick={() =>
+                        navigate(
+                          exam.status === 'finished' ? `/exam/result/${exam.id}` : '/exam/run'
+                        )
+                      }
+                    >
+                      {exam.status === 'finished' ? '查看复盘' : '继续作答'}
+                    </Button>
+                  </td>
                 </tr>
-              </thead>
-              <tbody>
-                {history.map((exam) => (
-                  <tr key={exam.id}>
-                    <td>{exam.title}</td>
-                    <td>{exam.subject === 'xingce' ? '行测' : '申论'}</td>
-                    <td>
-                      {exam.status === 'active'
-                        ? `已答 ${Object.values(exam.answers).filter((a) => a.answer.some((v) => v.trim())).length}/${exam.questionIds.length}`
-                        : '已交卷'}
-                    </td>
-                    <td>{exam.score === undefined ? '暂未评分' : `${exam.score} 分`}</td>
-                    <td>{formatFullDate(exam.updatedAt)}</td>
-                    <td>
-                      <Button
-                        size="small"
-                        appearance="secondary"
-                        onClick={() =>
-                          navigate(
-                            exam.status === 'finished' ? `/exam/result/${exam.id}` : '/exam/run'
-                          )
-                        }
-                      >
-                        {exam.status === 'finished' ? '查看复盘' : '继续作答'}
-                      </Button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          ) : (
-            <EmptyState
-              title="暂无模考记录"
-              description="创建第一场自定义模考后，成绩和作答进度会显示在这里。"
-            />
-          )}
-        </Section>
-      </div>
+              ))}
+            </tbody>
+          </table>
+        ) : (
+          <EmptyState
+            title="暂无模考记录"
+            description="创建第一场自定义模考后，成绩和作答进度会显示在这里。"
+          />
+        )}
+      </Section>
     </div>
   )
 }
@@ -760,30 +756,35 @@ export function ExamRunPage(): React.JSX.Element {
         eyebrow="训练 · 模考进行中"
         title={title}
         description={`开始于 ${formatDate(exam.startedAt)}，答案会自动保存。`}
-        actions={
-          <>
-            <span className={`pill ${seconds < 300 ? 'negative' : ''}`}>
-              <ClockIcon /> {timeText}
-            </span>
-            <Button
-              size="small"
-              appearance={showScratchpad ? 'secondary' : 'outline'}
-              icon={<PaintBrushIcon />}
-              title="打开/收起随手草稿纸（手写涂鸦 + 速算便签）"
-              onClick={() => setShowScratchpad((value) => !value)}
-            >
-              草稿纸
-            </Button>
-            <Button
-              appearance="primary"
-              data-testid="exam-submit"
-              onClick={() => setConfirmOpen(true)}
-            >
-              交卷
-            </Button>
-          </>
-        }
       />
+      <div className="exam-sticky-bar">
+        <div className="exam-sticky-left">
+          <span className={`pill ${seconds < 300 ? 'negative' : ''}`}>
+            <ClockIcon /> {timeText}
+          </span>
+          <span className="muted">
+            第 {index + 1} / {questions.length} 题 · 已答 {answered} 题
+          </span>
+        </div>
+        <div className="exam-sticky-right">
+          <Button
+            size="small"
+            appearance={showScratchpad ? 'secondary' : 'outline'}
+            icon={<PaintBrushIcon />}
+            title="打开/收起随手草稿纸（手写涂鸦 + 速算便签）"
+            onClick={() => setShowScratchpad((value) => !value)}
+          >
+            草稿纸
+          </Button>
+          <Button
+            appearance="primary"
+            data-testid="exam-submit"
+            onClick={() => setConfirmOpen(true)}
+          >
+            交卷
+          </Button>
+        </div>
+      </div>
       {error && <ErrorState message={error} />}
       <div className="question-shell">
         <Section className="question-card">
@@ -834,24 +835,15 @@ export function ExamRunPage(): React.JSX.Element {
                   value={essayText}
                   onChange={(event) => scheduleEssaySave(event.target.value)}
                 />
-                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 6 }}>
-                  {saveStatus === 'saving' && (
-                    <span className="muted" style={{ fontSize: 11 }}>
-                      正在保存…
-                    </span>
-                  )}
-                  {saveStatus === 'saved' && (
-                    <span className="positive" style={{ fontSize: 11 }}>
-                      ✓ 已保存
-                    </span>
-                  )}
+                <div className="exam-essay-status">
+                  <span className="muted">已写 {essayText.replace(/\s/g, '').length} 字</span>
+                  {saveStatus === 'saving' && <span className="muted">正在保存…</span>}
+                  {saveStatus === 'saved' && <span className="positive">✓ 已保存</span>}
                   {saveStatus === 'error' && !saveBlocked && (
-                    <span className="negative" style={{ fontSize: 11 }}>
-                      保存失败
-                    </span>
+                    <span className="negative">保存失败</span>
                   )}
                   {saveBlocked && (
-                    <span className="negative" style={{ fontSize: 11 }}>
+                    <span className="negative">
                       保存失败{' '}
                       <Button size="small" appearance="secondary" onClick={() => void retrySave()}>
                         重试保存
@@ -910,27 +902,29 @@ export function ExamRunPage(): React.JSX.Element {
           </div>
         </Section>
         <Section
+          className="exam-sheet-sticky"
           title="答题卡"
           description={`${answered}/${exam.questionIds.length} 已作答${uncertainIds.length ? ` · ${uncertainIds.length} 题待查` : ''}`}
         >
           <div className="question-grid">
-            {questions.map((question, questionIndex) => (
-              <Button
-                className={`question-number${uncertainIds.includes(question.id) ? ' is-uncertain' : ''}`}
-                size="small"
-                appearance={
-                  questionIndex === index
-                    ? 'primary'
-                    : exam.answers[question.id]
-                      ? 'secondary'
-                      : 'subtle'
-                }
-                key={question.id}
-                onClick={() => setIndex(questionIndex)}
-              >
-                {questionIndex + 1}
-              </Button>
-            ))}
+            {questions.map((question, questionIndex) => {
+              const hasAnswer = (exam.answers[question.id]?.answer ?? []).some(
+                (value) => value.trim().length > 0
+              )
+              return (
+                <Button
+                  className={`question-number${uncertainIds.includes(question.id) ? ' is-uncertain' : ''}`}
+                  size="small"
+                  appearance={
+                    questionIndex === index ? 'primary' : hasAnswer ? 'secondary' : 'subtle'
+                  }
+                  key={question.id}
+                  onClick={() => setIndex(questionIndex)}
+                >
+                  {questionIndex + 1}
+                </Button>
+              )
+            })}
           </div>
         </Section>
       </div>

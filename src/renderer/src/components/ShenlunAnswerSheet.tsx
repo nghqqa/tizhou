@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   SHENLUN_SHEET_COLS,
   buildShenlunSheetGrid,
@@ -26,8 +26,10 @@ export function ShenlunAnswerSheet({
   officialTypography = false,
   placeholder = '点击下方任意方格开始作答 · 支持拖动框选、Ctrl+A 批量删除 · 回车换行'
 }: ShenlunAnswerSheetProps): React.JSX.Element {
+  const bodyRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const [focused, setFocused] = useState(false)
+  const [caretTopPx, setCaretTopPx] = useState(12)
   const [caretIndex, setCaretIndex] = useState(value.length)
   const [selection, setSelection] = useState<{ start: number; end: number }>({
     start: value.length,
@@ -117,8 +119,20 @@ export function ShenlunAnswerSheet({
   }
 
   const caretLeftPct = Math.min(92, (grid.caretCol / SHENLUN_SHEET_COLS) * 100)
-  const caretTopPx = grid.caretRow * 29 + 12
   const hasRangeSelection = !composing && selection.end > selection.start
+
+  useLayoutEffect(() => {
+    const body = bodyRef.current
+    if (!body) return
+    const caretEl = body.querySelector<HTMLElement>('[data-caret="true"]')
+    if (!caretEl) {
+      setCaretTopPx(grid.caretRow * 29 + 12)
+      return
+    }
+    const bodyRect = body.getBoundingClientRect()
+    const cellRect = caretEl.getBoundingClientRect()
+    setCaretTopPx(Math.max(4, Math.round(cellRect.top - bodyRect.top + body.scrollTop)))
+  }, [grid.caretRow, grid.caretCol, composing, displayValue.length, officialTypography])
 
   return (
     <div
@@ -156,6 +170,7 @@ export function ShenlunAnswerSheet({
       {!value && <div className="shenlun-sheet-subbar">{placeholder}</div>}
 
       <div
+        ref={bodyRef}
         className="shenlun-sheet-body"
         onMouseDown={(event) => {
           if (event.target === event.currentTarget) {
@@ -257,6 +272,7 @@ export function ShenlunAnswerSheet({
                     <div
                       key={cell.col}
                       role="gridcell"
+                      data-caret={isCaretHere ? 'true' : undefined}
                       className={[
                         'shenlun-sheet-cell',
                         cell.isLimitBoundary ? 'is-limit-boundary' : '',

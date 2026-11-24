@@ -34,6 +34,14 @@ import {
   regionFromPaperTitle,
   yamlQuote
 } from './lib/import-core.mjs'
+import {
+  analyzeShenlunBatch,
+  formatShenlunBatchReport,
+  normalizeShenlunRawText,
+  resolveMaterialIdRefs,
+  runShenlunPreImportGate,
+  stitchCrossPaperMaterials
+} from './lib/shenlun-repair.mjs'
 
 const SET_TITLE = /^练习题\s*0*(\d{1,3})\s*套?\s*$/
 const QUESTION_NO = /^(\d{1,3})\s*[.、．]\s*(?!\d)(.*)$/
@@ -407,7 +415,7 @@ function buildOpenExam(dbPath, outDir, assetsSourceDir) {
 
 // 考公题库快照 → 知识库 md。默认只转行测真题（--all 加模考题海），附时政/申论真题/申论素材。
 // 给 primaryDir 时做三级跨库去重（主库为准）；--backfill-papers 把命中题的快照真题卷归属回填主库原题。
-function buildKaogong(dbPath, outDir, qimgDir, primaryDir) {
+function buildKaogong(dbPath, outDir, qimgDir, primaryDir, gateOpts = {}) {
   const includeAll = argv.includes('--all')
   const backfillEnabled = argv.includes('--backfill-papers')
   const primary = primaryDir ? loadPrimaryIndex(primaryDir) : null
@@ -648,15 +656,41 @@ function buildKaogong(dbPath, outDir, qimgDir, primaryDir) {
     shenlunCount += 1
   }
 
-  for (const question of pending)
+  // 先拆分行测与申论：对申论真题先运行入库前强制质量门禁，再决定是否落盘
+  const pendingObjective = pending.filter((q) => q.subject !== 'shenlun')
+  const pendingShenlun = pending.filter((q) => q.subject === 'shenlun')
+  let acceptedShenlun = pendingShenlun
+  if (pendingShenlun.length > 0) {
+    const gate = runShenlunPreImportGate(pendingShenlun, {
+      label: `${basename(dirname(dbPath))} 申论入库前质量分析`,
+      ...gateOpts
+    })
+    if (gate.blocked) {
+      db.close()
+      exit(2)
+    }
+    if (!gate.allowWrite) {
+      db.close()
+      return
+    }
+    acceptedShenlun = gate.filtered
+  }
+  const finalPending = [...pendingObjective, ...acceptedShenlun]
+  const finalShenlunCount = acceptedShenlun.length
+
+  for (const question of finalPending)
     writeFileSync(join(outDir, `${question.id}.md`), questionMarkdown(question), 'utf8')
 
   // 申论素材 → 知识文档（非题目）
   const titleSeen = new Map()
   let materialDocs = 0
-  for (const row of db.prepare('SELECT id, type, topic, content FROM shenlun_materials').all()) {
+  for (const row of db
+    .prepare('SELECT id, type, topic, content, source FROM shenlun_materials')
+    .all()) {
     const content = String(row.content ?? '').trim()
-    if (content.length < 50) {
+    const materialType = String(row.type ?? '').trim()
+    const minLen = materialType === '金句' ? 6 : 50
+    if (content.length < minLen) {
       counters.incomplete += 1
       continue
     }
@@ -665,6 +699,7 @@ function buildKaogong(dbPath, outDir, qimgDir, primaryDir) {
     titleSeen.set(baseTitle, occurrence)
     const title = occurrence > 1 ? `${baseTitle}（${occurrence}）` : baseTitle
     const id = `kg-sc-${String(row.id).replace(/[^a-zA-Z0-9_-]/g, '-')}`
+    const refSource = String(row.source ?? '').trim()
     const doc = [
       '---',
       `id: ${yamlQuote(id)}`,
@@ -681,6 +716,7 @@ function buildKaogong(dbPath, outDir, qimgDir, primaryDir) {
       `# ${title}`,
       '',
       content,
+      ...(refSource ? ['', `> 出处：${refSource}`] : []),
       ''
     ].join('\n')
     writeFileSync(join(outDir, `${id}.md`), doc, 'utf8')
@@ -700,9 +736,9 @@ function buildKaogong(dbPath, outDir, qimgDir, primaryDir) {
     }
   }
 
-  const written = pending.length
+  const written = finalPending.length
   console.log(
-    `共写入 ${written} 题（行测真题 ${written - shizhengCount - shenlunCount} + 时政 ${shizhengCount} + 申论 ${shenlunCount}）＋ 素材文档 ${materialDocs} 篇；` +
+    `共写入 ${written} 题（行测真题 ${written - shizhengCount - finalShenlunCount} + 时政 ${shizhengCount} + 申论 ${finalShenlunCount}）＋ 素材文档 ${materialDocs} 篇；` +
       `主库重复 ${counters.primary}（严格 ${counters.primaryStrict} / 宽松 ${counters.primaryLoose} / 资料包含 ${counters.primaryZiliao}）；` +
       `卷间重复 ${counters.duplicate}；字段不全 ${counters.incomplete}；` +
       `题图 ${copiedAssets}/${assetSink.size}；无真题卷归属的真题 ${counters.noPaperReal}`
@@ -1024,7 +1060,7 @@ function reflowChinese(lines) {
 
 // 申论训练书 → 作答题(essay)：题干=「请/根据…+要求：…」尾段，材料=其前的给定资料。
 // 题本不含参考要点，作答由申论工作台的 AI 评估承担。
-function buildShenlunEssay(ocrFile, bookTitle, outDir) {
+function buildShenlunEssay(ocrFile, bookTitle, outDir, gateOpts = {}) {
   const raw = readFileSync(ocrFile, 'utf8')
   const lines = raw
     .split(/\r?\n/)
@@ -1044,7 +1080,7 @@ function buildShenlunEssay(ocrFile, bookTitle, outDir) {
     if (blocks.length > 0) blocks[blocks.length - 1].body.push(line)
   }
   mkdirSync(outDir, { recursive: true })
-  let written = 0
+  const pendingQuestions = []
   let skipped = 0
   blocks.forEach((block, blockIndex) => {
     const body = block.body
@@ -1067,13 +1103,15 @@ function buildShenlunEssay(ocrFile, bookTitle, outDir) {
       skipped += 1
       return
     }
-    const material = reflowChinese(body.slice(0, questionStart))
+    const material = normalizeShenlunRawText(reflowChinese(body.slice(0, questionStart)))
     // 题干重排：题句合并、年份与“要求”行独立成段
     const stemLines = body.slice(questionStart)
-    const stem = [reflowChinese(stemLines.filter((line) => !/^(要求[：:]|[（(]\d{4})/.test(line)))]
-      .concat(stemLines.filter((line) => /^(要求[：:]|[（(]\d{4})/.test(line)))
-      .join('\n')
-      .trim()
+    const stem = normalizeShenlunRawText(
+      [reflowChinese(stemLines.filter((line) => !/^(要求[：:]|[（(]\d{4})/.test(line)))]
+        .concat(stemLines.filter((line) => /^(要求[：:]|[（(]\d{4})/.test(line)))
+        .join('\n')
+        .trim()
+    )
     if (material.length < 100 || stem.length < 15) {
       skipped += 1
       return
@@ -1081,7 +1119,7 @@ function buildShenlunEssay(ocrFile, bookTitle, outDir) {
     const match = block.header.match(splitMarker)
     const label = match?.[1] ?? ''
     const id = `sle-${createHash('sha256').update(`${bookTitle}#${blockIndex}`).digest('hex').slice(0, 18)}`
-    const question = {
+    pendingQuestions.push({
       id,
       subject: 'shenlun',
       category: `申论-${bookTitle}`,
@@ -1095,12 +1133,21 @@ function buildShenlunEssay(ocrFile, bookTitle, outDir) {
       options: [],
       answer: ['本题未收录参考要点，完成作答后可使用 AI 评估。'],
       explanation: '本题来自纸质题本 OCR，原书未附参考要点；建议在申论工作台作答后使用 AI 评估。'
-    }
-    writeFileSync(join(outDir, `${id}.md`), questionMarkdown(question), 'utf8')
-    written += 1
+    })
   })
+
+  const gate = runShenlunPreImportGate(pendingQuestions, {
+    label: `${bookTitle} 申论入库前质量分析`,
+    ...gateOpts
+  })
+  if (gate.blocked) exit(2)
+  if (!gate.allowWrite) return
+
+  for (const question of gate.filtered) {
+    writeFileSync(join(outDir, `${question.id}.md`), questionMarkdown(question), 'utf8')
+  }
   console.log(
-    `${bookTitle} 作答题: ${blocks.length} 块 → ${written} 题（${skipped} 块未识别出题目）`
+    `${bookTitle} 作答题: ${blocks.length} 块 → 入库 ${gate.filtered.length} 题（质检拦截 ${gate.skippedIncomplete} 题，${skipped} 块未识别出题目）`
   )
 }
 
@@ -1132,14 +1179,14 @@ const XZ_MODULE_DIRS = [
   '06-资料分析'
 ]
 
-function normalizeXzRegion(raw) {
+export function normalizeXzRegion(raw) {
   const s = String(raw ?? '').trim()
   if (!s) return ''
   if (/国考|国家公务员|中央机关/.test(s)) return '国考'
   return s.replace(/(?:省|市|自治区)$/, '')
 }
 
-function classifyXzShenlunType(chapter, stem) {
+export function classifyXzShenlunType(chapter, stem) {
   const cat = String(chapter ?? '').trim()
   if (/大作文|作文|申发论述|文章写作/.test(cat)) return '作文题'
   if (/贯彻执行|应用文|公文/.test(cat)) return '公文题'
@@ -1355,7 +1402,7 @@ function buildXingcezhenti(srcDir, outDir, primaryDir) {
   )
 }
 
-function selectRelevantShenlunBlocks(blocks, stem, category, explanation) {
+export function selectRelevantShenlunBlocks(blocks, stem, category, explanation) {
   if (blocks.length <= 1) return blocks
   if (category === '作文题') return blocks
   if (/(?:全部|所有|整篇|各则|上述|以上)\s*(?:给定)?(?:资料|材料)/.test(stem)) {
@@ -1437,15 +1484,15 @@ function selectRelevantShenlunBlocks(blocks, stem, category, explanation) {
     return c
   }
 
-  const stemTok = tokenize(stem.normalize('NFKC'))
+  const stemTok = tokenize(normalizeShenlunRawText(stem))
   const expText =
     explanation && !explanation.startsWith('暂无参考答案')
-      ? explanation.slice(0, 600).normalize('NFKC')
+      ? normalizeShenlunRawText(explanation.slice(0, 600))
       : ''
   const expTok = expText ? tokenize(expText) : { quoted: [], terms: [] }
 
   const scored = blocks.map((b, i) => {
-    const text = b.text.normalize('NFKC')
+    const text = normalizeShenlunRawText(b.text)
     let rawScore = 0
     for (const q of stemTok.quoted) rawScore += countOcc(text, q, 3) * 14
     for (const t of stemTok.terms) {
@@ -1471,8 +1518,8 @@ function selectRelevantShenlunBlocks(blocks, stem, category, explanation) {
   return pickedIdx.sort((a, b) => a - b).map((idx) => blocks[idx])
 }
 
-/** 转换 ERRRC/kaogong-shuati 申论真题 + materials.db 材料为题舟申论库（支持合并与跨库去重） */
-function buildKaogongShuatiShenlun(srcDir, outDir, primaryDir) {
+/** 转换 ERRRC/kaogong-shuati 申论真题 + materials.db 材料为题舟申论库（支持合并与跨库去重 + 入库前质量门禁） */
+function buildKaogongShuatiShenlun(srcDir, outDir, primaryDir, gateOpts = {}) {
   const tikuPath = join(srcDir, 'tiku.db')
   const matPath = join(srcDir, 'materials.db')
   if (!existsSync(tikuPath) || !existsSync(matPath)) {
@@ -1488,29 +1535,46 @@ function buildKaogongShuatiShenlun(srcDir, outDir, primaryDir) {
   const tikuDb = new DatabaseSync(tikuPath, { readOnly: true })
   const matDb = new DatabaseSync(matPath, { readOnly: true })
 
-  // 按 paperId 聚合给定材料分块（支持按小题智能匹配对应材料段）
-  const materialsByPaper = new Map()
+  // 读取并清洗全部给定材料分块，再执行联考跨卷自动拼补
+  const paperNames = new Map()
+  for (const pRow of tikuDb.prepare('SELECT id, name FROM papers').all()) {
+    paperNames.set(pRow.id, String(pRow.name ?? '').trim())
+  }
+
+  const rawBlocks = []
   for (const row of matDb
     .prepare('SELECT paperId, idx, title, text FROM materials ORDER BY paperId, idx')
     .all()) {
-    const text = String(row.text ?? '')
-      .normalize('NFKC')
+    const text = normalizeShenlunRawText(String(row.text ?? ''))
       .replace(
         /\[materialid\]\d+\[\/materialid\](?:\s*[-～~—–]\s*\[materialid\]\d+\[\/materialid\])*/gi,
         ''
       )
       .trim()
     if (!text) continue
-    const list = materialsByPaper.get(row.paperId) ?? []
-    const label = String(row.title ?? '').trim()
+    const label = normalizeShenlunRawText(String(row.title ?? '').trim())
     const numMatch = label.match(/(\d+)/)
-    list.push({
-      idx: Number(row.idx) || list.length + 1,
+    rawBlocks.push({
+      paperId: row.paperId,
+      paperName: paperNames.get(row.paperId) || '',
+      idx: Number(row.idx) || rawBlocks.length + 1,
+      title: label,
       titleNum: numMatch ? Number(numMatch[1]) : null,
-      text,
-      rendered: label ? `### ${label}\n\n${text}` : text
+      text
     })
-    materialsByPaper.set(row.paperId, list)
+  }
+
+  const stitched = stitchCrossPaperMaterials(rawBlocks)
+  const materialsByPaper = new Map()
+  for (const block of stitched.blocks) {
+    const list = materialsByPaper.get(block.paperId) ?? []
+    list.push({
+      idx: Number(block.idx) || list.length + 1,
+      titleNum: block.titleNum,
+      text: block.text,
+      rendered: block.title ? `### ${block.title}\n\n${block.text}` : block.text
+    })
+    materialsByPaper.set(block.paperId, list)
   }
 
   const rows = tikuDb
@@ -1524,26 +1588,27 @@ function buildKaogongShuatiShenlun(srcDir, outDir, primaryDir) {
     )
     .all()
 
-  let imported = 0
+  const pendingQuestions = []
   let skippedDup = 0
   let skippedEmpty = 0
-  let withAnalysis = 0
 
   for (const row of rows) {
-    const stem = String(row.content ?? '')
+    const rawContent = String(row.content ?? '')
+    const cleanStem = normalizeShenlunRawText(rawContent)
       .replace(
         /\[materialid\]\d+\[\/materialid\](?:\s*[-～~—–]\s*\[materialid\]\d+\[\/materialid\])*/gi,
         ''
       )
       .trim()
     const paperName = String(row.paperName ?? '').trim()
-    const category = classifyXzShenlunType(row.chapter, stem)
-    const rawAnalysis = String(row.analysis ?? '').trim()
-    const rawAnswer = String(row.answer ?? '').trim()
+    const category = classifyXzShenlunType(row.chapter, cleanStem)
+    const rawAnalysis = normalizeShenlunRawText(String(row.analysis ?? '').trim())
+    const rawAnswer = normalizeShenlunRawText(String(row.answer ?? '').trim())
     const explanation =
       rawAnalysis || rawAnswer || '暂无参考答案；可在「申论作答」页配合 AI 批改或本地规则评分练习。'
     const allMatBlocks = materialsByPaper.get(row.paperId) ?? []
-    const pickedBlocks = selectRelevantShenlunBlocks(allMatBlocks, stem, category, explanation)
+    const pickedBlocks = selectRelevantShenlunBlocks(allMatBlocks, cleanStem, category, explanation)
+    const stem = resolveMaterialIdRefs(rawContent, allMatBlocks, pickedBlocks, category)
     const material = pickedBlocks
       .map((b) => b.rendered)
       .join('\n\n')
@@ -1564,10 +1629,9 @@ function buildKaogongShuatiShenlun(srcDir, outDir, primaryDir) {
     const region = normalizeXzRegion(rawRegion)
     const yearMatch = paperName.match(/(20\d{2})/)
     const year = yearMatch ? Number(yearMatch[1]) : undefined
-    if (rawAnalysis || rawAnswer) withAnalysis += 1
 
     const id = `kgst-sl-${row.questionId}`
-    const question = {
+    pendingQuestions.push({
       id,
       subject: 'shenlun',
       category,
@@ -1584,75 +1648,189 @@ function buildKaogongShuatiShenlun(srcDir, outDir, primaryDir) {
       options: [],
       answer: [],
       explanation
-    }
-    writeFileSync(join(outDir, `${id}.md`), questionMarkdown(question), 'utf8')
-    imported += 1
+    })
   }
 
   tikuDb.close()
   matDb.close()
+
+  const gate = runShenlunPreImportGate(pendingQuestions, {
+    label: 'kaogong-shuati 申论入库前质量分析',
+    ...gateOpts
+  })
+  if (gate.blocked) exit(2)
+  if (!gate.allowWrite) return
+
+  let withAnalysis = 0
+  for (const question of gate.filtered) {
+    if (!question.explanation.startsWith('暂无参考答案')) withAnalysis += 1
+    writeFileSync(join(outDir, `${question.id}.md`), questionMarkdown(question), 'utf8')
+  }
+
   console.log(
-    `[kaogong-shuati-shenlun] 完成：导入 ${imported} 道申论真题（其中 ${withAnalysis} 题附带官方解析），去重跳过 ${skippedDup} 题，无材料/空题跳过 ${skippedEmpty} 题`
+    `[kaogong-shuati-shenlun] 完成：导入 ${gate.filtered.length} 道申论真题（其中 ${withAnalysis} 题附带官方解析），跨卷拼补 ${stitched.stats.totalPatches} 处（覆盖 ${stitched.stats.patchedBlocks} 段 / ${stitched.stats.patchedPapers} 卷），去重跳过 ${skippedDup} 题，无材料/空题跳过 ${skippedEmpty} 题，质检拦截 ${gate.skippedIncomplete} 题`
   )
 }
 
+/** 解析申论入库门禁通用 CLI 参数，并返回剥离门禁 flag 后的位置参数 */
+function parseShenlunGateFlags(rawArgs) {
+  const gateOpts = {
+    dryRun: false,
+    force: false,
+    skipIncomplete: false,
+    maxIncompleteRate: 0.15,
+    hasExplicitThreshold: false,
+    jsonOut: ''
+  }
+  const positional = []
+  for (let i = 0; i < rawArgs.length; i += 1) {
+    const arg = rawArgs[i]
+    if (arg === '--audit-only' || arg === '--dry-run') {
+      gateOpts.dryRun = true
+    } else if (arg === '--force') {
+      gateOpts.force = true
+    } else if (arg === '--skip-incomplete') {
+      gateOpts.skipIncomplete = true
+    } else if (arg === '--max-incomplete-rate') {
+      const num = Number(rawArgs[++i])
+      if (Number.isFinite(num) && num >= 0 && num <= 1) {
+        gateOpts.maxIncompleteRate = num
+        gateOpts.hasExplicitThreshold = true
+      }
+    } else if (arg === '--json') {
+      gateOpts.jsonOut = rawArgs[++i] ?? ''
+    } else {
+      positional.push(arg)
+    }
+  }
+  return { gateOpts, positional }
+}
+
+/** 独立申论题库目录质量体检命令（支持快速字符串预筛，4 万+ 题库数秒完成） */
+function auditShenlunDir(targetDir, gateOpts = {}) {
+  if (!targetDir || !existsSync(targetDir)) {
+    throw new Error(`目标目录不存在：${targetDir}`)
+  }
+  const questions = []
+  const skipDirs = new Set(['.git', 'node_modules'])
+  function walk(dir) {
+    for (const ent of readdirSync(dir, { withFileTypes: true })) {
+      if (ent.isDirectory()) {
+        if (skipDirs.has(ent.name) || ent.name.startsWith('_cleaned-archive')) continue
+        walk(join(dir, ent.name))
+      } else if (ent.isFile() && ent.name.endsWith('.md')) {
+        const fp = join(dir, ent.name)
+        const raw = readFileSync(fp, 'utf8')
+        if (!/subject:\s*["']?shenlun["']?/i.test(raw)) continue
+        const fm = matter(raw).data
+        const kindLower = String(fm.kind ?? '').toLowerCase()
+        if (
+          fm.subject !== 'shenlun' ||
+          kindLower === 'knowledge' ||
+          kindLower === 'method' ||
+          kindLower === 'pattern'
+        )
+          continue
+        questions.push({
+          id: fm.id || ent.name.replace(/\.md$/, ''),
+          paper: fm.paper || fm.sourceFile || '',
+          category: fm.category || '',
+          stem: fm.stem || '',
+          material: fm.material || '',
+          explanation: fm.explanation || ''
+        })
+      }
+    }
+  }
+  walk(targetDir)
+
+  const report = analyzeShenlunBatch(questions)
+  console.log(formatShenlunBatchReport(report, `申论目录质量体检：${targetDir}`))
+
+  if (gateOpts.jsonOut) {
+    const { itemResults: _omit, ...serializable } = report
+    writeFileSync(gateOpts.jsonOut, JSON.stringify(serializable, null, 2), 'utf8')
+    console.log(`[audit-shenlun] JSON 报告已保存：${gateOpts.jsonOut}`)
+  }
+
+  if (
+    gateOpts.hasExplicitThreshold &&
+    report.total > 0 &&
+    report.incompleteRate > gateOpts.maxIncompleteRate
+  ) {
+    console.error(
+      `[audit-shenlun] 门禁未通过：残缺率 ${(report.incompleteRate * 100).toFixed(1)}% 超过阈值 ${(gateOpts.maxIncompleteRate * 100).toFixed(1)}%`
+    )
+    exit(2)
+  }
+}
+
 const command = argv[2]
-if (command === 'build' && argv[3] === 'pianduan600') {
-  buildPianduan600(argv[4], argv[5])
-} else if (command === 'build' && argv[3] === 'openexam') {
-  buildOpenExam(argv[4], argv[5], argv[6])
-} else if (command === 'build' && argv[3] === 'openexam-json') {
-  buildOpenExamJson(argv[4], argv[5], argv[6])
-} else if (command === 'build' && argv[3] === 'kaogong') {
-  buildKaogong(argv[4], argv[5], argv[6], argv[7])
-} else if (command === 'build' && argv[3] === 'xingcezhenti') {
-  buildXingcezhenti(argv[4], argv[5], argv[6])
-} else if (command === 'build' && argv[3] === 'kaogong-shuati-shenlun') {
-  buildKaogongShuatiShenlun(argv[4], argv[5], argv[6])
-} else if (command === 'build' && argv[3] === 'shenlun') {
-  buildShenlun(argv[4], argv[5], argv[6])
-} else if (command === 'build' && argv[3] === 'shenlun-essay') {
-  buildShenlunEssay(argv[4], argv[5], argv[6])
-} else if (command === 'dedup') {
-  dedupAgainst(argv[3], argv[4])
-} else if (command === 'verify') {
-  verify(argv[3])
-} else if (command === 'debug-parse') {
-  const questions = parseQuestionBook(readLines(argv[3]))
-  const bySet = new Map()
-  for (const item of questions) {
-    if (!bySet.has(item.set)) bySet.set(item.set, [])
-    bySet.get(item.set).push(item.num)
-  }
-  console.log(`切出 ${questions.length} 题`)
-  for (const [set, nums] of [...bySet].sort((a, b) => a[0] - b[0])) {
-    const missing = Array.from({ length: Math.max(...nums) }, (_, index) => index + 1).filter(
-      (num) => !nums.includes(num)
+if (
+  import.meta.url === `file:///${process.argv[1]?.replace(/\\/g, '/')}` ||
+  process.argv[1]?.endsWith('direct-import.mjs')
+) {
+  const { gateOpts, positional } = parseShenlunGateFlags(argv.slice(3))
+  if (command === 'build' && positional[0] === 'pianduan600') {
+    buildPianduan600(positional[1], positional[2])
+  } else if (command === 'build' && positional[0] === 'openexam') {
+    buildOpenExam(positional[1], positional[2], positional[3])
+  } else if (command === 'build' && positional[0] === 'openexam-json') {
+    buildOpenExamJson(positional[1], positional[2], positional[3])
+  } else if (command === 'build' && positional[0] === 'kaogong') {
+    buildKaogong(positional[1], positional[2], positional[3], positional[4], gateOpts)
+  } else if (command === 'build' && positional[0] === 'xingcezhenti') {
+    buildXingcezhenti(positional[1], positional[2], positional[3])
+  } else if (command === 'build' && positional[0] === 'kaogong-shuati-shenlun') {
+    buildKaogongShuatiShenlun(positional[1], positional[2], positional[3], gateOpts)
+  } else if (command === 'build' && positional[0] === 'shenlun') {
+    buildShenlun(positional[1], positional[2], positional[3])
+  } else if (command === 'build' && positional[0] === 'shenlun-essay') {
+    buildShenlunEssay(positional[1], positional[2], positional[3], gateOpts)
+  } else if (command === 'audit-shenlun') {
+    auditShenlunDir(positional[0], gateOpts)
+  } else if (command === 'dedup') {
+    dedupAgainst(positional[0], positional[1])
+  } else if (command === 'verify') {
+    verify(positional[0])
+  } else if (command === 'debug-parse') {
+    const questions = parseQuestionBook(readLines(positional[0]))
+    const bySet = new Map()
+    for (const item of questions) {
+      if (!bySet.has(item.set)) bySet.set(item.set, [])
+      bySet.get(item.set).push(item.num)
+    }
+    console.log(`切出 ${questions.length} 题`)
+    for (const [set, nums] of [...bySet].sort((a, b) => a[0] - b[0])) {
+      const missing = Array.from({ length: Math.max(...nums) }, (_, index) => index + 1).filter(
+        (num) => !nums.includes(num)
+      )
+      console.log(
+        `  第${set}套: ${nums.length} 题${missing.length ? `，缺题号 ${missing.join(',')}` : ''}`
+      )
+    }
+    const first = questions[0]
+    const last = questions[questions.length - 1]
+    if (first)
+      console.log(`\n首题预览: ${first.stem.slice(0, 60)}... 选项${first.options.length}个`)
+    if (last)
+      console.log(
+        `末题预览: (${last.set}-${last.num}) ${last.stem.slice(0, 60)}... 选项${last.options.length}个`
+      )
+  } else if (command === 'debug-solutions') {
+    const solutions = parseSolutionBook(readLines(positional[0]))
+    const bySet = new Map()
+    for (const key of solutions.keys()) {
+      const set = Number(key.split('-')[0])
+      bySet.set(set, (bySet.get(set) ?? 0) + 1)
+    }
+    console.log(`解析切出 ${solutions.size} 条`)
+    for (const [set, count] of [...bySet].sort((a, b) => a[0] - b[0]))
+      console.log(`  第${set}套: ${count} 条${count !== 20 ? ' ←异常' : ''}`)
+  } else {
+    console.error(
+      '用法: node tools/direct-import.mjs audit-shenlun <md目录> [--json <path>] [--max-incomplete-rate <0..1>] | build kaogong-shuati-shenlun <srcDir> <outDir> [主库目录] [--audit-only|--skip-incomplete|--force|--max-incomplete-rate <n>] | build shenlun-essay <ocr.md> <书名> <outDir> [--audit-only|--skip-incomplete|--force] | build kaogong <db> <outDir> <题图目录> [主库目录] [--all] [--backfill-papers] [--audit-only|--skip-incomplete|--force] | verify <outDir>'
     )
-    console.log(
-      `  第${set}套: ${nums.length} 题${missing.length ? `，缺题号 ${missing.join(',')}` : ''}`
-    )
+    exit(1)
   }
-  const first = questions[0]
-  const last = questions[questions.length - 1]
-  if (first) console.log(`\n首题预览: ${first.stem.slice(0, 60)}... 选项${first.options.length}个`)
-  if (last)
-    console.log(
-      `末题预览: (${last.set}-${last.num}) ${last.stem.slice(0, 60)}... 选项${last.options.length}个`
-    )
-} else if (command === 'debug-solutions') {
-  const solutions = parseSolutionBook(readLines(argv[3]))
-  const bySet = new Map()
-  for (const key of solutions.keys()) {
-    const set = Number(key.split('-')[0])
-    bySet.set(set, (bySet.get(set) ?? 0) + 1)
-  }
-  console.log(`解析切出 ${solutions.size} 条`)
-  for (const [set, count] of [...bySet].sort((a, b) => a[0] - b[0]))
-    console.log(`  第${set}套: ${count} 条${count !== 20 ? ' ←异常' : ''}`)
-} else {
-  console.error(
-    '用法: node tools/direct-import.mjs build pianduan600 <ocrDir> <outDir> | build openexam <db> <outDir> <题图目录> | build openexam-json <jsonDir> <outDir> [主库目录] [--material-db <seed.db>] [--assets-dir <图片目录>] [--backfill-papers] | build kaogong <db> <outDir> <题图目录> [主库目录] [--all] [--backfill-papers] | verify <outDir> | debug-parse <tiben.md> | debug-solutions <jiexi.md>'
-  )
-  exit(1)
 }

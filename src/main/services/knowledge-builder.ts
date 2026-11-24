@@ -40,6 +40,7 @@ import type {
 } from '../../shared/contracts'
 import { parseOcrWorkerLine } from '../../shared/ocr-payload'
 import { FEATURE_PROMPTS, sourceEnvelope, taskDataEnvelope } from '../../shared/prompts'
+import { inspectShenlunMaterialQuality, normalizeShenlunText } from '../../shared/shenlun'
 import { AiService } from './ai'
 import { ConversionCache } from './conversion-cache'
 import {
@@ -2285,9 +2286,18 @@ export class KnowledgeBuilderService {
         for (const book of directEssays) {
           const bookFile = job.files.find((file) => file.sourceId === book.sourceId)
           let bookStaged = 0
+          let bookClean = 0
+          let bookIncomplete = 0
           for (const unit of book.units) {
+            const cleanStem = normalizeShenlunText(unit.stem).trim()
+            const cleanMaterial = unit.material
+              ? normalizeShenlunText(unit.material).trim()
+              : undefined
+            const cleanExplanation = unit.explanation
+              ? normalizeShenlunText(unit.explanation).trim()
+              : ''
             const item: DirectQuestion = {
-              id: `kb-e${hash(`${book.relativePath}\n${unit.chapter}\n${compact(unit.stem).slice(0, 120)}`).slice(0, 19)}`,
+              id: `kb-e${hash(`${book.relativePath}\n${unit.chapter}\n${compact(cleanStem).slice(0, 120)}`).slice(0, 19)}`,
               set: 1,
               num: unit.seq,
               subject: 'shenlun',
@@ -2299,11 +2309,11 @@ export class KnowledgeBuilderService {
               paper: unit.paper,
               questionType: 'essay',
               difficulty: 3,
-              stem: unit.stem,
+              stem: cleanStem,
               options: [],
               answer: [],
-              explanation: unit.explanation || '暂无参考答案；可在「申论作答」页配合 AI 批改练习。',
-              material: unit.material
+              explanation: cleanExplanation || '暂无参考答案；可在「申论作答」页配合 AI 批改练习。',
+              material: cleanMaterial
             }
             // 与库内签名同口径：材料参与去重，避免跨批次重复导入同一篇训练
             const signature = directSignature(item.stem, item.material ?? '', '')
@@ -2312,6 +2322,20 @@ export class KnowledgeBuilderService {
               continue
             }
             batchSeen.add(signature)
+            const quality = inspectShenlunMaterialQuality(cleanMaterial, {
+              explanation: item.explanation
+            })
+            if (quality.level === 'incomplete') bookIncomplete += 1
+            else bookClean += 1
+
+            const warnings: string[] = []
+            if (!cleanExplanation) {
+              warnings.push('暂无参考答案，建议在备考开始前用 AI 批改补齐要点')
+            }
+            if (quality.level === 'incomplete') {
+              warnings.push(`材料质检异常（${quality.issues.join('、')}），入库前请对照原书核对`)
+            }
+
             const markdown = directQuestionMarkdown(item)
             const artifact: StoredArtifact = {
               id: item.id,
@@ -2321,17 +2345,15 @@ export class KnowledgeBuilderService {
               relativeSourcePath: book.relativePath,
               kind: 'question',
               subject: 'shenlun',
-              title: safeTitle(unit.title || unit.stem.slice(0, 40), '未命名题目'),
+              title: safeTitle(unit.title || cleanStem.slice(0, 40), '未命名题目'),
               category: item.category,
-              confidence: 1,
+              confidence: quality.level === 'incomplete' ? 0.65 : 1,
               generatedBy: 'direct-import',
               status: 'pending',
-              warnings: unit.explanation
-                ? []
-                : ['暂无参考答案，建议在备考开始前用 AI 批改补齐要点'],
-              preview: unit.stem.slice(0, 180),
+              warnings,
+              preview: cleanStem.slice(0, 180),
               markdown,
-              evidenceExcerpt: unit.stem.slice(0, 80),
+              evidenceExcerpt: cleanStem.slice(0, 80),
               sourceEvidence: this.buildArtifactEvidence(
                 { lineStart: unit.lineStart },
                 book.sourceId,
@@ -2349,9 +2371,9 @@ export class KnowledgeBuilderService {
           if (bookFile) {
             bookFile.state = 'ready'
             bookFile.artifactCount = bookStaged
-            bookFile.message = `切出 ${bookStaged} 道申论题${
-              bookStaged ? '（无参考答案，练习配合 AI 批改）' : ''
-            }`
+            bookFile.message = `切出 ${bookStaged} 道申论题（质检通过 ${bookClean} / 疑似残缺 ${bookIncomplete}${
+              bookStaged ? '，练习配合 AI 批改' : ''
+            }）`
           }
         }
         job.status = staged > 0 ? 'review' : 'completed'

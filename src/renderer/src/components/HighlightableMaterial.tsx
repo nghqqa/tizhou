@@ -158,6 +158,7 @@ export function HighlightableMaterial({
 }: HighlightableMaterialProps): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null)
   const [highlights, setHighlights] = useState<MaterialHighlight[]>(() => readHighlights(promptId))
+  const [lastRemoved, setLastRemoved] = useState<MaterialHighlight | null>(null)
   const [activeColor, setActiveColor] = useState<HighlightColor>('yellow')
   const [brushOn, setBrushOn] = useState(false)
   const [popover, setPopover] = useState<{
@@ -169,8 +170,20 @@ export function HighlightableMaterial({
 
   useEffect(() => {
     setHighlights(readHighlights(promptId))
+    setLastRemoved(null)
     setPopover(null)
   }, [promptId])
+
+  useEffect(() => {
+    if (!popover) return
+    const close = (event: MouseEvent): void => {
+      const target = event.target as HTMLElement | null
+      if (target?.closest('.essay-hl-popover')) return
+      setPopover(null)
+    }
+    window.addEventListener('mousedown', close)
+    return () => window.removeEventListener('mousedown', close)
+  }, [popover])
 
   useEffect(() => {
     writeHighlights(promptId, highlights)
@@ -244,6 +257,7 @@ export function HighlightableMaterial({
 
     const rect = range.getBoundingClientRect()
     const hostRect = container.getBoundingClientRect()
+    const nearTop = rect.top - hostRect.top < 42
     setPopover({
       text: selectedText,
       occurrence,
@@ -251,7 +265,9 @@ export function HighlightableMaterial({
         80,
         Math.min(rect.left - hostRect.left + rect.width / 2, Math.max(120, hostRect.width - 95))
       ),
-      y: Math.max(4, rect.top - hostRect.top + container.scrollTop - 38)
+      y: nearTop
+        ? rect.bottom - hostRect.top + container.scrollTop + 6
+        : rect.top - hostRect.top + container.scrollTop - 38
     })
   }
 
@@ -298,6 +314,22 @@ export function HighlightableMaterial({
               摘录勾画
             </button>
           )}
+          {lastRemoved && (
+            <button
+              type="button"
+              className="essay-hl-undo"
+              title="撤销刚才删除的那条材料勾画"
+              onClick={() => {
+                const item = lastRemoved
+                setLastRemoved(null)
+                setHighlights((prev) =>
+                  prev.some((hl) => hl.id === item.id) ? prev : [...prev, item]
+                )
+              }}
+            >
+              撤销删除
+            </button>
+          )}
           {highlights.length > 0 && (
             <button
               type="button"
@@ -305,6 +337,7 @@ export function HighlightableMaterial({
               title="清空本题全部勾画"
               onClick={() => {
                 setHighlights([])
+                setLastRemoved(null)
                 setPopover(null)
               }}
             >
@@ -318,6 +351,9 @@ export function HighlightableMaterial({
       <div
         className="essay-material-body"
         ref={containerRef}
+        onScroll={() => {
+          if (popover) setPopover(null)
+        }}
         onMouseUp={handleMouseUp}
         onClick={(event) => {
           const target = event.target as HTMLElement | null
@@ -326,7 +362,11 @@ export function HighlightableMaterial({
           const sel = window.getSelection()
           if (sel && !sel.isCollapsed) return
           const hlId = mark.dataset.hlId
-          setHighlights((prev) => prev.filter((item) => item.id !== hlId))
+          setHighlights((prev) => {
+            const targetItem = prev.find((item) => item.id === hlId) ?? null
+            if (targetItem) setLastRemoved(targetItem)
+            return prev.filter((item) => item.id !== hlId)
+          })
         }}
       >
         {popover && (

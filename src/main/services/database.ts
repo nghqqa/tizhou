@@ -9,6 +9,10 @@ import {
   extractRegionFromText,
   normalizeRegionName
 } from '../../shared/region'
+import {
+  inspectShenlunMaterialQuality,
+  type ShenlunMaterialQualityLevel
+} from '../../shared/shenlun'
 import { escapeSqlLike, splitSearchTerms } from '../../shared/search'
 import type {
   AiConversation,
@@ -158,6 +162,14 @@ function numberValue(value: unknown): number {
 export class DatabaseService {
   private db: DatabaseSync
   private facetsCache = new Map<string, QuestionFacets>()
+  private shenlunQualityCache: Map<
+    string,
+    {
+      materialQuality: ShenlunMaterialQualityLevel
+      materialIssues: string[]
+      hasReferenceAnswer: boolean
+    }
+  > | null = null
 
   constructor(
     readonly databasePath: string,
@@ -523,6 +535,7 @@ export class DatabaseService {
       this.db.prepare('UPDATE vault_registry SET active=1 WHERE id=?').run(id)
     })
     this.facetsCache.clear()
+    this.shenlunQualityCache = null
     return this.mapVault(row)
   }
 
@@ -740,7 +753,47 @@ export class DatabaseService {
       }
     })
     this.facetsCache.clear()
+    this.shenlunQualityCache = null
     return { added, updated, removed }
+  }
+
+  private getShenlunQualityMap(): Map<
+    string,
+    {
+      materialQuality: ShenlunMaterialQualityLevel
+      materialIssues: string[]
+      hasReferenceAnswer: boolean
+    }
+  > {
+    if (this.shenlunQualityCache) return this.shenlunQualityCache
+    const map = new Map<
+      string,
+      {
+        materialQuality: ShenlunMaterialQualityLevel
+        materialIssues: string[]
+        hasReferenceAnswer: boolean
+      }
+    >()
+    const rows = this.db
+      .prepare(
+        `SELECT q.id, q.material, q.explanation
+         FROM questions q
+         JOIN vault_registry v ON v.id = q.vault_id
+         WHERE v.active = 1 AND q.subject = 'shenlun'`
+      )
+      .all() as Row[]
+    for (const row of rows) {
+      const report = inspectShenlunMaterialQuality(row.material ? String(row.material) : '', {
+        explanation: row.explanation ? String(row.explanation) : ''
+      })
+      map.set(String(row.id), {
+        materialQuality: report.level,
+        materialIssues: report.issues,
+        hasReferenceAnswer: report.hasReferenceAnswer
+      })
+    }
+    this.shenlunQualityCache = map
+    return map
   }
 
   listQuestionSummaries(filter: QuestionListFilter = {}): QuestionSummary[] {
@@ -754,18 +807,33 @@ export class DatabaseService {
          WHERE ${where.join(' AND ')} ORDER BY q.year DESC, q.category, q.id LIMIT ?`
       )
       .all(...values, limit) as Row[]
-    return rows.map((row) => ({
-      id: String(row.id),
-      subject: String(row.subject) as Question['subject'],
-      category: String(row.category),
-      type: String(row.type) as Question['type'],
-      difficulty: numberValue(row.difficulty) as Question['difficulty'],
-      source: String(row.source),
-      year: row.year === null || row.year === undefined ? undefined : numberValue(row.year),
-      region: row.region ? String(row.region) : undefined,
-      paper: row.paper ? String(row.paper) : undefined,
-      stemPreview: String(row.stem_preview ?? '')
-    }))
+    const qualityMap =
+      filter.subject === 'shenlun' || rows.some((row) => String(row.subject) === 'shenlun')
+        ? this.getShenlunQualityMap()
+        : null
+    return rows.map((row) => {
+      const id = String(row.id)
+      const quality = qualityMap?.get(id)
+      return {
+        id,
+        subject: String(row.subject) as Question['subject'],
+        category: String(row.category),
+        type: String(row.type) as Question['type'],
+        difficulty: numberValue(row.difficulty) as Question['difficulty'],
+        source: String(row.source),
+        year: row.year === null || row.year === undefined ? undefined : numberValue(row.year),
+        region: row.region ? String(row.region) : undefined,
+        paper: row.paper ? String(row.paper) : undefined,
+        stemPreview: String(row.stem_preview ?? ''),
+        ...(quality
+          ? {
+              materialQuality: quality.materialQuality,
+              materialIssues: quality.materialIssues,
+              hasReferenceAnswer: quality.hasReferenceAnswer
+            }
+          : {})
+      }
+    })
   }
 
   listQuestions(filter: QuestionListFilter = {}): Question[] {
@@ -1343,6 +1411,7 @@ export class DatabaseService {
       }
     })
     this.facetsCache.clear()
+    this.shenlunQualityCache = null
     return { updated }
   }
 

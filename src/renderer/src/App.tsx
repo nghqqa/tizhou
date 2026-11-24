@@ -384,7 +384,7 @@ function AppShell(): React.JSX.Element {
             title={isDark ? '切换到浅色模式（白天）' : '切换到深色模式（夜间）'}
             onClick={toggleTheme}
           >
-            {isDark ? '浅色模式' : '深色模式'}
+            <span className="sidebar-footer-label">{isDark ? '浅色模式' : '深色模式'}</span>
           </Button>
           <Button
             appearance="subtle"
@@ -394,7 +394,7 @@ function AppShell(): React.JSX.Element {
             title="检查更新"
             onClick={() => void checkForUpdates()}
           >
-            检查更新
+            <span className="sidebar-footer-label">检查更新</span>
           </Button>
         </div>
         <div className="vault-summary">

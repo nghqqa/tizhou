@@ -22,6 +22,7 @@ import {
   SHENLUN_QUESTION_TYPES,
   classifyShenlunType,
   formatShenlunMaterialParagraphs,
+  inspectShenlunMaterialQuality,
   recommendShenlunMaterialIndices,
   splitShenlunMaterialBlocks,
   type ShenlunQuestionType
@@ -29,6 +30,7 @@ import {
 import { formatFullDate, invoke } from '../api'
 import { HighlightableMaterial } from '../components/HighlightableMaterial'
 import { MarkdownContent } from '../components/MarkdownContent'
+import { ReadingTypographyBar, useReadingTypography } from '../components/ReadingTypographyControl'
 import { RegionCascadePicker } from '../components/RegionCascadePicker'
 import { ShenlunAnswerSheet } from '../components/ShenlunAnswerSheet'
 import { ShenlunPromptPicker } from '../components/ShenlunPromptPicker'
@@ -57,6 +59,18 @@ function stemPreview(stem: string, max = 60): string {
   return (boundary > 20 ? head.slice(0, boundary + 1) : head) + '…'
 }
 
+type ShenlunQualityFilter = 'all' | 'hide-incomplete' | 'verified'
+
+function readStoredQualityFilter(): ShenlunQualityFilter {
+  try {
+    const raw = window.localStorage.getItem('tizhou:shenlun-quality-filter')
+    if (raw === 'hide-incomplete' || raw === 'verified') return raw
+  } catch {
+    /* 忽略本地存储受限 */
+  }
+  return 'all'
+}
+
 export function ShenlunSolutionPage(): React.JSX.Element {
   const [searchParams, setSearchParams] = useSearchParams()
   const requestedPromptId = searchParams.get('promptId') ?? ''
@@ -79,6 +93,7 @@ export function ShenlunSolutionPage(): React.JSX.Element {
   })
   const [hasAnyPrompts, setHasAnyPrompts] = useState<boolean | null>(null)
   const [onlyUnattempted, setOnlyUnattempted] = useState(false)
+  const [qualityFilter, setQualityFilter] = useState<ShenlunQualityFilter>(readStoredQualityFilter)
   const [officialTypography, setOfficialTypography] = useState<boolean>(() => {
     try {
       return window.localStorage.getItem('tizhou:shenlun-official-typography') === '1'
@@ -86,6 +101,7 @@ export function ShenlunSolutionPage(): React.JSX.Element {
       return false
     }
   })
+  const reading = useReadingTypography()
   const [content, setContent] = useState('')
   const [evaluation, setEvaluation] = useState<ConstructedEvaluation>()
   const [selectedHistoryId, setSelectedHistoryId] = useState<string>('')
@@ -138,6 +154,32 @@ export function ShenlunSolutionPage(): React.JSX.Element {
     return map
   }, [allHistory])
 
+  const qualityCounts = useMemo(() => {
+    let all = 0
+    let cleanable = 0
+    let verified = 0
+    let incomplete = 0
+    for (const prompt of prompts ?? []) {
+      all += 1
+      if (prompt.materialQuality === 'incomplete') {
+        incomplete += 1
+      } else {
+        cleanable += 1
+        if (prompt.materialQuality === 'verified') verified += 1
+      }
+    }
+    return { all, cleanable, verified, incomplete }
+  }, [prompts])
+
+  const qualityFilteredPrompts = useMemo(() => {
+    if (!prompts) return undefined
+    if (qualityFilter === 'all') return prompts
+    return prompts.filter((prompt) => {
+      if (qualityFilter === 'hide-incomplete') return prompt.materialQuality !== 'incomplete'
+      return prompt.materialQuality === 'verified'
+    })
+  }, [prompts, qualityFilter])
+
   const typeCounts = useMemo(() => {
     const counts: Record<ShenlunQuestionType, number> = {
       单一题: 0,
@@ -145,16 +187,16 @@ export function ShenlunSolutionPage(): React.JSX.Element {
       公文题: 0,
       作文题: 0
     }
-    for (const prompt of prompts ?? []) {
+    for (const prompt of qualityFilteredPrompts ?? []) {
       const kind = classifyShenlunType(prompt.category, prompt.stemPreview)
       counts[kind] += 1
     }
     return counts
-  }, [prompts])
+  }, [qualityFilteredPrompts])
 
   const visiblePrompts = useMemo(() => {
-    if (!prompts) return undefined
-    return prompts.filter((prompt) => {
+    if (!qualityFilteredPrompts) return undefined
+    return qualityFilteredPrompts.filter((prompt) => {
       if (shenlunType && classifyShenlunType(prompt.category, prompt.stemPreview) !== shenlunType) {
         return false
       }
@@ -163,7 +205,7 @@ export function ShenlunSolutionPage(): React.JSX.Element {
       }
       return true
     })
-  }, [prompts, shenlunType, onlyUnattempted, statusByPrompt])
+  }, [qualityFilteredPrompts, shenlunType, onlyUnattempted, statusByPrompt])
 
   const currentIndex = useMemo(
     () => (visiblePrompts ? visiblePrompts.findIndex((prompt) => prompt.id === promptId) : -1),
@@ -269,6 +311,14 @@ export function ShenlunSolutionPage(): React.JSX.Element {
     }
   }, [officialTypography])
 
+  useEffect(() => {
+    try {
+      window.localStorage.setItem('tizhou:shenlun-quality-filter', qualityFilter)
+    } catch {
+      /* 忽略本地存储受限 */
+    }
+  }, [qualityFilter])
+
   // 响应 URL 参数跳转（例如从学习报告「申论作答记录」点进复盘），评估进行中忽略外部切题
   useEffect(() => {
     if (!requestedPromptId || evaluating) return
@@ -276,6 +326,7 @@ export function ShenlunSolutionPage(): React.JSX.Element {
       setRegion('')
       search.clear()
       setShenlunType('')
+      setQualityFilter('all')
       setOnlyUnattempted(false)
       setPromptId(requestedPromptId)
     })
@@ -491,6 +542,12 @@ export function ShenlunSolutionPage(): React.JSX.Element {
     setOnlyUnattempted((value) => !value)
   }
 
+  async function selectQualityFilter(nextFilter: ShenlunQualityFilter): Promise<void> {
+    if (evaluating || nextFilter === qualityFilter) return
+    await flushPendingDraft(false)
+    setQualityFilter(nextFilter)
+  }
+
   async function goAdjacent(delta: -1 | 1): Promise<void> {
     if (!visiblePrompts || currentIndex < 0 || evaluating) return
     const target = visiblePrompts[currentIndex + delta]
@@ -550,8 +607,23 @@ export function ShenlunSolutionPage(): React.JSX.Element {
     writeStoredRegion('tizhou:shenlun-region', '')
     search.clear()
     setShenlunType('')
+    setQualityFilter('all')
     setOnlyUnattempted(false)
   }
+
+  const currentQuality = useMemo(() => {
+    if (current) {
+      return inspectShenlunMaterialQuality(current.material, { explanation: current.explanation })
+    }
+    if (currentSummary?.materialQuality) {
+      return {
+        level: currentSummary.materialQuality,
+        issues: currentSummary.materialIssues ?? [],
+        hasReferenceAnswer: Boolean(currentSummary.hasReferenceAnswer)
+      }
+    }
+    return null
+  }, [current, currentSummary])
 
   if (prompts === undefined)
     return (
@@ -614,7 +686,7 @@ export function ShenlunSolutionPage(): React.JSX.Element {
       />
       {error && <ErrorState message={error} />}
       <Section>
-        <div className="form-grid">
+        <div className="shenlun-filter-grid">
           <Field label="地区 / 分类">
             <RegionCascadePicker
               regions={regions}
@@ -691,7 +763,7 @@ export function ShenlunSolutionPage(): React.JSX.Element {
             disabled={evaluating}
             onClick={() => setShenlunType('')}
           >
-            全部题型 ({prompts.length})
+            全部题型 ({qualityFilteredPrompts?.length ?? prompts.length})
           </button>
           {SHENLUN_QUESTION_TYPES.map((kind) => (
             <button
@@ -706,6 +778,36 @@ export function ShenlunSolutionPage(): React.JSX.Element {
               {kind} ({typeCounts[kind]})
             </button>
           ))}
+        </div>
+        <div className="shenlun-quality-bar" role="group" aria-label="材料完整度筛选">
+          <span className="shenlun-quality-label">材料完整度：</span>
+          <button
+            type="button"
+            aria-pressed={qualityFilter === 'all'}
+            className={`shenlun-quality-chip${qualityFilter === 'all' ? ' is-active' : ''}`}
+            disabled={evaluating}
+            onClick={() => void selectQualityFilter('all')}
+          >
+            全部材料 ({qualityCounts.all})
+          </button>
+          <button
+            type="button"
+            aria-pressed={qualityFilter === 'hide-incomplete'}
+            className={`shenlun-quality-chip${qualityFilter === 'hide-incomplete' ? ' is-active' : ''}`}
+            disabled={evaluating}
+            onClick={() => void selectQualityFilter('hide-incomplete')}
+          >
+            隐藏残缺 ({qualityCounts.cleanable})
+          </button>
+          <button
+            type="button"
+            aria-pressed={qualityFilter === 'verified'}
+            className={`shenlun-quality-chip${qualityFilter === 'verified' ? ' is-active' : ''}`}
+            disabled={evaluating}
+            onClick={() => void selectQualityFilter('verified')}
+          >
+            精校带解析 ({qualityCounts.verified})
+          </button>
         </div>
         {prompts.length === 0 ? (
           loadingPrompts ? (
@@ -723,7 +825,18 @@ export function ShenlunSolutionPage(): React.JSX.Element {
             />
           )
         ) : totalVisible === 0 ? (
-          shenlunType && typeCounts[shenlunType] === 0 ? (
+          (qualityFilteredPrompts?.length ?? 0) === 0 ? (
+            <EmptyState
+              title={
+                qualityFilter === 'verified'
+                  ? '当前条件下暂无「精校带解析」题目'
+                  : '当前条件下暂无非残缺题目'
+              }
+              description="可切换回「全部材料」查看该考区或关键词下的全部申论真题。"
+              actionLabel="显示全部材料"
+              onAction={() => void selectQualityFilter('all')}
+            />
+          ) : shenlunType && typeCounts[shenlunType] === 0 ? (
             <EmptyState
               title={`当前筛选下暂无「${shenlunType}」`}
               description="可切换其他题型标签，或查看全部题型。"
@@ -776,6 +889,21 @@ export function ShenlunSolutionPage(): React.JSX.Element {
                 {(current ?? currentSummary) && (
                   <span className="pill">难度 {(current ?? currentSummary)!.difficulty}</span>
                 )}
+                {currentQuality?.level === 'verified' && (
+                  <span className="pill is-verified">完整精校</span>
+                )}
+                {currentQuality?.level === 'incomplete' && (
+                  <span
+                    className="pill is-warning"
+                    title={
+                      currentQuality.issues.length > 0
+                        ? `检测到：${currentQuality.issues.join('、')}`
+                        : '材料存在提取残缺'
+                    }
+                  >
+                    材料有残缺
+                  </span>
+                )}
                 {currentStatus && (
                   <span className="pill is-evaluated">
                     已评 {currentStatus.count} 次 · 最新 {currentStatus.latestScore} 分
@@ -802,6 +930,13 @@ export function ShenlunSolutionPage(): React.JSX.Element {
                     </button>
                   )
                 })()}
+                <ReadingTypographyBar
+                  contextLabel="申论阅读"
+                  typography={reading.typography}
+                  onUpdate={reading.update}
+                  onStepScale={reading.stepScale}
+                  onResetScale={reading.resetScale}
+                />
                 <Button
                   size="small"
                   appearance={officialTypography ? 'primary' : 'outline'}
@@ -845,8 +980,20 @@ export function ShenlunSolutionPage(): React.JSX.Element {
                 </div>
               </div>
             </div>
-            <div className={`essay-columns${officialTypography ? ' is-official-doc' : ''}`}>
+            <div
+              ref={reading.surfaceRef}
+              className={`essay-columns question-reading-surface${officialTypography ? ' is-official-doc' : ''}`}
+              data-reading-font={reading.typography.font}
+              style={reading.surfaceStyle}
+            >
               <div className="essay-col">
+                {current && currentQuality?.level === 'incomplete' && (
+                  <div className="shenlun-quality-banner" role="note">
+                    该题材料来自上游 PDF 抽取，检测到可能存在残缺（
+                    {currentQuality.issues.join('、')}
+                    ），作答与 AI 批改时请注意核对原卷。
+                  </div>
+                )}
                 {current?.material &&
                   (() => {
                     const blocks = splitShenlunMaterialBlocks(current.material)
@@ -870,7 +1017,9 @@ export function ShenlunSolutionPage(): React.JSX.Element {
                     )
                     return (
                       <HighlightableMaterial
-                        promptId={current.id}
+                        promptId={
+                          materialTab === 'all' ? current.id : `${current.id}#blk-${materialTab}`
+                        }
                         content={displayedMaterial}
                         sourceFilePath={current.filePath}
                         onExtract={handleExtractToDraft}
@@ -1097,7 +1246,7 @@ export function ShenlunSolutionPage(): React.JSX.Element {
         >
           <div className="grid three">
             {evaluation.dimensions.map((dimension) => (
-              <div className="stat" key={dimension.name}>
+              <div className="stat eval-dim-card" key={dimension.name}>
                 <span>{dimension.name}</span>
                 <strong>{dimension.score}</strong>
                 <small>{dimension.comment}</small>
