@@ -1,4 +1,5 @@
 import type { ReportData } from '../../shared/contracts'
+import { localDateString } from '../utils/common'
 
 const RANGE_LABELS: Record<ReportData['range'], string> = {
   '7d': '近7天',
@@ -8,14 +9,6 @@ const RANGE_LABELS: Record<ReportData['range'], string> = {
 
 /** frontmatter 标记：导出文件的身份证明，防止覆盖用户手写的同名文件 */
 const GENERATED_MARKER = 'tz-source: tizhou-report'
-
-function pad(value: number): string {
-  return String(value).padStart(2, '0')
-}
-
-function localDateString(date: Date): string {
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
-}
 
 export function reportFileName(range: ReportData['range'], date = new Date()): string {
   return `题舟学习报告-${localDateString(date)}-${RANGE_LABELS[range]}.md`

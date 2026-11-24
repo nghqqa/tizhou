@@ -11,6 +11,8 @@ interface CommandPaletteProps {
   open: boolean
   onClose: () => void
   onToggleTheme: () => void
+  onToggleZen?: () => void
+  onOpenShortcuts?: () => void
 }
 
 interface PaletteEntry {
@@ -179,7 +181,9 @@ function documentRoute(doc: KnowledgeDocument): string {
 export function CommandPalette({
   open,
   onClose,
-  onToggleTheme
+  onToggleTheme,
+  onToggleZen,
+  onOpenShortcuts
 }: CommandPaletteProps): React.JSX.Element | null {
   const navigate = useNavigate()
   const search = useImeSearchInput({ delayMs: 180 })
@@ -265,6 +269,48 @@ export function CommandPalette({
       })
     }
 
+    if (
+      onToggleZen &&
+      (!trimmed || matchesSearchTerms('沉浸 专注 折叠侧栏 全屏 zen fullscreen f11', trimmed))
+    ) {
+      list.push({
+        id: 'action-zen',
+        group: '页面与快捷操作',
+        title: '切换沉浸专注模式 (Alt+Z)',
+        subtitle: '快捷操作 · 收起或展开左侧导航栏',
+        run: () => {
+          onToggleZen()
+          onClose()
+        }
+      })
+      list.push({
+        id: 'action-fullscreen',
+        group: '页面与快捷操作',
+        title: '切换窗口全屏 (F11)',
+        subtitle: '快捷操作 · 进入或退出考场全屏',
+        run: () => {
+          onClose()
+          void invoke({ method: 'window.fullscreen.toggle' })
+        }
+      })
+    }
+
+    if (
+      onOpenShortcuts &&
+      (!trimmed || matchesSearchTerms('快捷键 帮助 速查 keyboard shortcut ?', trimmed))
+    ) {
+      list.push({
+        id: 'action-shortcuts',
+        group: '页面与快捷操作',
+        title: '查看快捷键速查浮层 (?)',
+        subtitle: '快捷操作 · 查看当前页面及全站提效快捷键',
+        run: () => {
+          onClose()
+          onOpenShortcuts()
+        }
+      })
+    }
+
     if (trimmed) {
       const matchedDocs = docs
         .filter((doc) =>
@@ -308,7 +354,16 @@ export function CommandPalette({
     }
 
     return list
-  }, [search.committedValue, docs, questions, navigate, onClose, onToggleTheme])
+  }, [
+    search.committedValue,
+    docs,
+    questions,
+    navigate,
+    onClose,
+    onToggleTheme,
+    onToggleZen,
+    onOpenShortcuts
+  ])
 
   useEffect(() => {
     setActiveIndex(0)

@@ -7,11 +7,16 @@ interface AppState {
   loading: boolean
   error?: string
   toast?: string
+  zenMode: boolean
+  isFullscreen: boolean
   initialize: () => Promise<void>
   refreshDashboard: () => Promise<void>
   refreshVault: () => Promise<void>
   updateSettings: (patch: Partial<AppSettings>) => Promise<void>
   syncSettings: (settings: AppSettings) => void
+  toggleZenMode: () => void
+  setZenMode: (value: boolean) => void
+  setFullscreen: (value: boolean) => void
   clearError: () => void
   showToast: (message: string) => void
   clearToast: () => void
@@ -21,6 +26,8 @@ let toastTimer: ReturnType<typeof setTimeout> | undefined
 
 export const useAppStore = create<AppState>((set, get) => ({
   loading: true,
+  zenMode: false,
+  isFullscreen: false,
   async initialize() {
     set({ loading: true, error: undefined })
     try {
@@ -66,6 +73,15 @@ export const useAppStore = create<AppState>((set, get) => ({
     const current = get().data
     if (!current) return
     set({ data: { ...current, settings } })
+  },
+  toggleZenMode() {
+    set((state) => ({ zenMode: !state.zenMode }))
+  },
+  setZenMode(value) {
+    set({ zenMode: value })
+  },
+  setFullscreen(value) {
+    set({ isFullscreen: value })
   },
   clearError() {
     set({ error: undefined })

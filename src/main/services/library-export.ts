@@ -1,17 +1,10 @@
 import type { QuestionLibraryExportParams, QuestionLibraryItem } from '../../shared/contracts'
+import { localDateString } from '../utils/common'
 
 const TAB_LABELS: Record<QuestionLibraryExportParams['tab'], string> = {
   wrong: '错题本',
   favorite: '收藏夹',
   notes: '笔记库'
-}
-
-function pad(value: number): string {
-  return String(value).padStart(2, '0')
-}
-
-function localDateString(date: Date): string {
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
 }
 
 function escapeHtml(value: string): string {

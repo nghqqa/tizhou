@@ -13,6 +13,7 @@ import {
 } from '@phosphor-icons/react'
 import { useNavigate, useParams } from 'react-router-dom'
 import type { ExamSession, PracticeSession, Question, QuestionUserMeta } from '@shared/contracts'
+import { WRONG_CAUSE_OPTIONS, formatDurationBrief, isAnswerCorrect } from '@shared/study-constants'
 import { formatFullDate, invoke } from '../api'
 import { MarkdownContent } from '../components/MarkdownContent'
 import { OptionContent } from '../components/OptionContent'
@@ -20,34 +21,7 @@ import { ReadingTypographyBar, useReadingTypography } from '../components/Readin
 import { EmptyState, ErrorState, LoadingState, PageHeader, Section } from '../components/ui'
 import { useAppStore } from '../store'
 
-/** 与交卷判分同口径：去空格、大写、去重、排序后比较 */
-function isAnswerCorrect(question: Question, answer: string[]): boolean {
-  const normalize = (values: string[]) =>
-    [...new Set(values.map((value) => value.trim().toUpperCase()))].sort()
-  return (
-    JSON.stringify(normalize(answer)) === JSON.stringify(normalize(question.answer)) &&
-    answer.length > 0
-  )
-}
-
-function formatDurationBrief(seconds: number): string {
-  if (seconds <= 0) return '未计时'
-  const mins = Math.floor(seconds / 60)
-  const secs = seconds % 60
-  return mins > 0 ? `${mins}分${secs}秒` : `${secs}秒`
-}
-
 type ReviewFilter = 'all' | 'wrong-unanswered'
-
-const WRONG_CAUSE_OPTIONS = [
-  '知识缺口',
-  '概念混淆',
-  '审题失误',
-  '计算失误',
-  '时间压力',
-  '猜测',
-  '未知'
-]
 
 export function ExamResultPage(): React.JSX.Element {
   const { id } = useParams<{ id: string }>()
@@ -125,7 +99,7 @@ export function ExamResultPage(): React.JSX.Element {
           question: snapshot,
           userAnswer,
           answered,
-          correct: isAnswerCorrect(snapshot, userAnswer),
+          correct: isAnswerCorrect(snapshot.answer, userAnswer, { requireNonEmpty: true }),
           durationSeconds: Math.max(0, Math.round(answerRec?.durationSeconds ?? 0))
         }
       ]

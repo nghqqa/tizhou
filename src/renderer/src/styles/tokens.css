@@ -1,0 +1,105 @@
+/* ================================================================
+   题舟 · 新中式案牍设计系统
+   Neo-Chinese Scholar's Desk · Contemporary Academy
+   清醒 · 克制 · 温润 · 可信 · 专注 · 书卷气
+   ================================================================ */
+
+:root {
+  /* 色彩令牌 */
+  --tz-bg: #f5f1e8;
+  --tz-surface: #fbf9f4;
+  --tz-surface-2: #f0ece2;
+  --tz-surface-3: #eae5d9;
+  --tz-ink: #282520;
+  --tz-ink-2: #4a443c;
+  --tz-ink-3: #746e64;
+  --tz-vermillion: #b84432;
+  --tz-vermillion-deep: #87352b;
+  --tz-vermillion-bg: rgba(184, 68, 50, 0.08);
+  --tz-vermillion-border: rgba(184, 68, 50, 0.25);
+  --tz-pine: #557363;
+  --tz-pine-bg: rgba(85, 115, 99, 0.08);
+  --tz-amber: #b7863d;
+  --tz-amber-bg: rgba(183, 134, 61, 0.1);
+  --tz-border: rgba(55, 48, 40, 0.12);
+  --tz-border-strong: rgba(55, 48, 40, 0.2);
+  --tz-sidebar-bg: #efebe0;
+  --tz-shadow-sm: 0 1px 2px rgba(40, 37, 32, 0.04);
+  --tz-shadow-md: 0 2px 8px rgba(40, 37, 32, 0.06);
+
+  /* 字体令牌 */
+  --tz-font-ui:
+    'Source Han Sans SC', 'Noto Sans CJK SC', 'Microsoft YaHei UI', 'PingFang SC', sans-serif;
+  --tz-font-display: 'Source Han Serif SC', 'Noto Serif CJK SC', 'STSong', 'SimSun', serif;
+  --tz-font-code: 'JetBrains Mono', 'Source Code Pro', 'Cascadia Mono', monospace;
+  /* 申论公文体可选排版令牌（参考 GB/T 9704：仿宋正文 + 黑体一级 + 楷体次级） */
+  --tz-font-official-body:
+    'FangSong_GB2312', 'FangSong', 'STFangsong', 'Source Han Serif SC', 'Noto Serif CJK SC', serif;
+  --tz-font-official-h1: 'SimHei', 'Source Han Sans SC', 'Microsoft YaHei UI', sans-serif;
+  --tz-font-official-h2:
+    'KaiTi_GB2312', 'KaiTi', 'STKaiti', 'Source Han Serif SC', 'Noto Serif CJK SC', serif;
+  /* 向后兼容别名 */
+  --tz-font-body: var(--tz-font-ui);
+  --tz-font-serif: var(--tz-font-display);
+  --tz-font-mono: var(--tz-font-code);
+  --tz-font-song: var(--tz-font-official-body);
+
+  /* 间距与圆角 */
+  --tz-radius: 6px;
+  --tz-radius-sm: 4px;
+  --tz-radius-lg: 8px;
+  --tz-accent: var(--tz-vermillion);
+  --tz-accent-soft: var(--tz-vermillion-bg);
+  --tz-ink-muted: var(--tz-ink-3);
+  --tz-line: var(--tz-border);
+  --tz-paper: var(--tz-surface);
+  --tz-space-xs: 4px;
+  --tz-space-sm: 8px;
+  --tz-space-md: 16px;
+  --tz-space-lg: 24px;
+  --tz-space-xl: 32px;
+
+  /* 字号（固定基准，大屏可配合界面缩放 uiScale / Ctrl +/-/0 等比调整） */
+  --tz-text-xs: 12px;
+  --tz-text-sm: 13px;
+  --tz-text-base: 14px;
+  --tz-text-md: 15px;
+  --tz-text-lg: 17px;
+  --tz-text-xl: 21px;
+  --tz-text-2xl: 28px;
+  --tz-text-3xl: 34px;
+
+  color-scheme: dark;
+  font-family: var(--tz-font-body);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+}
+
+/* 深色主题令牌覆盖：四层表面 + 可读性优先 */
+:root:not([data-theme='light']) {
+  --tz-bg: #1b1917; /* 工作区背景 */
+  --tz-surface: #24211e; /* 普通内容区域 */
+  --tz-surface-2: #2b2521; /* 浮起/重点区域 */
+  --tz-surface-3: #332c27; /* 三级面板 */
+  --tz-ink: #f0eae1; /* 主标题 */
+  --tz-ink-2: #d1c8bc; /* 正文 */
+  --tz-ink-3: #a49a8e; /* 次级 */
+  --tz-vermillion: #c65b43;
+  --tz-vermillion-deep: #a84a38;
+  --tz-vermillion-bg: rgba(198, 91, 67, 0.14);
+  --tz-vermillion-border: rgba(198, 91, 67, 0.32);
+  --tz-pine: #739181;
+  --tz-pine-bg: rgba(115, 145, 129, 0.14);
+  --tz-amber: #b68b4b;
+  --tz-amber-bg: rgba(182, 139, 75, 0.14);
+  --tz-border: rgba(235, 223, 208, 0.1);
+  --tz-border-strong: rgba(235, 223, 208, 0.16);
+  --tz-sidebar-bg: #151412; /* 侧栏（最暗） */
+  --tz-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.2);
+  --tz-shadow-md: 0 2px 8px rgba(0, 0, 0, 0.25);
+}

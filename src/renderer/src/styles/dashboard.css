@@ -1,0 +1,422 @@
+/* ================================================================
+   Dashboard · 今日研习
+   ================================================================ */
+.dash-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+  min-height: 80px;
+  margin-bottom: 16px;
+}
+.dash-header-info {
+  min-width: 0;
+}
+.dash-date {
+  display: block;
+  color: var(--tz-ink-3);
+  font-size: var(--tz-text-sm);
+  letter-spacing: 0.04em;
+  margin-bottom: 4px;
+}
+.dash-quote {
+  margin: 0;
+  font-family: var(--tz-font-serif);
+  font-size: var(--tz-text-3xl);
+  font-weight: 700;
+  line-height: 1.25;
+  color: var(--tz-ink);
+}
+.dash-subtitle {
+  margin: 4px 0 0;
+  color: var(--tz-ink-3);
+  font-size: var(--tz-text-base);
+}
+.dash-header-action {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.dash-target {
+  color: var(--tz-ink-3);
+  font-size: var(--tz-text-sm);
+}
+
+/* 今日任务主区 */
+.today-task {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 20px;
+  border: 1px solid var(--tz-vermillion-border);
+  border-left: 3px solid var(--tz-vermillion);
+  border-radius: var(--tz-radius);
+  background: var(--tz-vermillion-bg);
+  margin-bottom: 14px;
+}
+.today-task-info {
+  min-width: 0;
+}
+.today-task-label {
+  display: block;
+  color: var(--tz-vermillion);
+  font-size: var(--tz-text-xs);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  margin-bottom: 4px;
+}
+.today-task-subject {
+  display: block;
+  font-size: var(--tz-text-xl);
+  font-weight: 700;
+  color: var(--tz-ink);
+  line-height: 1.3;
+}
+.today-task-detail {
+  display: block;
+  margin-top: 4px;
+  color: var(--tz-ink-2);
+  font-size: var(--tz-text-sm);
+}
+.today-task-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* 统计带：紧凑数据仪表 */
+.stat-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid var(--tz-border);
+  border-radius: var(--tz-radius);
+  background: var(--tz-border);
+}
+/* 6 项统计的三列变体：2×3 满格，不留右下角空洞 */
+.stat-strip.three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.stat-strip-item {
+  padding: 14px 16px;
+  background: var(--tz-surface);
+}
+.stat-strip-label {
+  display: block;
+  color: var(--tz-ink-3);
+  font-size: var(--tz-text-xs);
+  margin-bottom: 6px;
+}
+.stat-strip-value {
+  display: block;
+  font-size: var(--tz-text-2xl);
+  font-weight: 700;
+  line-height: 1;
+  color: var(--tz-ink);
+  font-variant-numeric: tabular-nums;
+}
+.stat-strip-value small {
+  font-size: var(--tz-text-sm);
+  font-weight: 400;
+  color: var(--tz-ink-3);
+  margin-left: 2px;
+}
+.stat-strip-bar {
+  height: 3px;
+  margin-top: 8px;
+  border-radius: 2px;
+  background: var(--tz-surface-2);
+  overflow: hidden;
+}
+.stat-strip-bar-fill {
+  height: 100%;
+  border-radius: 2px;
+  background: var(--tz-vermillion);
+  transition: width 180ms ease;
+}
+.stat-strip-detail {
+  display: block;
+  margin-top: 4px;
+  color: var(--tz-ink-3);
+  font-size: var(--tz-text-xs);
+}
+
+/* 训练节奏：14 天日历格 */
+.calendar-strip {
+  display: grid;
+  grid-template-columns: repeat(14, 1fr);
+  gap: 3px;
+  margin-bottom: 8px;
+}
+.calendar-cell {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 1;
+  max-height: 32px;
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  cursor: default;
+  position: relative;
+}
+.calendar-cell-today {
+  background: var(--tz-vermillion);
+  color: var(--tz-surface);
+}
+.calendar-cell-active {
+  background: var(--tz-pine);
+  color: var(--tz-surface);
+}
+.calendar-cell-empty {
+  background: var(--tz-surface-2);
+  color: transparent;
+}
+.calendar-cell-num {
+  pointer-events: none;
+}
+.calendar-legend {
+  display: flex;
+  gap: 12px;
+  color: var(--tz-ink-3);
+  font-size: 11px;
+}
+.calendar-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* 科目掌握 */
+.mastery-list {
+  display: grid;
+  gap: 0;
+}
+.mastery-row {
+  display: grid;
+  grid-template-columns: minmax(90px, auto) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--tz-border);
+}
+.mastery-row:last-child {
+  border-bottom: 0;
+}
+.mastery-row-weak .mastery-info strong {
+  color: var(--tz-vermillion);
+}
+.mastery-info {
+  min-width: 0;
+}
+.mastery-info strong {
+  display: block;
+  font-size: var(--tz-text-base);
+  color: var(--tz-ink);
+}
+.mastery-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: var(--tz-vermillion-bg);
+  color: var(--tz-vermillion);
+  font-size: 11px;
+  font-weight: 600;
+}
+.mastery-detail {
+  display: block;
+  margin-top: 2px;
+  color: var(--tz-ink-3);
+  font-size: var(--tz-text-xs);
+}
+.mastery-bar-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.mastery-bar {
+  flex: 1;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--tz-surface-2);
+  overflow: hidden;
+}
+.mastery-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--tz-pine);
+  transition: width 180ms ease;
+}
+.mastery-row-weak .mastery-bar-fill {
+  background: var(--tz-vermillion);
+}
+.mastery-percent {
+  min-width: 36px;
+  text-align: right;
+  color: var(--tz-ink-2);
+  font-size: var(--tz-text-sm);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.mastery-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--tz-border);
+}
+
+/* 空状态紧凑引导区（替代大图标+大空白） */
+.mastery-guide {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0;
+}
+.mastery-guide > div {
+  flex: 1;
+  min-width: 0;
+}
+.mastery-guide strong {
+  display: block;
+  font-size: var(--tz-text-base);
+  color: var(--tz-ink);
+}
+.mastery-guide p {
+  margin: 3px 0 0;
+  color: var(--tz-ink-3);
+  font-size: var(--tz-text-sm);
+  line-height: 1.5;
+}
+
+/* 文字链接操作（替代按钮，减少视觉噪音） */
+.mastery-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 4px 8px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--tz-vermillion);
+  font-size: var(--tz-text-sm);
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 120ms ease;
+  white-space: nowrap;
+}
+.mastery-action:hover {
+  background: var(--tz-vermillion-bg);
+}
+.mastery-action:active {
+  background: var(--tz-vermillion-bg);
+}
+
+/* 训练节奏空态行 */
+.calendar-empty {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--tz-border);
+  border-radius: var(--tz-radius);
+  background: var(--tz-surface-2);
+}
+.calendar-empty span {
+  color: var(--tz-ink-3);
+  font-size: var(--tz-text-sm);
+}
+
+/* 极简空状态：一行文字 + 一个链接操作 */
+.empty-compact {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 0;
+  color: var(--tz-ink-3);
+  font-size: var(--tz-text-sm);
+}
+.empty-compact > span {
+  flex: 1;
+}
+.empty-compact strong {
+  display: block;
+  color: var(--tz-ink);
+  font-size: var(--tz-text-base);
+}
+.empty-compact p {
+  margin: 2px 0 0;
+  font-size: var(--tz-text-xs);
+}
+
+/* 训练节奏日期轴 */
+.calendar-axis {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 4px;
+  color: var(--tz-ink-3);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+.calendar-cell-day {
+  position: absolute;
+  bottom: -14px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 8px;
+  color: var(--tz-ink-3);
+  line-height: 1;
+  pointer-events: none;
+}
+/* calendar-cell position: relative is in the main rule */
+.calendar-strip {
+  margin-bottom: 18px;
+}
+
+/* ── 今日工作台：目标考试倒计时 ── */
+.dash-countdown-row {
+  margin-top: 8px;
+}
+.dash-countdown-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border: 1px solid var(--tz-vermillion-border);
+  border-radius: 999px;
+  background: var(--tz-vermillion-bg);
+  color: var(--tz-vermillion);
+  font-size: var(--tz-text-xs);
+  font-weight: 600;
+  cursor: pointer;
+}
+.dash-countdown-pill.is-unset {
+  border-color: var(--tz-border);
+  background: var(--tz-surface-2);
+  color: var(--tz-ink-3);
+  font-weight: 500;
+}
+.dash-countdown-pill.is-unset:hover {
+  color: var(--tz-ink);
+  border-color: var(--tz-border-strong);
+}
+.dash-countdown-pill.is-today {
+  background: var(--tz-vermillion);
+  color: #fbf9f4;
+  border-color: var(--tz-vermillion);
+}
+.dash-countdown-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}

@@ -1,5 +1,10 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { AppSettings, WorkbenchAPI, WorkbenchRequest } from '../shared/contracts'
+import type {
+  AiStreamEvent,
+  AppSettings,
+  WorkbenchAPI,
+  WorkbenchRequest
+} from '../shared/contracts'
 
 const api: WorkbenchAPI = {
   platform: process.platform,
@@ -13,6 +18,24 @@ const api: WorkbenchAPI = {
     ipcRenderer.on('workbench:settings-updated', handler)
     return () => {
       ipcRenderer.removeListener('workbench:settings-updated', handler)
+    }
+  },
+  onAiStream(listener: (event: AiStreamEvent) => void): () => void {
+    const handler = (_event: Electron.IpcRendererEvent, event: AiStreamEvent): void => {
+      listener(event)
+    }
+    ipcRenderer.on('workbench:ai-stream', handler)
+    return () => {
+      ipcRenderer.removeListener('workbench:ai-stream', handler)
+    }
+  },
+  onFullscreenChanged(listener: (fullscreen: boolean) => void): () => void {
+    const handler = (_event: Electron.IpcRendererEvent, fullscreen: boolean): void => {
+      listener(fullscreen)
+    }
+    ipcRenderer.on('workbench:fullscreen-changed', handler)
+    return () => {
+      ipcRenderer.removeListener('workbench:fullscreen-changed', handler)
     }
   }
 }

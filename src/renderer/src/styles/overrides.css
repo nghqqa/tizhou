@@ -1,0 +1,304 @@
+/* ── Batch 2.2–2.3：专项练习 / 错题复习 / 模考与复盘增强 ── */
+.field-gap-top {
+  margin-top: 12px;
+}
+.field-gap-top-sm {
+  margin-top: 8px;
+}
+.shortcut-hint {
+  margin-top: 10px;
+  font-size: var(--tz-text-xs);
+  color: var(--tz-ink-3);
+  line-height: 1.5;
+}
+.similar-row-item {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.similar-row-btn {
+  width: calc(100% + 16px);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 6px 8px;
+  margin: -6px -8px;
+  border: none;
+  border-radius: var(--tz-radius-sm);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+.similar-row-btn:hover {
+  background: var(--tz-surface-2);
+}
+.similar-row-btn strong {
+  font-size: var(--tz-text-sm);
+  color: var(--tz-ink);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.similar-row-btn span {
+  font-size: var(--tz-text-xs);
+  color: var(--tz-ink-3);
+}
+.similar-preview-box {
+  padding: 10px 12px;
+  border: 1px solid var(--tz-border);
+  border-left: 3px solid var(--tz-vermillion);
+  border-radius: var(--tz-radius);
+  background: var(--tz-surface-2);
+  font-size: var(--tz-text-sm);
+  line-height: 1.65;
+}
+.similar-material-snippet {
+  max-height: 150px;
+  overflow-y: auto;
+  margin-bottom: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--tz-border);
+  border-radius: var(--tz-radius-sm);
+  background: var(--tz-surface);
+  font-size: var(--tz-text-xs);
+}
+.similar-options-wrap {
+  margin-top: 10px;
+}
+.similar-options-wrap .options {
+  gap: 6px;
+}
+.similar-options-wrap .option-button {
+  grid-template-columns: 22px minmax(0, 1fr);
+  gap: 8px;
+  min-height: 36px;
+  padding: 7px 10px;
+  font-size: var(--tz-text-xs);
+}
+.similar-options-wrap .option-key {
+  width: 22px;
+  height: 22px;
+  font-size: 11px;
+}
+.similar-options-wrap .option-button .markdown {
+  font-size: var(--tz-text-xs);
+  line-height: 1.5;
+}
+.similar-options-wrap .option-content .option-image img,
+.similar-options-wrap .option-button .markdown img {
+  max-width: 100%;
+  max-height: 120px;
+}
+.similar-self-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+.similar-answer-reveal {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--tz-border);
+}
+.library-stem.is-clamped {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.library-stem-toggle {
+  display: inline-flex;
+  align-items: center;
+  margin-top: 4px;
+  padding: 2px 6px;
+  border: none;
+  border-radius: var(--tz-radius-sm);
+  background: transparent;
+  color: var(--tz-vermillion);
+  font-size: var(--tz-text-xs);
+  font-weight: 500;
+  cursor: pointer;
+}
+.library-stem-toggle:hover {
+  background: var(--tz-vermillion-bg);
+}
+.library-material-block {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--tz-border);
+  border-radius: var(--tz-radius);
+  background: var(--tz-surface-2);
+}
+.library-material-block > strong {
+  display: block;
+  margin-bottom: 6px;
+  font-size: var(--tz-text-xs);
+  color: var(--tz-ink-2);
+}
+.list-pagination {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--tz-border);
+}
+
+.exam-paper-toolbar {
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.exam-empty-hint {
+  margin-top: 10px;
+  font-size: var(--tz-text-sm);
+}
+.exam-sticky-bar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  margin-bottom: 16px;
+  border: 1px solid var(--tz-border-strong);
+  border-radius: var(--tz-radius);
+  background: color-mix(in srgb, var(--tz-surface) 92%, transparent);
+  backdrop-filter: blur(8px);
+  box-shadow: var(--tz-shadow-sm);
+}
+.exam-sticky-left,
+.exam-sticky-right {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.exam-sheet-sticky {
+  position: sticky;
+  top: 68px;
+  align-self: start;
+}
+
+.exam-essay-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 8px;
+  font-size: var(--tz-text-xs);
+}
+.exam-jump-btn.is-unanswered {
+  border-color: var(--tz-border-strong);
+  background: var(--tz-surface-2);
+  color: var(--tz-ink-3);
+}
+.exam-review-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0;
+  font-size: var(--tz-text-md);
+}
+.exam-review-meta {
+  font-size: var(--tz-text-xs);
+  font-weight: 400;
+}
+.mastery-row-weak {
+  padding-left: 10px;
+  border-left: 3px solid var(--tz-vermillion);
+  background: linear-gradient(90deg, var(--tz-vermillion-bg), transparent 75%);
+}
+
+/* ── Batch 3：统一 ConfirmDialog / 危险按钮 / AI 与组件细节收口 ── */
+.btn-danger {
+  color: var(--tz-vermillion) !important;
+  border-color: var(--tz-vermillion-border) !important;
+  background: var(--tz-vermillion-bg) !important;
+}
+.btn-danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--tz-vermillion) 18%, transparent) !important;
+  border-color: var(--tz-vermillion) !important;
+}
+.btn-danger.is-primary {
+  background: var(--tz-vermillion) !important;
+  border-color: var(--tz-vermillion-deep) !important;
+  color: #fffaf5 !important;
+}
+.btn-danger.is-primary:hover:not(:disabled) {
+  background: var(--tz-vermillion-deep) !important;
+}
+.confirm-dialog-desc {
+  line-height: 1.65;
+  color: var(--tz-ink-2);
+}
+.confirm-phrase-field {
+  margin-top: 12px;
+}
+.data-row-main-ellipsis {
+  min-width: 0;
+  flex: 1;
+}
+.path-ellipsis {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.table-title-ellipsis {
+  display: inline-block;
+  max-width: 340px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+.plan-progress-summary {
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--tz-border);
+}
+.plan-preview-hint {
+  margin: 0 0 12px;
+  font-size: var(--tz-text-xs);
+}
+.ai-context-material {
+  margin-bottom: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px dashed var(--tz-border);
+}
+.ai-context-material > strong {
+  display: block;
+  margin-bottom: 4px;
+  font-size: var(--tz-text-xs);
+  color: var(--tz-ink-2);
+}
+.ai-history-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+}
+.ai-stream-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  font-size: var(--tz-text-xs);
+  color: var(--tz-ink-3);
+}
+.ai-stream-status .ai-stream-cursor {
+  margin-left: 0;
+}

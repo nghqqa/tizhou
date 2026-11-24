@@ -1,4 +1,5 @@
 import type { AiAskInput } from './contracts'
+import { WRONG_CAUSE_OPTIONS } from './study-constants'
 
 const COMMON_GUARDRAILS = `# 题舟：模型通用工作协议
 
@@ -93,7 +94,7 @@ export const FEATURE_PROMPTS = {
 5. **迁移训练**：形成一条下次可执行的检查规则，并给出一个十秒内可完成的自检动作。
 
 ## 四、错因标签
-主标签只能从以下五项选择一个：知识缺口、审题偏差、计算失误、策略不当、时间失控。可以补充次要表现，但不得另造主标签。
+主标签只能从以下几项选择一个：${WRONG_CAUSE_OPTIONS.join('、')}。可以补充次要表现，但不得另造主标签。
 
 ## 五、输出格式
 ### 1. 结论与考点

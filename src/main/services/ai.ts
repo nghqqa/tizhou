@@ -17,6 +17,7 @@ import type {
 } from '../../shared/contracts'
 import { DEFAULT_AI_CONFIG } from '../../shared/defaults'
 import { basePromptForPurpose, FEATURE_PROMPTS } from '../../shared/prompts'
+import { now, safeParseJson as safeParse } from '../utils/common'
 import { DatabaseService } from './database'
 
 /** 已存模型配置（不含密钥）：导出供单测构造多模态请求体 */
@@ -226,15 +227,6 @@ const PROVIDERS: AiProviderInfo[] = [
   }
 ]
 
-function safeParse<T>(value: unknown, fallback: T): T {
-  if (typeof value !== 'string') return fallback
-  try {
-    return JSON.parse(value) as T
-  } catch {
-    return fallback
-  }
-}
-
 function providerInfo(provider: AiProvider): AiProviderInfo {
   return PROVIDERS.find((item) => item.id === provider) ?? PROVIDERS[0]!
 }
@@ -326,15 +318,12 @@ function anthropicEndpoint(config: StoredAiConfig): string {
   return appendEndpoint(config.baseUrl, /\/v1$/i.test(config.baseUrl) ? 'messages' : 'v1/messages')
 }
 
-function googleEndpoint(config: StoredAiConfig): string {
+function googleEndpoint(config: StoredAiConfig, stream = false): string {
   const root = /\/v1beta$/i.test(config.baseUrl)
     ? config.baseUrl
     : appendEndpoint(config.baseUrl, 'v1beta')
-  return appendEndpoint(root, `models/${encodeURIComponent(config.model)}:generateContent`)
-}
-
-function now(): string {
-  return new Date().toISOString()
+  const action = stream ? 'streamGenerateContent?alt=sse' : 'generateContent'
+  return appendEndpoint(root, `models/${encodeURIComponent(config.model)}:${action}`)
 }
 
 function systemText(messages: AiMessage[]): string {
@@ -344,13 +333,18 @@ function systemText(messages: AiMessage[]): string {
     .join('\n\n')
 }
 
-/** 构造各协议的请求体（导出供单测断言多模态/纯文本两种形态） */
+/** 构造各协议的请求体（导出供单测断言多模态/纯文本与流式开关） */
 export function requestSpec(
   config: StoredAiConfig,
   messages: AiMessage[],
-  apiKey: string
+  apiKey: string,
+  options?: { stream?: boolean }
 ): RequestSpec {
-  const commonHeaders = { 'Content-Type': 'application/json' }
+  const stream = Boolean(options?.stream)
+  const commonHeaders: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...(stream ? { Accept: 'text/event-stream, application/json' } : {})
+  }
   switch (config.protocol) {
     case 'openai-responses':
       return {
@@ -374,7 +368,8 @@ export function requestSpec(
               }))
             : messages,
           temperature: config.temperature,
-          max_output_tokens: config.maxTokens
+          max_output_tokens: config.maxTokens,
+          ...(stream ? { stream: true } : {})
         }
       }
     case 'anthropic-messages':
@@ -403,12 +398,13 @@ export function requestSpec(
                 : message.content
             })),
           temperature: config.temperature,
-          max_tokens: config.maxTokens
+          max_tokens: config.maxTokens,
+          ...(stream ? { stream: true } : {})
         }
       }
     case 'google-generate-content':
       return {
-        endpoint: googleEndpoint(config),
+        endpoint: googleEndpoint(config, stream),
         headers: { ...commonHeaders, 'x-goog-api-key': apiKey },
         body: {
           systemInstruction: systemText(messages)
@@ -445,7 +441,7 @@ export function requestSpec(
             : messages,
           temperature: config.temperature,
           max_tokens: config.maxTokens,
-          stream: false,
+          stream,
           // DeepSeek V4 系列默认开启思考模式，推理会占用输出预算导致内容为空或 JSON 截断，按官方参数关闭
           ...(isDeepSeekEndpoint(config.baseUrl) ? { thinking: { type: 'disabled' } } : {})
         }
@@ -545,7 +541,153 @@ function usageFromResponse(
   }
 }
 
+/** 从各协议的单帧 SSE JSON 中提取增量文本与可选 token 用量（导出供单测直接验证） */
+export function extractStreamDelta(
+  protocol: AiProtocol,
+  payload: Record<string, unknown>
+): { delta: string; usage?: AiAskResult['usage'] } {
+  if (protocol === 'openai-responses') {
+    const delta =
+      payload.type === 'response.output_text.delta' && typeof payload.delta === 'string'
+        ? payload.delta
+        : ''
+    const responseObj =
+      payload.type === 'response.completed' &&
+      payload.response &&
+      typeof payload.response === 'object'
+        ? (payload.response as Record<string, unknown>)
+        : payload
+    return { delta, usage: usageFromResponse(protocol, responseObj) }
+  }
+  if (protocol === 'anthropic-messages') {
+    let delta = ''
+    if (
+      payload.type === 'content_block_delta' &&
+      payload.delta &&
+      typeof payload.delta === 'object'
+    ) {
+      const deltaObj = payload.delta as Record<string, unknown>
+      if (deltaObj.type === 'text_delta' && typeof deltaObj.text === 'string') {
+        delta = deltaObj.text
+      }
+    }
+    const usageSource =
+      payload.message && typeof payload.message === 'object'
+        ? (payload.message as Record<string, unknown>)
+        : payload
+    return { delta, usage: usageFromResponse(protocol, usageSource) }
+  }
+  if (protocol === 'google-generate-content') {
+    return {
+      delta: textFromResponse(protocol, payload),
+      usage: usageFromResponse(protocol, payload)
+    }
+  }
+  const choices = Array.isArray(payload.choices)
+    ? (payload.choices as Array<Record<string, unknown>>)
+    : []
+  const deltaObj =
+    choices[0]?.delta && typeof choices[0].delta === 'object'
+      ? (choices[0].delta as Record<string, unknown>)
+      : undefined
+  let delta = ''
+  if (typeof deltaObj?.content === 'string') {
+    delta = deltaObj.content
+  } else if (Array.isArray(deltaObj?.content)) {
+    delta = (deltaObj.content as unknown[])
+      .flatMap((part) =>
+        part &&
+        typeof part === 'object' &&
+        typeof (part as Record<string, unknown>).text === 'string'
+          ? [(part as Record<string, unknown>).text as string]
+          : []
+      )
+      .join('')
+  }
+  return { delta, usage: usageFromResponse(protocol, payload) }
+}
+
+/** 解析 ReadableStream SSE 分片（处理 UTF-8 跨块解码、半行拼接与 [DONE] 终止） */
+export async function consumeSseStream(
+  protocol: AiProtocol,
+  body: ReadableStream<Uint8Array>,
+  onDelta: (delta: string) => void
+): Promise<{ content: string; usage?: AiAskResult['usage'] }> {
+  const reader = body.getReader()
+  const decoder = new TextDecoder('utf-8')
+  let buffer = ''
+  let content = ''
+  let mergedUsage: AiAskResult['usage']
+  let streamFinished = false
+
+  const handleLine = (rawLine: string): boolean => {
+    const line = rawLine.trimEnd()
+    if (!line || line.startsWith(':') || !line.startsWith('data:')) return false
+    const data = line.slice(5).trimStart()
+    if (!data) return false
+    if (data === '[DONE]') {
+      streamFinished = true
+      return true
+    }
+    const payload = safeParse<Record<string, unknown> | null>(data, null)
+    if (!payload) return false
+    if (payload.error) {
+      throw new Error(`模型服务返回错误：${responseError(payload, data)}`)
+    }
+    const { delta, usage } = extractStreamDelta(protocol, payload)
+    if (usage) {
+      mergedUsage = {
+        promptTokens: usage.promptTokens ?? mergedUsage?.promptTokens,
+        completionTokens: usage.completionTokens ?? mergedUsage?.completionTokens,
+        totalTokens: usage.totalTokens ?? mergedUsage?.totalTokens
+      }
+    }
+    if (delta) {
+      content += delta
+      onDelta(delta)
+    }
+    return false
+  }
+
+  try {
+    while (true) {
+      const { value, done } = await reader.read()
+      if (done) {
+        streamFinished = true
+        break
+      }
+      buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n')
+      let newlineIndex = buffer.indexOf('\n')
+      while (newlineIndex >= 0) {
+        const line = buffer.slice(0, newlineIndex)
+        buffer = buffer.slice(newlineIndex + 1)
+        if (handleLine(line)) {
+          await reader.cancel().catch(() => {})
+          return { content, usage: mergedUsage }
+        }
+        newlineIndex = buffer.indexOf('\n')
+      }
+    }
+    buffer += decoder.decode().replace(/\r\n/g, '\n')
+    for (const line of buffer.split('\n')) {
+      if (handleLine(line)) {
+        await reader.cancel().catch(() => {})
+        break
+      }
+    }
+  } finally {
+    if (!streamFinished) {
+      await reader.cancel().catch(() => {})
+    }
+    reader.releaseLock()
+  }
+  return { content, usage: mergedUsage }
+}
+
 export class AiService {
+  private readonly activeStreams = new Map<string, AbortController>()
+  private readonly userCancelled = new Set<string>()
+
   constructor(private readonly database: DatabaseService) {}
 
   providers(): AiProviderInfo[] {
@@ -586,12 +728,7 @@ export class AiService {
       maxTokens: Math.max(256, Math.min(32768, Math.round(input.maxTokens)))
     }
     if (!config.model) throw new Error('模型名称不能为空')
-    let encryptedKey: string | null = null
-    if (input.apiKey?.trim()) {
-      if (!safeStorage.isEncryptionAvailable())
-        throw new Error('当前系统安全存储不可用，API Key 未保存')
-      encryptedKey = safeStorage.encryptString(input.apiKey.trim()).toString('base64')
-    }
+    const encryptedKey = this.encryptApiKey(input.apiKey)
     this.database.saveAiRecord(JSON.stringify(config), encryptedKey, false)
     return this.getConfig()
   }
@@ -649,12 +786,7 @@ export class AiService {
       meta.baseUrl = previous.baseUrl
       meta.model = previous.model
     }
-    let encryptedKey: string | null = null
-    if (input.apiKey?.trim()) {
-      if (!safeStorage.isEncryptionAvailable())
-        throw new Error('当前系统安全存储不可用，API Key 未保存')
-      encryptedKey = safeStorage.encryptString(input.apiKey.trim()).toString('base64')
-    }
+    const encryptedKey = this.encryptApiKey(input.apiKey)
     this.database.saveVlmRecord(JSON.stringify(meta), encryptedKey, false)
     return this.getVlmConfig()
   }
@@ -733,48 +865,7 @@ export class AiService {
     validateVisionMessages(input.messages)
     if (providerInfo(config.provider).apiKeyRequired && !apiKey)
       throw new Error('请先在模型设置中保存 API Key')
-    await verifyNetworkTarget(config.baseUrl, config.provider)
-    const request = requestSpec(config, input.messages, apiKey)
-    const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), timeoutMs)
-    try {
-      const response = await fetch(request.endpoint, {
-        method: 'POST',
-        headers: request.headers,
-        body: JSON.stringify(request.body),
-        signal: controller.signal,
-        redirect: 'error'
-      })
-      const raw = await response.text()
-      const payload = safeParse<Record<string, unknown>>(raw, {})
-      if (!response.ok) {
-        const detail = responseError(payload, raw)
-        // 纯文本模型的典型报错（image/multimodal/vision 等）转为可操作引导，不泄漏原始堆栈
-        if (isVisionUnsupportedError(detail)) throw new Error(VISION_UNSUPPORTED_MESSAGE)
-        throw new Error(`模型服务返回 ${response.status}：${detail}`)
-      }
-      const content = textFromResponse(config.protocol, payload)
-      if (!content.trim()) {
-        const choices = Array.isArray(payload.choices)
-          ? (payload.choices as Array<Record<string, unknown>>)
-          : []
-        if (choices[0]?.finish_reason === 'length')
-          throw new Error('模型输出被最大长度截断，请在模型设置中调大最大输出长度')
-        throw new Error('模型返回了空内容')
-      }
-      return {
-        content,
-        provider: config.provider,
-        model: config.model,
-        usage: usageFromResponse(config.protocol, payload)
-      }
-    } catch (error) {
-      if (error instanceof Error && error.name === 'AbortError')
-        throw new Error('模型请求超时，请检查网络或服务地址')
-      throw error
-    } finally {
-      clearTimeout(timer)
-    }
+    return this.executeRequest(config, input.messages, apiKey, { timeoutMs, visionMode: true })
   }
 
   /** 解析当前生效的视觉模型：reuse-main 直接复用全局配置；custom 读 vlm_config 存储。
@@ -810,6 +901,14 @@ export class AiService {
     return { config, apiKey: this.readKeyFromRecord(record, '视觉模型') }
   }
 
+  private encryptApiKey(apiKey?: string): string | null {
+    const trimmed = apiKey?.trim()
+    if (!trimmed) return null
+    if (!safeStorage.isEncryptionAvailable())
+      throw new Error('当前系统安全存储不可用，API Key 未保存')
+    return safeStorage.encryptString(trimmed).toString('base64')
+  }
+
   private readKeyFromRecord(
     record: ReturnType<DatabaseService['getVlmRecord']>,
     label: string
@@ -820,7 +919,7 @@ export class AiService {
     try {
       return safeStorage.decryptString(Buffer.from(record.encrypted_key, 'base64'))
     } catch {
-      throw new Error(`${label} API Key 无法解密，请重新保存`)
+      throw new Error(`${label ? `${label} ` : ''}API Key 无法解密，请重新保存`)
     }
   }
 
@@ -894,7 +993,11 @@ export class AiService {
     return this.getConfig()
   }
 
-  async ask(input: AiAskInput, timeoutMs = 60_000): Promise<AiAskResult> {
+  private prepareAskContext(input: AiAskInput): {
+    config: StoredAiConfig
+    apiKey: string
+    messages: AiMessage[]
+  } {
     const config = this.toStored(this.getConfig())
     const apiKey = this.readApiKey()
     if (providerInfo(config.provider).apiKeyRequired && !apiKey)
@@ -904,15 +1007,142 @@ export class AiService {
       { role: 'system', content: basePromptForPurpose(input.purpose) },
       ...input.messages
     ]
-    await verifyNetworkTarget(config.baseUrl, config.provider)
     // 知识整理要求模型输出大段结构化 JSON，16384 起步避免中途截断
     const effective: StoredAiConfig =
       input.purpose === 'knowledge'
         ? { ...config, maxTokens: Math.max(config.maxTokens, 16384) }
         : config
-    const request = requestSpec(effective, messages, apiKey)
+    return { config: effective, apiKey, messages }
+  }
+
+  cancelStream(requestId: string): boolean {
+    const controller = this.activeStreams.get(requestId)
+    if (!controller) return false
+    this.userCancelled.add(requestId)
+    controller.abort()
+    this.activeStreams.delete(requestId)
+    return true
+  }
+
+  async ask(input: AiAskInput, timeoutMs = 60_000): Promise<AiAskResult> {
+    const { config, apiKey, messages } = this.prepareAskContext(input)
+    return this.executeRequest(config, messages, apiKey, { timeoutMs })
+  }
+
+  async askStream(
+    input: AiAskInput & { requestId: string },
+    callbacks: { onChunk: (delta: string) => void },
+    timeoutMs = 120_000
+  ): Promise<AiAskResult & { aborted?: boolean }> {
+    const { config, apiKey, messages } = this.prepareAskContext(input)
     const controller = new AbortController()
+    this.activeStreams.set(input.requestId, controller)
     const timer = setTimeout(() => controller.abort(), timeoutMs)
+    let accumulated = ''
+    const emitDelta = (delta: string): void => {
+      if (!delta) return
+      accumulated += delta
+      callbacks.onChunk(delta)
+    }
+    try {
+      await verifyNetworkTarget(config.baseUrl, config.provider)
+      if (controller.signal.aborted || this.userCancelled.has(input.requestId)) {
+        if (this.userCancelled.has(input.requestId)) {
+          return {
+            content: '',
+            provider: config.provider,
+            model: config.model,
+            aborted: true
+          }
+        }
+        throw new Error('模型请求超时，请检查网络或服务地址')
+      }
+      const request = requestSpec(config, messages, apiKey, { stream: true })
+      const response = await fetch(request.endpoint, {
+        method: 'POST',
+        headers: request.headers,
+        body: JSON.stringify(request.body),
+        signal: controller.signal,
+        redirect: 'error'
+      })
+      if (!response.ok) {
+        const raw = await response.text()
+        const payload = safeParse<Record<string, unknown>>(raw, {})
+        throw new Error(`模型服务返回 ${response.status}：${responseError(payload, raw)}`)
+      }
+      const contentType = (response.headers.get('content-type') ?? '').toLowerCase()
+      let usage: AiAskResult['usage']
+      if (contentType.includes('text/event-stream') && response.body) {
+        const streamed = await consumeSseStream(config.protocol, response.body, emitDelta)
+        usage = streamed.usage
+      } else {
+        const raw = await response.text()
+        if (/^data:/m.test(raw.trimStart())) {
+          const singleChunkStream = new ReadableStream<Uint8Array>({
+            start(streamController) {
+              streamController.enqueue(new TextEncoder().encode(raw))
+              streamController.close()
+            }
+          })
+          const streamed = await consumeSseStream(config.protocol, singleChunkStream, emitDelta)
+          usage = streamed.usage
+        } else {
+          const payload = safeParse<Record<string, unknown>>(raw, {})
+          const content = textFromResponse(config.protocol, payload)
+          usage = usageFromResponse(config.protocol, payload)
+          if (content) emitDelta(content)
+          else {
+            const choices = Array.isArray(payload.choices)
+              ? (payload.choices as Array<Record<string, unknown>>)
+              : []
+            if (choices[0]?.finish_reason === 'length')
+              throw new Error('模型输出被最大长度截断，请在模型设置中调大最大输出长度')
+          }
+        }
+      }
+      if (!accumulated.trim() && !this.userCancelled.has(input.requestId)) {
+        throw new Error('模型返回了空内容')
+      }
+      return {
+        content: accumulated,
+        provider: config.provider,
+        model: config.model,
+        usage,
+        ...(this.userCancelled.has(input.requestId) ? { aborted: true } : {})
+      }
+    } catch (error) {
+      if (
+        (error instanceof Error && error.name === 'AbortError') ||
+        this.userCancelled.has(input.requestId)
+      ) {
+        if (this.userCancelled.has(input.requestId)) {
+          return {
+            content: accumulated,
+            provider: config.provider,
+            model: config.model,
+            aborted: true
+          }
+        }
+        throw new Error('模型请求超时，请检查网络或服务地址')
+      }
+      throw error
+    } finally {
+      clearTimeout(timer)
+      this.activeStreams.delete(input.requestId)
+      this.userCancelled.delete(input.requestId)
+    }
+  }
+
+  private async executeRequest(
+    config: StoredAiConfig,
+    messages: AiMessage[],
+    apiKey: string,
+    options: { timeoutMs: number; visionMode?: boolean }
+  ): Promise<AiAskResult> {
+    await verifyNetworkTarget(config.baseUrl, config.provider)
+    const request = requestSpec(config, messages, apiKey)
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), options.timeoutMs)
     try {
       const response = await fetch(request.endpoint, {
         method: 'POST',
@@ -923,8 +1153,13 @@ export class AiService {
       })
       const raw = await response.text()
       const payload = safeParse<Record<string, unknown>>(raw, {})
-      if (!response.ok)
-        throw new Error(`模型服务返回 ${response.status}：${responseError(payload, raw)}`)
+      if (!response.ok) {
+        const detail = responseError(payload, raw)
+        // 纯文本模型的典型报错（image/multimodal/vision 等）转为可操作引导，不泄漏原始堆栈
+        if (options.visionMode && isVisionUnsupportedError(detail))
+          throw new Error(VISION_UNSUPPORTED_MESSAGE)
+        throw new Error(`模型服务返回 ${response.status}：${detail}`)
+      }
       const content = textFromResponse(config.protocol, payload)
       if (!content.trim()) {
         const choices = Array.isArray(payload.choices)
@@ -961,14 +1196,6 @@ export class AiService {
   }
 
   private readApiKey(): string {
-    const record = this.database.getAiRecord()
-    if (!record?.encrypted_key || typeof record.encrypted_key !== 'string') return ''
-    if (!safeStorage.isEncryptionAvailable())
-      throw new Error('当前系统安全存储不可用，无法读取 API Key')
-    try {
-      return safeStorage.decryptString(Buffer.from(record.encrypted_key, 'base64'))
-    } catch {
-      throw new Error('API Key 无法解密，请重新保存')
-    }
+    return this.readKeyFromRecord(this.database.getAiRecord(), '')
   }
 }

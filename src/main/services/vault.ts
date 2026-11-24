@@ -1,4 +1,5 @@
-import { createHash, randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
+import { isWithin, now as timestamp, sha256Hex as hash } from '../utils/common'
 import {
   existsSync,
   lstatSync,
@@ -17,11 +18,13 @@ import type {
   KnowledgeDocument,
   Question,
   QuestionOption,
+  QuestionUpdateInput,
   Subject,
   VaultIndexResult,
   VaultInfo
 } from '../../shared/contracts'
 import { DatabaseService } from './database'
+import { atomicWriteFile, serializeFrontmatter } from './knowledge-builder/markdown-helpers'
 
 const IGNORED_DIRECTORIES = new Set([
   '.git',
@@ -36,14 +39,6 @@ const MAX_FILE_BYTES = 5 * 1024 * 1024
 const MAX_WALK_DEPTH = 32
 // 磁盘变更防抖：批量写入（导入脚本落几千个文件）期间事件连续到达，静默到最后一次事件后再重索引一次
 const AUTO_REINDEX_DEBOUNCE_MS = 3000
-
-function timestamp(): string {
-  return new Date().toISOString()
-}
-
-function hash(value: string): string {
-  return createHash('sha256').update(value).digest('hex')
-}
 
 function normalizeText(value: unknown): string {
   return typeof value === 'string'
@@ -125,6 +120,71 @@ function bodyBeforeSections(body: string): string {
       ?.replace(/^(?:[-*]\s*)?[A-HＡ-Ｈ]\s*[.、:：)]\s*.+$/gim, '')
       .trim() ?? ''
   )
+}
+
+const MANAGED_MARKDOWN_HEADINGS = new Set([
+  '材料',
+  '给定资料',
+  '题目',
+  '问题',
+  '选项',
+  '答案',
+  '参考答案',
+  '解析',
+  '答案解析',
+  '参考解析'
+])
+
+function extractCustomMarkdownSections(body: string): string {
+  const lines = body.replace(/\r\n/g, '\n').split('\n')
+  const blocks: Array<{ heading: string; lines: string[] }> = []
+  let current: { heading: string; lines: string[] } | null = null
+  let inFence = false
+  let fenceChar = ''
+  let fenceLen = 0
+
+  for (const line of lines) {
+    const trimmed = line.trimStart()
+    const fenceMatch = trimmed.match(/^(`{3,}|~{3,})/)
+    if (fenceMatch) {
+      const marker = fenceMatch[1]!
+      if (!inFence) {
+        inFence = true
+        fenceChar = marker[0]!
+        fenceLen = marker.length
+      } else if (
+        marker[0] === fenceChar &&
+        marker.length >= fenceLen &&
+        !trimmed.slice(marker.length).trim()
+      ) {
+        inFence = false
+        fenceChar = ''
+        fenceLen = 0
+      }
+      if (current) current.lines.push(line)
+      continue
+    }
+    if (!inFence) {
+      const headingMatch = line.match(/^#{1,4}\s+(.+?)\s*$/)
+      if (headingMatch) {
+        if (current) blocks.push(current)
+        const normalizedHeading = headingMatch[1]!
+          .trim()
+          .replace(/[:：]+$/, '')
+          .toLowerCase()
+        current = { heading: normalizedHeading, lines: [line] }
+        continue
+      }
+    }
+    if (current) current.lines.push(line)
+  }
+  if (current) blocks.push(current)
+
+  return blocks
+    .filter((block) => !MANAGED_MARKDOWN_HEADINGS.has(block.heading))
+    .map((block) => block.lines.join('\n').trim())
+    .filter(Boolean)
+    .join('\n\n')
 }
 
 const BUILTIN_QUESTION_DATA: Array<Omit<Question, 'contentHash'>> = [
@@ -323,6 +383,7 @@ export class VaultService {
   private watchedPath?: string
   private watchTimer?: ReturnType<typeof setTimeout>
   private watchDebounceMs = AUTO_REINDEX_DEBOUNCE_MS
+  private ignoreWatchUntil = 0
   /** 最近一次由磁盘变更触发的自动重索引结果，供设置页展示与诊断 */
   lastAutoIndex?: VaultIndexResult
 
@@ -343,6 +404,7 @@ export class VaultService {
     if (!target) return
     try {
       const watcher = watch(target, { recursive: true }, (_event, filename) => {
+        if (Date.now() < this.ignoreWatchUntil) return
         const name = filename == null ? '' : String(filename)
         // 只关心 Markdown；filename 为空是目录级事件（部分平台），同样触发
         if (name && !name.toLowerCase().endsWith('.md')) return
@@ -561,6 +623,139 @@ export class VaultService {
     return this.connect(vault.path)
   }
 
+  /** 单题就地勘误写回源 Markdown 并增量重索引单题（保留原题 ID、选项配图与其他 frontmatter 元数据） */
+  updateQuestion(input: QuestionUpdateInput): Question {
+    const vault = this.database.getActiveVault()
+    if (!vault || vault.isBuiltin)
+      throw new Error('内置示例题库为只读，请先连接本地 Markdown 知识库后再勘误')
+    const existing = this.database.getQuestion(input.id)
+    if (!existing) throw new Error('题目不存在')
+    if (!existing.filePath) throw new Error('该题目没有关联源 Markdown 文件，无法就地勘误')
+    const rawTarget = resolve(existing.filePath)
+    if (!existsSync(rawTarget)) throw new Error('源 Markdown 文件不存在，可能已被外部移动或删除')
+    if (lstatSync(rawTarget).isSymbolicLink()) throw new Error('拒绝写入符号链接文件')
+    const realRoot = realpathSync(vault.path)
+    const realFile = realpathSync(rawTarget)
+    if (!isWithin(realRoot, realFile) || extname(realFile).toLowerCase() !== '.md')
+      throw new Error('源文件路径不在当前知识库目录内')
+
+    const stem = input.stem.trim()
+    const category = input.category.trim()
+    const explanation = input.explanation.trim()
+    const material = input.material?.trim() || ''
+    if (!stem) throw new Error('题干不能为空')
+    if (!category) throw new Error('模块分类不能为空')
+    const difficulty = Math.max(
+      1,
+      Math.min(5, Math.round(Number(input.difficulty) || 2))
+    ) as Difficulty
+    const imageByKey = new Map(existing.options.map((opt) => [opt.key.toUpperCase(), opt.image]))
+    const options: QuestionOption[] = input.options
+      .map((opt, idx) => {
+        const key = normalizeText(opt.key).toUpperCase() || String.fromCharCode(65 + idx)
+        const text = opt.text.trim()
+        const image = opt.image?.trim() || imageByKey.get(key)
+        return { key, text, ...(image ? { image } : {}) }
+      })
+      .filter((opt) => Boolean(opt.text || opt.image))
+    const rawAnswers = input.answer.map((item) => item.trim()).filter(Boolean)
+    const answer =
+      existing.type === 'essay'
+        ? [...new Set(rawAnswers)]
+        : [...new Set(rawAnswers.map((item) => item.toUpperCase()))]
+    if (existing.type !== 'essay') {
+      if (answer.length === 0) {
+        throw new Error('参考答案不能为空')
+      }
+      if (existing.options.length > 0 && options.length === 0) {
+        throw new Error('客观题至少需要保留一个有效选项')
+      }
+      if (options.length > 0) {
+        const validKeys = new Set(options.map((opt) => opt.key))
+        if (answer.some((key) => !validKeys.has(key))) {
+          throw new Error('参考答案必须在现有选项范围内')
+        }
+      }
+    }
+
+    const originalRaw = readFileSync(realFile, 'utf8')
+    const originalParsed = matter(originalRaw)
+    const nextData: Record<string, unknown> = {
+      ...(originalParsed.data as Record<string, unknown>)
+    }
+    const aliases = asStringArray(nextData.aliases || nextData.alias)
+    const existingRawId = existing.id.startsWith(`${vault.id}:`)
+      ? existing.id.slice(vault.id.length + 1)
+      : existing.id
+    // 原文件未写显式 id 时把当前 ID 固化写回 frontmatter，避免修改题干后重算哈希导致错题/笔记关联断开
+    if (!normalizeText(nextData.id || nextData.uid || aliases[0])) {
+      nextData.id = existingRawId
+    }
+    if (!normalizeText(nextData.questionType || nextData.type)) {
+      nextData.questionType = existing.type
+    }
+    delete nextData.question
+    delete nextData.answers
+    delete nextData.correct
+    delete nextData.analysis
+    delete nextData.passage
+
+    nextData.category = category
+    nextData.difficulty = difficulty
+    nextData.stem = stem
+    nextData.options = options
+    nextData.answer = answer
+    nextData.explanation = explanation || existing.explanation
+    const aliasTagSet = new Set(aliases.map((alias) => `alias:${alias}`))
+    nextData.tags = [
+      ...new Set(
+        input.tags.map((tag) => tag.trim()).filter((tag) => Boolean(tag) && !aliasTagSet.has(tag))
+      )
+    ]
+    if (material) nextData.material = material
+    else delete nextData.material
+
+    const bodySections: string[] = []
+    if (material) {
+      bodySections.push('## 材料', '', material, '')
+    }
+    bodySections.push('# 题目', '', stem, '')
+    if (options.length) {
+      bodySections.push(
+        '## 选项',
+        '',
+        ...options.map((opt) =>
+          opt.image
+            ? `${opt.key}. ${opt.text ? `${opt.text} ` : ''}![](${opt.image})`
+            : `${opt.key}. ${opt.text}`
+        ),
+        ''
+      )
+    }
+    if (answer.length) {
+      bodySections.push('## 答案', '', answer.join('、'), '')
+    }
+    bodySections.push('## 解析', '', explanation || existing.explanation)
+    const customSections = extractCustomMarkdownSections(originalParsed.content)
+    if (customSections) {
+      bodySections.push('', customSections)
+    }
+
+    const nextContent = serializeFrontmatter(nextData, bodySections.join('\n'))
+    const reparsed = this.parseFile(realRoot, realFile, nextContent)
+    if (!reparsed || !('stem' in reparsed)) {
+      throw new Error('勘误后的文件未能重新解析为题目，请检查格式')
+    }
+    this.ignoreWatchUntil = Date.now() + 4000
+    atomicWriteFile(realFile, nextContent)
+    const fileStat = statSync(realFile)
+    reparsed.id = existing.id
+    reparsed.fileMtimeMs = fileStat.mtimeMs
+    reparsed.fileSize = fileStat.size
+    this.database.upsertSingleQuestion(vault.id, reparsed)
+    return reparsed
+  }
+
   readAssetDataUrl(sourceFilePath: string, assetPath: string): string {
     const vault = this.database.getActiveVault()
     // 内置托管库在磁盘上同样有真实目录（结构解析的图片附件随发布写入），
@@ -568,7 +763,7 @@ export class VaultService {
     if (!vault) throw new Error('当前没有激活的知识库')
     const root = realpathSync(vault.path)
     const source = realpathSync(resolve(sourceFilePath))
-    if (!this.isWithin(root, source)) throw new Error('附件来源文档不属于当前知识库')
+    if (!isWithin(root, source)) throw new Error('附件来源文档不属于当前知识库')
     let decoded: string
     try {
       decoded = decodeURIComponent(assetPath.split(/[?#]/, 1)[0] ?? '')
@@ -580,7 +775,7 @@ export class VaultService {
     const candidate = resolve(dirname(source), decoded)
     if (!existsSync(candidate) || !statSync(candidate).isFile()) throw new Error('附件文件不存在')
     const file = realpathSync(candidate)
-    if (!this.isWithin(root, file)) throw new Error('附件路径超出当前知识库')
+    if (!isWithin(root, file)) throw new Error('附件路径超出当前知识库')
     const mime =
       {
         '.png': 'image/png',
@@ -621,14 +816,6 @@ export class VaultService {
     }
     visit(root, 0)
     return results
-  }
-
-  private isWithin(root: string, candidate: string): boolean {
-    const path = relative(root, candidate)
-    return (
-      path === '' ||
-      (path !== '..' && !path.startsWith(`..\\`) && !path.startsWith('../') && !isAbsolute(path))
-    )
   }
 
   private parseFile(
@@ -697,12 +884,10 @@ export class VaultService {
     const questionType = parseQuestionType(data.questionType || data.type, options)
     const answer = asStringArray(
       data.answer || data.answers || data.correct || section(parsed.content, ['答案', '参考答案'])
-    ).map((value) =>
-      value
-        .replace(/^答案[:：]?\s*/i, '')
-        .trim()
-        .toUpperCase()
-    )
+    ).map((value) => {
+      const cleaned = value.replace(/^答案[:：]?\s*/i, '').trim()
+      return questionType === 'essay' ? cleaned : cleaned.toUpperCase()
+    })
     // 主观题允许无参考答案入库：练习走「申论作答」页的 AI 批改兜底
     if (answer.length === 0 && questionType !== 'essay') throw new Error('缺少答案')
     const explanation =

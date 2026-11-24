@@ -670,6 +670,26 @@ export interface AiAskResult {
   usage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number }
 }
 
+export interface AiStreamEvent {
+  requestId: string
+  type: 'chunk' | 'reset' | 'done' | 'error' | 'aborted'
+  delta?: string
+  content?: string
+  error?: string
+}
+
+export interface QuestionUpdateInput {
+  id: string
+  category: string
+  difficulty: Difficulty
+  material?: string
+  stem: string
+  options: QuestionOption[]
+  answer: string[]
+  explanation: string
+  tags: string[]
+}
+
 /** VLM 精校模型来源：reuse-main 直接复用全局 AI 配置；custom 单独配置视觉模型 */
 export type VlmModelMode = 'reuse-main' | 'custom'
 
@@ -794,195 +814,274 @@ export interface AppDiagnostic {
   checks: DiagnosticCheck[]
 }
 
-export type WorkbenchRequest =
-  | { method: 'bootstrap'; params?: undefined }
-  | { method: 'dashboard.get'; params?: undefined }
-  | { method: 'vault.choose'; params?: undefined }
-  | { method: 'vault.connect'; params: { path: string } }
-  | { method: 'vault.reindex'; params?: undefined }
-  | { method: 'vault.list'; params?: undefined }
-  | { method: 'vault.active'; params?: undefined }
-  | { method: 'vault.switch'; params: { id: string } }
-  | { method: 'vault.clearWarnings'; params?: undefined }
-  | { method: 'vault.snapshots'; params: { vaultId: string } }
-  | { method: 'vault.rollback'; params: { snapshotId: string } }
-  | { method: 'vault.search'; params: QuestionFilter }
-  | { method: 'vault.listSummary'; params: QuestionFilter }
-  | { method: 'vault.question'; params: { id: string } }
-  | { method: 'vault.normalizeRegions'; params?: undefined }
-  | { method: 'vault.categories'; params?: { subject?: Subject } }
-  | { method: 'vault.facets'; params?: { subject?: Subject; region?: string } }
-  | { method: 'vault.asset'; params: { sourceFilePath: string; assetPath: string } }
-  | { method: 'knowledgeBuilder.source.choose'; params?: undefined }
-  | { method: 'knowledgeBuilder.source.scan'; params: { path: string } }
-  | { method: 'knowledgeBuilder.engine.status'; params?: undefined }
-  | { method: 'knowledgeBuilder.engine.install'; params?: undefined }
-  | { method: 'knowledgeBuilder.engine.gpu.install'; params?: undefined }
-  | { method: 'knowledgeBuilder.engine.gpu.remove'; params?: undefined }
-  | { method: 'knowledgeBuilder.engine.mirror.set'; params: { id: string } }
-  | {
-      method: 'knowledgeBuilder.job.start'
-      params: { sourcePath: string; fileIds: string[]; options: KnowledgeBuildOptions }
+export interface ConversionCacheEntryStat {
+  key: string
+  sourceName: string
+  converter: string
+  bytes: number
+  createdAt: string
+  hasImages: boolean
+}
+
+export interface ConversionCacheStats {
+  entries: ConversionCacheEntryStat[]
+  totalBytes: number
+}
+
+export interface AppUpdateStatus {
+  checking: boolean
+  available: boolean
+  downloading: boolean
+  downloaded: boolean
+  progress?: number
+  version?: string
+  releaseNotes?: string
+  error?: string
+  source?: 'cnb' | 'github'
+  currentVersion: string
+}
+
+export interface WorkbenchMethodMap {
+  bootstrap: { params?: undefined; result: BootstrapData }
+  'dashboard.get': { params?: undefined; result: DashboardData }
+  'vault.choose': { params?: undefined; result: string | undefined }
+  'vault.connect': { params: { path: string }; result: VaultIndexResult }
+  'vault.reindex': { params?: undefined; result: VaultIndexResult }
+  'vault.list': { params?: undefined; result: VaultInfo[] }
+  'vault.active': { params?: undefined; result: VaultInfo | undefined }
+  'vault.switch': { params: { id: string }; result: VaultInfo }
+  'vault.clearWarnings': { params?: undefined; result: VaultInfo | undefined }
+  'vault.snapshots': { params: { vaultId: string }; result: VaultSnapshotInfo[] }
+  'vault.rollback': { params: { snapshotId: string }; result: VaultIndexResult }
+  'vault.search': { params: QuestionFilter; result: Question[] }
+  'vault.listSummary': { params: QuestionFilter; result: QuestionSummary[] }
+  'vault.question': { params: { id: string }; result: Question | undefined }
+  'vault.normalizeRegions': { params?: undefined; result: { updated: number } }
+  'vault.categories': {
+    params?: { subject?: Subject }
+    result: Array<{ name: string; count: number }>
+  }
+  'vault.facets': { params?: { subject?: Subject; region?: string }; result: QuestionFacets }
+  'vault.asset': { params: { sourceFilePath: string; assetPath: string }; result: string }
+  'knowledgeBuilder.source.choose': { params?: undefined; result: string | undefined }
+  'knowledgeBuilder.source.scan': { params: { path: string }; result: KnowledgeSourceScan }
+  'knowledgeBuilder.engine.status': { params?: undefined; result: KnowledgeEngineStatus }
+  'knowledgeBuilder.engine.install': { params?: undefined; result: KnowledgeEngineStatus }
+  'knowledgeBuilder.engine.gpu.install': { params?: undefined; result: KnowledgeEngineStatus }
+  'knowledgeBuilder.engine.gpu.remove': { params?: undefined; result: KnowledgeEngineStatus }
+  'knowledgeBuilder.engine.mirror.set': { params: { id: string }; result: KnowledgeEngineStatus }
+  'knowledgeBuilder.job.start': {
+    params: { sourcePath: string; fileIds: string[]; options: KnowledgeBuildOptions }
+    result: KnowledgeBuildJob
+  }
+  'knowledgeBuilder.job.latest': { params?: undefined; result: KnowledgeBuildJob | undefined }
+  'knowledgeBuilder.job.get': { params: { id: string }; result: KnowledgeBuildJob }
+  'knowledgeBuilder.job.cancel': { params: { id: string }; result: KnowledgeBuildJob }
+  'knowledgeBuilder.job.retry': {
+    params: { id: string; sourceIds?: string[] }
+    result: KnowledgeBuildJob
+  }
+  'knowledgeBuilder.evidence.get': { params: { jobId: string; assetId: string }; result: string }
+  'knowledgeBuilder.cache.stats': { params?: undefined; result: ConversionCacheStats }
+  'knowledgeBuilder.cache.clear': { params: { sourceName?: string }; result: { removed: number } }
+  'knowledgeBuilder.job.revert': { params: { id: string }; result: { removed: number } }
+  'knowledgeBuilder.artifact.get': {
+    params: { jobId: string; artifactId: string }
+    result: KnowledgeArtifactDetail
+  }
+  'knowledgeBuilder.artifact.updateMarkdown': {
+    params: {
+      jobId: string
+      artifactId: string
+      /** 完整 Markdown（frontmatter 必须与原产物一致，主进程校验 id 不被篡改） */
+      markdown: string
+      /** 保存来源：vlm = 采纳 VLM 精校结果（warnings 补充复核提示）；manual = 人工编辑 */
+      origin?: 'vlm' | 'manual'
     }
-  | { method: 'knowledgeBuilder.job.latest'; params?: undefined }
-  | { method: 'knowledgeBuilder.job.get'; params: { id: string } }
-  | { method: 'knowledgeBuilder.job.cancel'; params: { id: string } }
-  | { method: 'knowledgeBuilder.job.retry'; params: { id: string; sourceIds?: string[] } }
-  | {
-      method: 'knowledgeBuilder.evidence.get'
-      params: { jobId: string; assetId: string }
+    result: KnowledgeArtifactDetail
+  }
+  'knowledgeBuilder.artifact.vlmProofread': {
+    params: { jobId: string; artifactId: string }
+    result: VlmProofreadSuggestion
+  }
+  'knowledgeBuilder.artifact.review': {
+    params: {
+      jobId: string
+      artifactId: string
+      status: 'pending' | 'approved' | 'rejected'
+      /** 人工确认「已查看原始页面并确认内容正确」，解除能力边界发布限制 */
+      confirmHumanReview?: boolean
     }
-  | { method: 'knowledgeBuilder.cache.stats' }
-  | {
-      method: 'knowledgeBuilder.cache.clear'
-      params: { sourceName?: string }
+    result: KnowledgeBuildJob
+  }
+  'knowledgeBuilder.artifacts.reviewMany': {
+    params: {
+      jobId: string
+      artifactIds?: string[]
+      status: 'approved' | 'rejected'
     }
-  | { method: 'knowledgeBuilder.job.revert'; params: { id: string } }
-  | { method: 'knowledgeBuilder.artifact.get'; params: { jobId: string; artifactId: string } }
-  | {
-      method: 'knowledgeBuilder.artifact.updateMarkdown'
-      params: {
-        jobId: string
-        artifactId: string
-        /** 完整 Markdown（frontmatter 必须与原产物一致，主进程校验 id 不被篡改） */
-        markdown: string
-        /** 保存来源：vlm = 采纳 VLM 精校结果（warnings 补充复核提示）；manual = 人工编辑 */
-        origin?: 'vlm' | 'manual'
-      }
+    result: BatchReviewResult
+  }
+  'knowledgeBuilder.publish': { params: { jobId: string }; result: VaultIndexResult }
+  'documents.list': {
+    params: { subject?: Subject | 'common'; kind?: KnowledgeDocument['kind']; query?: string }
+    result: KnowledgeDocument[]
+  }
+  'questions.get': { params: { id: string }; result: Question | undefined }
+  'questions.userMeta': {
+    params: { questionIds: string[] }
+    result: Record<string, QuestionUserMeta>
+  }
+  'wrongQuestion.setCause': { params: { questionId: string; wrongCause: string }; result: boolean }
+  'questions.library': {
+    params: {
+      tab: 'wrong' | 'favorite' | 'notes'
+      category?: string
+      wrongCause?: string
+      query?: string
+      limit?: number
     }
-  | {
-      method: 'knowledgeBuilder.artifact.vlmProofread'
-      params: { jobId: string; artifactId: string }
+    result: QuestionLibraryItem[]
+  }
+  'questions.library.export': { params: QuestionLibraryExportParams; result: string | undefined }
+  'questions.update': { params: QuestionUpdateInput; result: Question }
+  'practice.select': { params: PracticeSelection; result: Question[] }
+  'practice.session.start': { params: PracticeSelection; result: PracticeSession }
+  'practice.session.active': {
+    params: { mode: 'practice' | 'review' }
+    result: PracticeSession | undefined
+  }
+  'practice.session.results': {
+    params: { id: string }
+    result: Array<{ questionId: string; answer: string[]; correct: boolean }>
+  }
+  'practice.session.update': {
+    params: {
+      id: string
+      currentIndex?: number
+      uncertainIds?: string[]
+      appendQuestionIds?: string[]
     }
-  | {
-      method: 'knowledgeBuilder.artifact.review'
-      params: {
-        jobId: string
-        artifactId: string
-        status: 'pending' | 'approved' | 'rejected'
-        /** 人工确认「已查看原始页面并确认内容正确」，解除能力边界发布限制 */
-        confirmHumanReview?: boolean
-      }
-    }
-  | {
-      method: 'knowledgeBuilder.artifacts.reviewMany'
-      params: {
-        jobId: string
-        artifactIds?: string[]
-        status: 'approved' | 'rejected'
-      }
-    }
-  | { method: 'knowledgeBuilder.publish'; params: { jobId: string } }
-  | {
-      method: 'documents.list'
-      params: { subject?: Subject | 'common'; kind?: KnowledgeDocument['kind']; query?: string }
-    }
-  | { method: 'questions.get'; params: { id: string } }
-  | { method: 'questions.userMeta'; params: { questionIds: string[] } }
-  | { method: 'wrongQuestion.setCause'; params: { questionId: string; wrongCause: string } }
-  | {
-      method: 'questions.library'
-      params: {
-        tab: 'wrong' | 'favorite' | 'notes'
-        category?: string
-        wrongCause?: string
-        query?: string
-        limit?: number
-      }
-    }
-  | { method: 'questions.library.export'; params: QuestionLibraryExportParams }
-  | { method: 'practice.select'; params: PracticeSelection }
-  | { method: 'practice.session.start'; params: PracticeSelection }
-  | { method: 'practice.session.active'; params: { mode: 'practice' | 'review' } }
-  | {
-      method: 'practice.session.results'
-      params: { id: string }
-    }
-  | {
-      method: 'practice.session.update'
-      params: { id: string; currentIndex?: number; uncertainIds?: string[] }
-    }
-  | { method: 'practice.session.complete'; params: { id: string; abandoned?: boolean } }
-  | { method: 'questions.similar'; params: { id: string; limit?: number } }
-  | { method: 'attempt.submit'; params: AttemptInput }
-  | { method: 'favorite.set'; params: { questionId: string; favorite: boolean } }
-  | { method: 'favorite.get'; params: { questionId: string } }
-  | { method: 'note.save'; params: { questionId: string; content: string } }
-  | { method: 'note.get'; params: { questionId: string } }
-  | { method: 'review.due'; params?: { limit?: number } }
-  | { method: 'exam.create'; params: ExamConfig }
-  | { method: 'exam.active'; params?: undefined }
-  | { method: 'exam.save'; params: { examId: string; answer: ExamAnswer } }
-  | { method: 'exam.finish'; params: { examId: string } }
-  | { method: 'exam.history'; params?: undefined }
-  | { method: 'exam.get'; params: { examId: string } }
-  | { method: 'exam.papers'; params?: undefined }
-  | { method: 'exam.createPaper'; params: { paper: string } }
-  | { method: 'migration.export'; params: { targetPath: string } }
-  | { method: 'migration.import'; params: { sourcePath: string; vaultTargetPath: string } }
-  | { method: 'folder.pick'; params: { title: string } }
-  | { method: 'draft.save'; params: Omit<ConstructedDraft, 'updatedAt'> }
-  | { method: 'draft.get'; params: { id: string } }
-  | { method: 'constructed.evaluate'; params: { promptId: string; title: string; content: string } }
-  | {
-      method: 'constructed.history'
-      params?: { promptId?: string; limit?: number; range?: ReportData['range'] }
-    }
-  | { method: 'reports.get'; params: { range: ReportData['range'] } }
-  | { method: 'reports.exportMarkdown'; params: { range: ReportData['range'] } }
-  | { method: 'reports.exportObsidian'; params: { range: ReportData['range'] } }
-  | { method: 'diagnosis.get'; params?: undefined }
-  | {
-      method: 'plan.preview'
-      params: { durationDays: number; dailyMinutes: number; focus: string[] }
-    }
-  | { method: 'plan.apply'; params: { plan: LearningPlan } }
-  | { method: 'plan.active'; params?: undefined }
-  | { method: 'plan.item.complete'; params: { planId: string; itemId: string; completed: number } }
-  | { method: 'plan.cancel'; params: { planId: string } }
-  | { method: 'ai.config.get'; params?: undefined }
-  | { method: 'ai.config.save'; params: AiConfigInput }
-  | { method: 'ai.config.clearCredential'; params?: undefined }
-  | { method: 'ai.vlmConfig.get'; params?: undefined }
-  | { method: 'ai.vlmConfig.save'; params: VlmConfigInput }
-  | { method: 'ai.vlmConfig.clearCredential'; params?: undefined }
-  | { method: 'ai.vlmConfig.test'; params?: undefined }
-  | { method: 'ai.providers'; params?: undefined }
-  | { method: 'ai.models.discover'; params?: undefined }
-  | { method: 'ai.test'; params?: undefined }
-  | { method: 'ai.ask'; params: AiAskInput }
-  | { method: 'ai.conversations.list'; params?: { limit?: number } }
-  | {
-      method: 'ai.conversations.save'
-      params: { id?: string; title: string; questionId?: string; messages: AiMessage[] }
-    }
-  | { method: 'ai.conversations.delete'; params: { id: string } }
-  | { method: 'aiTraining.record'; params: Omit<AiTrainingRecord, 'id' | 'correct' | 'createdAt'> }
-  | { method: 'aiTraining.history'; params?: undefined }
-  | { method: 'settings.get'; params?: undefined }
-  | { method: 'settings.save'; params: Partial<AppSettings> }
-  | { method: 'runtime.status'; params?: undefined }
-  | { method: 'integration.get'; params?: undefined }
-  | { method: 'integration.save'; params: Partial<IntegrationConfig> }
-  | { method: 'integration.openObsidian'; params?: undefined }
-  | { method: 'obsidian.backups'; params?: undefined }
-  | { method: 'obsidian.backup'; params?: undefined }
-  | { method: 'obsidian.restore'; params: { id: string } }
-  | { method: 'obsidian.safeMode'; params?: undefined }
-  | { method: 'backup.create'; params?: undefined }
-  | { method: 'backup.list'; params?: undefined }
-  | { method: 'backup.restore'; params: { path: string } }
-  | { method: 'diagnostics.run'; params?: undefined }
-  | { method: 'diagnostics.export'; params?: undefined }
-  | { method: 'user.resetLearningData'; params: { confirmation: string } }
-  | { method: 'shell.openPath'; params: { path: string } }
-  | { method: 'app.update.status'; params?: undefined }
-  | { method: 'app.update.check'; params?: undefined }
-  | { method: 'app.update.download'; params?: undefined }
-  | { method: 'app.update.install'; params?: undefined }
+    result: PracticeSession
+  }
+  'practice.session.complete': {
+    params: { id: string; abandoned?: boolean }
+    result: PracticeSession
+  }
+  'questions.similar': { params: { id: string; limit?: number }; result: Question[] }
+  'attempt.submit': { params: AttemptInput; result: AttemptResult }
+  'favorite.set': { params: { questionId: string; favorite: boolean }; result: void }
+  'favorite.get': { params: { questionId: string }; result: boolean }
+  'note.save': { params: { questionId: string; content: string }; result: void }
+  'note.get': { params: { questionId: string }; result: string }
+  'review.due': { params?: { limit?: number }; result: ReviewItem[] }
+  'exam.create': { params: ExamConfig; result: ExamSession }
+  'exam.active': { params?: undefined; result: ExamSession | undefined }
+  'exam.save': { params: { examId: string; answer: ExamAnswer }; result: ExamSession }
+  'exam.finish': { params: { examId: string }; result: ExamSession }
+  'exam.history': { params?: undefined; result: ExamSession[] }
+  'exam.get': { params: { examId: string }; result: ExamSession | null }
+  'exam.papers': { params?: undefined; result: PaperSummary[] }
+  'exam.createPaper': { params: { paper: string }; result: ExamSession }
+  'migration.export': { params: { targetPath: string }; result: { message: string } }
+  'migration.import': {
+    params: { sourcePath: string; vaultTargetPath: string }
+    result: { restartRequired: true; message: string }
+  }
+  'folder.pick': { params: { title: string }; result: string | undefined }
+  'draft.save': { params: Omit<ConstructedDraft, 'updatedAt'>; result: ConstructedDraft }
+  'draft.get': { params: { id: string }; result: ConstructedDraft | undefined }
+  'constructed.evaluate': {
+    params: { promptId: string; title: string; content: string; requestId?: string }
+    result: ConstructedEvaluation
+  }
+  'constructed.history': {
+    params?: { promptId?: string; limit?: number; range?: ReportData['range'] }
+    result: ConstructedAttemptRecord[]
+  }
+  'reports.get': { params: { range: ReportData['range'] }; result: ReportData }
+  'reports.exportMarkdown': { params: { range: ReportData['range'] }; result: string | undefined }
+  'reports.exportObsidian': { params: { range: ReportData['range'] }; result: string }
+  'diagnosis.get': { params?: undefined; result: DiagnosisResult }
+  'plan.preview': {
+    params: { durationDays: number; dailyMinutes: number; focus: string[] }
+    result: LearningPlan
+  }
+  'plan.apply': { params: { plan: LearningPlan }; result: LearningPlan }
+  'plan.active': { params?: undefined; result: LearningPlan | undefined }
+  'plan.item.complete': {
+    params: { planId: string; itemId: string; completed: number }
+    result: LearningPlan
+  }
+  'plan.cancel': { params: { planId: string }; result: void }
+  'ai.config.get': { params?: undefined; result: AiConfigView }
+  'ai.config.save': { params: AiConfigInput; result: AiConfigView }
+  'ai.config.clearCredential': { params?: undefined; result: AiConfigView }
+  'ai.vlmConfig.get': { params?: undefined; result: VlmConfigView }
+  'ai.vlmConfig.save': { params: VlmConfigInput; result: VlmConfigView }
+  'ai.vlmConfig.clearCredential': { params?: undefined; result: VlmConfigView }
+  'ai.vlmConfig.test': { params?: undefined; result: VlmConfigView }
+  'ai.providers': { params?: undefined; result: AiProviderInfo[] }
+  'ai.models.discover': { params?: undefined; result: string[] }
+  'ai.test': { params?: undefined; result: AiConfigView }
+  'ai.ask': { params: AiAskInput; result: AiAskResult }
+  'ai.askStream': {
+    params: AiAskInput & { requestId: string }
+    result: AiAskResult & { aborted?: boolean }
+  }
+  'ai.stream.cancel': { params: { requestId: string }; result: boolean }
+  'ai.conversations.list': { params?: { limit?: number }; result: AiConversation[] }
+  'ai.conversations.save': {
+    params: { id?: string; title: string; questionId?: string; messages: AiMessage[] }
+    result: AiConversation
+  }
+  'ai.conversations.delete': { params: { id: string }; result: boolean }
+  'aiTraining.record': {
+    params: Omit<AiTrainingRecord, 'id' | 'correct' | 'createdAt'>
+    result: AiTrainingRecord
+  }
+  'aiTraining.history': { params?: undefined; result: AiTrainingRecord[] }
+  'settings.get': { params?: undefined; result: AppSettings }
+  'settings.save': { params: Partial<AppSettings>; result: AppSettings }
+  'runtime.status': { params?: undefined; result: RuntimeStatus }
+  'integration.get': { params?: undefined; result: IntegrationConfig }
+  'integration.save': { params: Partial<IntegrationConfig>; result: IntegrationConfig }
+  'integration.openObsidian': { params?: undefined; result: void }
+  'obsidian.backups': { params?: undefined; result: ObsidianBackupInfo[] }
+  'obsidian.backup': { params?: undefined; result: ObsidianBackupInfo }
+  'obsidian.restore': { params: { id: string }; result: ObsidianBackupInfo }
+  'obsidian.safeMode': { params?: undefined; result: ObsidianBackupInfo }
+  'backup.create': { params?: undefined; result: BackupInfo }
+  'backup.list': { params?: undefined; result: BackupInfo[] }
+  'backup.restore': { params: { path: string }; result: BootstrapData }
+  'diagnostics.run': { params?: undefined; result: AppDiagnostic }
+  'diagnostics.export': { params?: undefined; result: string | undefined }
+  'user.resetLearningData': { params: { confirmation: string }; result: DashboardData }
+  'shell.openPath': { params: { path: string }; result: boolean }
+  'app.update.status': { params?: undefined; result: AppUpdateStatus }
+  'app.update.check': { params?: undefined; result: AppUpdateStatus }
+  'app.update.download': { params?: undefined; result: AppUpdateStatus }
+  'app.update.install': { params?: undefined; result: AppUpdateStatus }
+  'window.fullscreen.toggle': { params?: undefined; result: boolean }
+  'window.fullscreen.get': { params?: undefined; result: boolean }
+}
+
+export type WorkbenchMethod = keyof WorkbenchMethodMap
+
+export type WorkbenchResult<M extends WorkbenchMethod> = WorkbenchMethodMap[M]['result']
+
+export type WorkbenchRequest = {
+  [M in WorkbenchMethod]: WorkbenchMethodMap[M]['params'] extends undefined
+    ? { method: M; params?: undefined }
+    : undefined extends WorkbenchMethodMap[M]['params']
+      ? { method: M; params?: WorkbenchMethodMap[M]['params'] }
+      : { method: M; params: WorkbenchMethodMap[M]['params'] }
+}[WorkbenchMethod]
 
 export interface WorkbenchAPI {
   invoke<T = unknown>(request: WorkbenchRequest): Promise<T>
   platform: string
   onSettingsUpdated?: (listener: (settings: AppSettings) => void) => () => void
+  onAiStream?: (listener: (event: AiStreamEvent) => void) => () => void
+  onFullscreenChanged?: (listener: (fullscreen: boolean) => void) => () => void
 }

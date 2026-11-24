@@ -1,5 +1,9 @@
-import type { WorkbenchRequest } from '@shared/contracts'
+import type { WorkbenchMethod, WorkbenchRequest, WorkbenchResult } from '@shared/contracts'
 
+export function invoke<M extends WorkbenchMethod>(
+  request: Extract<WorkbenchRequest, { method: M }>
+): Promise<WorkbenchResult<M>>
+export function invoke<T>(request: WorkbenchRequest): Promise<T>
 export async function invoke<T>(request: WorkbenchRequest): Promise<T> {
   try {
     return await window.workbench.invoke<T>(request)

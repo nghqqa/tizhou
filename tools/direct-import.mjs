@@ -1380,7 +1380,10 @@ function buildXingcezhenti(srcDir, outDir, primaryDir) {
         materialSections.forEach((matSection, matIdx) => {
           const parts = matSection.split(/\r?\n### 第 (\d+) 题/)
           const matText = rewriteText(parts[0] ?? '', fileDir)
-          const groupId = `xz-mat-${createHash('sha1').update(`${paper}\n${matIdx}`).digest('hex').slice(0, 12)}`
+          const groupId = `xz-mat-${createHash('sha1')
+            .update(`${paper}\n${category}\n${matIdx}\n${matText.slice(0, 200)}`)
+            .digest('hex')
+            .slice(0, 12)}`
           for (let j = 1; j < parts.length; j += 2) {
             const qNum = Number(parts[j]) || (j + 1) / 2
             const chunk = parts[j + 1] ?? ''

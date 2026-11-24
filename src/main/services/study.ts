@@ -11,10 +11,7 @@ import { FEATURE_PROMPTS, taskDataEnvelope } from '../../shared/prompts'
 import { classifyShenlunType } from '../../shared/shenlun'
 import { AiService } from './ai'
 import { DatabaseService } from './database'
-
-function now(): string {
-  return new Date().toISOString()
-}
+import { clamp, now, sha256Hex } from '../utils/common'
 
 function dateFromToday(days: number): string {
   const date = new Date()
@@ -34,55 +31,111 @@ function shuffled<T>(items: T[]): T[] {
   return output
 }
 
-function clamp(value: number, minimum: number, maximum: number): number {
-  return Math.max(minimum, Math.min(maximum, value))
+// ---- 组题抽题：资料分析锁死为整套材料 5 题连续（1→2→3→4→5），严禁拆散、打乱或跨模块混组 ----
+
+export const DATA_ANALYSIS_GROUP_SIZE = 5
+
+export function isDataAnalysisQuestion(question: Question): boolean {
+  return question.category === '资料分析' || question.category.startsWith('资料分析')
 }
 
-// ---- 组题抽题：资料分析等题型是一组材料带 N 道连续小题，抽题以组为原子单位 ----
-// 组内按小题序（groupOrder）连续排列，不被随机打散；无组题目视为单题组。
+export function isLockedDataAnalysisUnit(unit: Question[]): boolean {
+  return unit.length === DATA_ANALYSIS_GROUP_SIZE && unit.every(isDataAnalysisQuestion)
+}
+
+function normalizeMaterialForGroup(material?: string): string {
+  return (material ?? '').replace(/\r\n?/g, '\n').trim()
+}
 
 function extractQuestionOrder(question: Question): number {
   if (typeof question.groupOrder === 'number' && Number.isFinite(question.groupOrder)) {
     return question.groupOrder
   }
+  if (Array.isArray(question.papers) && question.papers.length > 0) {
+    const matched = question.paper
+      ? question.papers.find(
+          (entry) =>
+            entry.paper === question.paper &&
+            typeof entry.order === 'number' &&
+            Number.isFinite(entry.order)
+        )
+      : undefined
+    const fallbackPaper =
+      matched ??
+      question.papers.find(
+        (entry) => typeof entry.order === 'number' && Number.isFinite(entry.order)
+      )
+    if (fallbackPaper) return fallbackPaper.order
+  }
   const match = question.id.match(/(?:_q|-q|_)(\d+)$/i)
-  return match ? Number(match[1]) : 0
+  return match ? Number(match[1]) : Number.MAX_SAFE_INTEGER
 }
 
 export function buildQuestionUnits(pool: Question[]): Question[][] {
   const groups = new Map<string, Question[]>()
-  const singles: Question[][] = []
+  const units: Question[][] = []
   for (const question of pool) {
-    // 优先使用显式 groupId；若缺失但有共享材料（如 OpenExam 资料分析），按「试卷/来源 + 材料前缀」自动归组
-    const fallbackGroupKey =
-      !question.groupId && question.material && question.material.trim().length >= 40
-        ? `mat:${question.paper || question.source || ''}\u0000${question.material.trim().slice(0, 180)}`
+    const normMat = normalizeMaterialForGroup(question.material)
+    // 组键强制隔离 category + 完整材料哈希（避免历史导入 groupId 跨模块/跨材料碰撞）；
+    // 无显式 groupId 时不再限制材料长度，确保纯图片材料也能准确聚组
+    const groupKey = question.groupId
+      ? normMat
+        ? `grp:${question.category}\u0000${question.groupId}\u0000${sha256Hex(normMat)}`
+        : `grp:${question.category}\u0000${question.groupId}`
+      : normMat
+        ? `mat:${question.category}\u0000${question.paper || question.source || ''}\u0000${sha256Hex(normMat)}`
         : ''
-    const groupKey = question.groupId || fallbackGroupKey
     if (groupKey) {
-      const list = groups.get(groupKey)
-      if (list) list.push(question)
-      else groups.set(groupKey, [question])
+      let list = groups.get(groupKey)
+      if (!list) {
+        list = []
+        groups.set(groupKey, list)
+        units.push(list)
+      }
+      list.push(question)
     } else {
-      singles.push([question])
+      units.push([question])
     }
   }
-  const units = [...singles, ...groups.values()]
   for (const unit of units) {
     if (unit.length > 1) {
-      unit.sort((a, b) => extractQuestionOrder(a) - extractQuestionOrder(b))
+      unit.sort(
+        (a, b) => extractQuestionOrder(a) - extractQuestionOrder(b) || a.id.localeCompare(b.id)
+      )
     }
   }
   return units
 }
 
-// 依次整组收取；放不下的大组先跳过避免顶掉空位，最后用能放下的小组回填
+export function normalizeDataAnalysisUnits(units: Question[][], strict = true): Question[][] {
+  const normalized = units.map((unit) =>
+    unit.length > DATA_ANALYSIS_GROUP_SIZE && unit.every(isDataAnalysisQuestion)
+      ? unit.slice(0, DATA_ANALYSIS_GROUP_SIZE)
+      : unit
+  )
+  if (!strict) return normalized
+  const hasCompleteDataAnalysis = normalized.some(isLockedDataAnalysisUnit)
+  // 真实题库下严禁抽出不足 5 题的资料分析残组或散题；仅当池内尚无任何完整 5 题套时才豁免内置示例单题（builtin-*），
+  // 若纯资料分析池中连 1 套完整 5 题组都没有则保留兜底以免空库报错
+  const filtered = normalized.filter(
+    (unit) =>
+      !unit.every(isDataAnalysisQuestion) ||
+      unit.length === DATA_ANALYSIS_GROUP_SIZE ||
+      (!hasCompleteDataAnalysis && unit.length === 1 && unit[0]!.id.startsWith('builtin-'))
+  )
+  return filtered.length > 0 ? filtered : normalized
+}
+
+// 依次整组收取；锁定 5 题资料分析组严禁拆散或截断，放不下时先跳过再用其他单元回填
 export function takeUnits(units: Question[][], count: number): Question[] {
   const picked: Question[] = []
   const skipped: Question[][] = []
   for (const unit of units) {
     if (picked.length >= count) break
-    if (picked.length === 0 || picked.length + unit.length <= count) {
+    if (
+      picked.length + unit.length <= count ||
+      (picked.length === 0 && !isLockedDataAnalysisUnit(unit))
+    ) {
       picked.push(...unit)
     } else {
       skipped.push(unit)
@@ -91,6 +144,11 @@ export function takeUnits(units: Question[][], count: number): Question[] {
   for (const unit of skipped) {
     if (picked.length >= count) break
     if (picked.length + unit.length <= count) picked.push(...unit)
+  }
+  if (picked.length === 0 && skipped.length > 0) {
+    const lockedFallback = skipped.find(isLockedDataAnalysisUnit)
+    if (lockedFallback) return [...lockedFallback]
+    return skipped[0]!.slice(0, count)
   }
   return picked.slice(0, count)
 }
@@ -120,7 +178,13 @@ export class StudyService {
       return this.database.getDueReviews(count).map((item) => item.question)
     // 抽题池走专用查询：万题级题库全库采样不受列表查询的 5000 截断（旧题也要能抽到）
     const pool = this.database.listQuestionsForPool({ ...selection.filter })
-    if (selection.mode === 'sequence') return takeUnits(buildQuestionUnits(pool), count)
+    const strictDataAnalysis =
+      !selection.filter?.onlyWrong &&
+      !selection.filter?.onlyFavorite &&
+      !selection.filter?.query?.trim()
+    // 严禁在 buildQuestionUnits 之前对 pool 洗牌，确保组内 1→2→3→4→5 顺序不被打乱
+    const units = normalizeDataAnalysisUnits(buildQuestionUnits(pool), strictDataAnalysis)
+    if (selection.mode === 'sequence') return takeUnits(units, count)
     if (selection.mode === 'adaptive') {
       const diagnosis = this.getDiagnosis()
       const priority = new Map(
@@ -140,17 +204,16 @@ export class StudyService {
         question.tags.filter((tag) => wrongTags.has(tag)).length * 3 +
         (attempted.has(question.id) ? 0 : 8) -
         (recent.has(question.id) ? 40 : 0)
-      // 以组为原子计分排序（组分取组内最高），整组抽取保持材料小题连续
-      const units = buildQuestionUnits(shuffled(pool))
+      // 在单元粒度先随机打破同分，再按组最高分降序排序，整组抽取保持资料分析 5 题连续不乱序
       return takeUnits(
-        units
+        shuffled(units)
           .map((unit) => ({ unit, score: Math.max(...unit.map(scoreOf)) }))
           .sort((a, b) => b.score - a.score)
           .map((item) => item.unit),
         count
       )
     }
-    return takeUnits(shuffled(buildQuestionUnits(pool)), count)
+    return takeUnits(shuffled(units), count)
   }
 
   getDiagnosis(): DiagnosisResult {
@@ -256,17 +319,22 @@ export class StudyService {
     }
   }
 
-  async evaluateConstructed(input: {
-    promptId: string
-    title: string
-    content: string
-  }): Promise<ConstructedEvaluation> {
+  async evaluateConstructed(
+    input: {
+      promptId: string
+      title: string
+      content: string
+      requestId?: string
+    },
+    options?: { onChunk?: (delta: string) => void; onReset?: () => void }
+  ): Promise<ConstructedEvaluation> {
     const content = input.content.trim()
     if (content.length < 20) throw new Error('作答内容过短，至少输入 20 个字符后再评估')
     const prompt = this.database.getQuestion(input.promptId)
     const config = this.ai.getConfig()
     let evaluation: ConstructedEvaluation | undefined
     let aiFailureReason = ''
+    let streamAborted = false
     if (config.hasApiKey || config.provider === 'ollama' || config.provider === 'lmstudio') {
       const stemText = prompt?.stem ?? input.title
       const questionType = classifyShenlunType(prompt?.category, stemText)
@@ -294,9 +362,20 @@ export class StudyService {
           })
         }
       ]
-      for (let attempt = 0; attempt < 2 && !evaluation; attempt += 1) {
+      for (let attempt = 0; attempt < 2 && !evaluation && !streamAborted; attempt += 1) {
+        if (attempt > 0) options?.onReset?.()
         try {
-          const result = await this.ai.ask({ purpose: 'evaluate', messages }, 90_000)
+          const result = input.requestId
+            ? await this.ai.askStream(
+                { purpose: 'evaluate', messages, requestId: input.requestId },
+                { onChunk: options?.onChunk ?? (() => {}) },
+                90_000
+              )
+            : await this.ai.ask({ purpose: 'evaluate', messages }, 90_000)
+          if ('aborted' in result && result.aborted) {
+            streamAborted = true
+            break
+          }
           const parsed = parseJsonObject(result.content)
           if (!parsed) {
             aiFailureReason = 'AI 返回结果未包含合法 JSON 结构'
@@ -330,6 +409,9 @@ export class StudyService {
           evaluation = undefined
         }
       }
+    }
+    if (streamAborted) {
+      throw new Error('已停止本次 AI 批改')
     }
     if (!evaluation) {
       evaluation = this.localEvaluation(input.promptId, content, prompt)

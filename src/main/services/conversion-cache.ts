@@ -14,7 +14,11 @@ import {
   writeFileSync
 } from 'node:fs'
 import { join } from 'node:path'
-import type { OcrQualityReport } from '../../shared/contracts'
+import type {
+  ConversionCacheEntryStat,
+  ConversionCacheStats,
+  OcrQualityReport
+} from '../../shared/contracts'
 
 export interface CachedConversion {
   markdownPath: string
@@ -65,19 +69,9 @@ function directoryBytes(path: string): number {
   }
 }
 
-export interface CacheEntryStat {
-  key: string
-  sourceName: string
-  converter: string
-  bytes: number
-  createdAt: string
-  hasImages: boolean
-}
+export type CacheEntryStat = ConversionCacheEntryStat
 
-export interface CacheStats {
-  entries: CacheEntryStat[]
-  totalBytes: number
-}
+export type CacheStats = ConversionCacheStats
 
 export class ConversionCache {
   constructor(

@@ -2,6 +2,7 @@
 // 版式假设来自实测的花生/四海/超格系题本：套标题 + 「N. 题干 + A-D 选项」+ 解析册【参考答案】标记块，
 // 或书尾「第N篇 + 1-5:BBDBC」分组答案页。
 import { createHash } from 'node:crypto'
+import { yamlQuote } from '../utils/common'
 import { extractRegionFromText } from '../../shared/region'
 import { classifyShenlunType } from '../../shared/shenlun'
 import type { PageManifest } from './source-evidence'
@@ -1033,10 +1034,6 @@ export function mergeDirectQuestions(
     offsetAdjustedSets: 0,
     aborted
   }
-}
-
-function yamlQuote(value: string): string {
-  return JSON.stringify(String(value ?? ''))
 }
 
 // 组题标识：同一来源同一套的小题共享 groupId（资料分析一组材料带 N 道连续小题）

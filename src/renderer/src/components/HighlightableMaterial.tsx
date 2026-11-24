@@ -1,5 +1,10 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { HighlighterIcon, TrashIcon } from '@phosphor-icons/react'
+import {
+  readLocalStorageJson,
+  removeLocalStorage,
+  writeLocalStorageJson
+} from '../hooks/useLocalStorageState'
 import { MarkdownContent } from './MarkdownContent'
 
 export type HighlightColor = 'yellow' | 'green' | 'blue' | 'red'
@@ -11,37 +16,38 @@ export interface MaterialHighlight {
   occurrence: number
 }
 
-const HIGHLIGHT_COLORS: Array<{ id: HighlightColor; label: string; tip: string }> = [
-  { id: 'yellow', label: '黄', tip: '黄色（问题/重点）' },
-  { id: 'green', label: '绿', tip: '绿色（做法/对策）' },
-  { id: 'blue', label: '蓝', tip: '蓝色（原因/影响）' },
-  { id: 'red', label: '红', tip: '红色（核心词/结论）' }
-]
-
-const STORAGE_PREFIX = 'tizhou:shenlun-highlights:'
-
-function readHighlights(promptId: string): MaterialHighlight[] {
-  if (!promptId) return []
-  try {
-    const raw = window.localStorage.getItem(`${STORAGE_PREFIX}${promptId}`)
-    if (!raw) return []
-    const parsed = JSON.parse(raw)
-    return Array.isArray(parsed) ? (parsed as MaterialHighlight[]) : []
-  } catch {
-    return []
-  }
+const COLOR_PRESETS: Record<
+  'shenlun' | 'xingce',
+  Array<{ id: HighlightColor; label: string; tip: string }>
+> = {
+  shenlun: [
+    { id: 'yellow', label: '黄', tip: '黄色（问题/重点）' },
+    { id: 'green', label: '绿', tip: '绿色（做法/对策）' },
+    { id: 'blue', label: '蓝', tip: '蓝色（原因/影响）' },
+    { id: 'red', label: '红', tip: '红色（核心词/结论）' }
+  ],
+  xingce: [
+    { id: 'yellow', label: '黄', tip: '黄色（中心句/关键数据）' },
+    { id: 'green', label: '绿', tip: '绿色（对策/结论）' },
+    { id: 'blue', label: '蓝', tip: '蓝色（时间/主体陷阱）' },
+    { id: 'red', label: '红', tip: '红色（转折词/绝对词）' }
+  ]
 }
 
-function writeHighlights(promptId: string, items: MaterialHighlight[]): void {
-  if (!promptId) return
-  try {
-    if (items.length === 0) {
-      window.localStorage.removeItem(`${STORAGE_PREFIX}${promptId}`)
-    } else {
-      window.localStorage.setItem(`${STORAGE_PREFIX}${promptId}`, JSON.stringify(items))
-    }
-  } catch {
-    /* 忽略本地存储受限 */
+const DEFAULT_STORAGE_PREFIX = 'tizhou:shenlun-highlights:'
+
+function readHighlights(storageKey: string): MaterialHighlight[] {
+  if (!storageKey) return []
+  const parsed = readLocalStorageJson<unknown>(storageKey, [])
+  return Array.isArray(parsed) ? (parsed as MaterialHighlight[]) : []
+}
+
+function writeHighlights(storageKey: string, items: MaterialHighlight[]): void {
+  if (!storageKey) return
+  if (items.length === 0) {
+    removeLocalStorage(storageKey)
+  } else {
+    writeLocalStorageJson(storageKey, items)
   }
 }
 
@@ -74,10 +80,13 @@ function collectTextSegments(container: HTMLElement): {
   let current = walker.nextNode()
   while (current) {
     const textNode = current as Text
-    const len = textNode.data.length
-    if (len > 0) {
-      segments.push({ node: textNode, start: offset, end: offset + len })
-      offset += len
+    // 跳过 KaTeX 公式内部与代码块文本节点，避免拆切破坏公式排版与 SVG/DOM
+    if (!textNode.parentElement?.closest('.katex, code, pre')) {
+      const len = textNode.data.length
+      if (len > 0) {
+        segments.push({ node: textNode, start: offset, end: offset + len })
+        offset += len
+      }
     }
     current = walker.nextNode()
   }
@@ -147,6 +156,9 @@ interface HighlightableMaterialProps {
   sourceFilePath?: string
   headerLeft?: React.ReactNode
   onExtract?: (excerpts: string[]) => void
+  storagePrefix?: string
+  preset?: 'shenlun' | 'xingce'
+  variant?: 'shenlun' | 'embedded' | 'inline'
 }
 
 export function HighlightableMaterial({
@@ -154,10 +166,19 @@ export function HighlightableMaterial({
   content,
   sourceFilePath,
   headerLeft,
-  onExtract
+  onExtract,
+  storagePrefix = DEFAULT_STORAGE_PREFIX,
+  preset = 'shenlun',
+  variant = 'shenlun'
 }: HighlightableMaterialProps): React.JSX.Element {
-  const containerRef = useRef<HTMLDivElement>(null)
-  const [highlights, setHighlights] = useState<MaterialHighlight[]>(() => readHighlights(promptId))
+  const storageKey = promptId ? `${storagePrefix}${promptId}` : ''
+  const colors = COLOR_PRESETS[preset]
+  const bodyRef = useRef<HTMLDivElement>(null)
+  const markdownHostRef = useRef<HTMLDivElement>(null)
+  const [prevStorageKey, setPrevStorageKey] = useState(storageKey)
+  const [highlights, setHighlights] = useState<MaterialHighlight[]>(() =>
+    readHighlights(storageKey)
+  )
   const [lastRemoved, setLastRemoved] = useState<MaterialHighlight | null>(null)
   const [activeColor, setActiveColor] = useState<HighlightColor>('yellow')
   const [brushOn, setBrushOn] = useState(false)
@@ -168,11 +189,12 @@ export function HighlightableMaterial({
     y: number
   } | null>(null)
 
-  useEffect(() => {
-    setHighlights(readHighlights(promptId))
+  if (prevStorageKey !== storageKey) {
+    setPrevStorageKey(storageKey)
+    setHighlights(readHighlights(storageKey))
     setLastRemoved(null)
     setPopover(null)
-  }, [promptId])
+  }
 
   useEffect(() => {
     if (!popover) return
@@ -185,20 +207,27 @@ export function HighlightableMaterial({
     return () => window.removeEventListener('mousedown', close)
   }, [popover])
 
-  useEffect(() => {
-    writeHighlights(promptId, highlights)
-  }, [promptId, highlights])
-
-  useEffect(() => {
-    const el = containerRef.current
+  useLayoutEffect(() => {
+    const el = markdownHostRef.current
     if (!el) return
     applyDomHighlights(el, highlights)
-  }, [content, highlights])
+    return () => {
+      unwrapHighlights(el)
+    }
+  }, [storageKey, content, highlights])
+
+  function updateHighlights(updater: (prev: MaterialHighlight[]) => MaterialHighlight[]): void {
+    setHighlights((prev) => {
+      const next = updater(prev)
+      writeHighlights(storageKey, next)
+      return next
+    })
+  }
 
   function addHighlight(text: string, occurrence: number, color: HighlightColor): void {
     const clean = text.trim()
     if (clean.length < 2) return
-    setHighlights((prev) => {
+    updateHighlights((prev) => {
       const exists = prev.find((item) => item.text === clean && item.occurrence === occurrence)
       if (exists) {
         return prev.map((item) => (item.id === exists.id ? { ...item, color } : item))
@@ -216,15 +245,26 @@ export function HighlightableMaterial({
   }
 
   function handleMouseUp(): void {
-    const container = containerRef.current
-    if (!container) return
+    const body = bodyRef.current
+    const host = markdownHostRef.current
+    if (!body || !host) return
     const sel = window.getSelection()
     if (!sel || sel.isCollapsed || sel.rangeCount === 0) {
       setPopover(null)
       return
     }
     const range = sel.getRangeAt(0)
-    if (!container.contains(range.startContainer) || !container.contains(range.endContainer)) {
+    if (!host.contains(range.startContainer) || !host.contains(range.endContainer)) {
+      setPopover(null)
+      return
+    }
+    const startEl =
+      range.startContainer instanceof Element
+        ? range.startContainer
+        : range.startContainer.parentElement
+    const endEl =
+      range.endContainer instanceof Element ? range.endContainer : range.endContainer.parentElement
+    if (startEl?.closest('.katex, code, pre') || endEl?.closest('.katex, code, pre')) {
       setPopover(null)
       return
     }
@@ -234,18 +274,29 @@ export function HighlightableMaterial({
       return
     }
 
-    // 计算选区在当前材料纯文本中的第 N 次出现
-    const preRange = document.createRange()
-    preRange.selectNodeContents(container)
-    preRange.setEnd(range.startContainer, range.startOffset)
-    const beforeText = preRange.toString()
+    // 计算选区在当前材料可见文本中的第 N 次出现（忽略 KaTeX 与代码块，保持与 applyDomHighlights 坐标一致）
+    const { fullText, segments } = collectTextSegments(host)
     let occurrence = 0
-    let pos = 0
-    while (true) {
-      const idx = beforeText.indexOf(selectedText, pos)
-      if (idx === -1) break
-      occurrence += 1
-      pos = idx + selectedText.length
+    if (fullText) {
+      let beforeText = ''
+      for (const seg of segments) {
+        if (seg.node === range.startContainer) {
+          beforeText += seg.node.data.slice(0, range.startOffset)
+          break
+        }
+        if (range.comparePoint(seg.node, 0) < 0) {
+          beforeText += seg.node.data
+        } else {
+          break
+        }
+      }
+      let pos = 0
+      while (true) {
+        const idx = beforeText.indexOf(selectedText, pos)
+        if (idx === -1) break
+        occurrence += 1
+        pos = idx + selectedText.length
+      }
     }
 
     if (brushOn) {
@@ -256,7 +307,7 @@ export function HighlightableMaterial({
     }
 
     const rect = range.getBoundingClientRect()
-    const hostRect = container.getBoundingClientRect()
+    const hostRect = body.getBoundingClientRect()
     const nearTop = rect.top - hostRect.top < 42
     setPopover({
       text: selectedText,
@@ -266,15 +317,24 @@ export function HighlightableMaterial({
         Math.min(rect.left - hostRect.left + rect.width / 2, Math.max(120, hostRect.width - 95))
       ),
       y: nearTop
-        ? rect.bottom - hostRect.top + container.scrollTop + 6
-        : rect.top - hostRect.top + container.scrollTop - 38
+        ? rect.bottom - hostRect.top + body.scrollTop + 6
+        : rect.top - hostRect.top + body.scrollTop - 38
     })
   }
 
+  const rootClass =
+    variant === 'embedded'
+      ? 'essay-material tz-material-embedded'
+      : variant === 'inline'
+        ? 'essay-material tz-material-inline'
+        : 'essay-material'
+
   return (
-    <div className="essay-material">
+    <div className={rootClass}>
       <div className="essay-material-topbar">
-        <div className="essay-material-topbar-left">{headerLeft}</div>
+        <div className="essay-material-topbar-left">
+          {headerLeft ?? (variant === 'inline' ? <span className="muted">划词重点标</span> : null)}
+        </div>
         <div className="essay-hl-toolbar" aria-label="材料勾画工具栏">
           <button
             type="button"
@@ -293,7 +353,7 @@ export function HighlightableMaterial({
             <span>{brushOn ? '连画中' : '勾画'}</span>
           </button>
           <div className="essay-hl-colors" role="group" aria-label="荧光笔颜色">
-            {HIGHLIGHT_COLORS.map((c) => (
+            {colors.map((c) => (
               <button
                 key={c.id}
                 type="button"
@@ -322,7 +382,7 @@ export function HighlightableMaterial({
               onClick={() => {
                 const item = lastRemoved
                 setLastRemoved(null)
-                setHighlights((prev) =>
+                updateHighlights((prev) =>
                   prev.some((hl) => hl.id === item.id) ? prev : [...prev, item]
                 )
               }}
@@ -336,7 +396,7 @@ export function HighlightableMaterial({
               className="essay-hl-clear"
               title="清空本题全部勾画"
               onClick={() => {
-                setHighlights([])
+                updateHighlights(() => [])
                 setLastRemoved(null)
                 setPopover(null)
               }}
@@ -350,7 +410,7 @@ export function HighlightableMaterial({
 
       <div
         className="essay-material-body"
-        ref={containerRef}
+        ref={bodyRef}
         onScroll={() => {
           if (popover) setPopover(null)
         }}
@@ -362,11 +422,9 @@ export function HighlightableMaterial({
           const sel = window.getSelection()
           if (sel && !sel.isCollapsed) return
           const hlId = mark.dataset.hlId
-          setHighlights((prev) => {
-            const targetItem = prev.find((item) => item.id === hlId) ?? null
-            if (targetItem) setLastRemoved(targetItem)
-            return prev.filter((item) => item.id !== hlId)
-          })
+          const targetItem = highlights.find((item) => item.id === hlId) ?? null
+          if (targetItem) setLastRemoved(targetItem)
+          updateHighlights((prev) => prev.filter((item) => item.id !== hlId))
         }}
       >
         {popover && (
@@ -375,7 +433,7 @@ export function HighlightableMaterial({
             style={{ left: `${popover.x}px`, top: `${popover.y}px` }}
             onMouseDown={(event) => event.preventDefault()}
           >
-            {HIGHLIGHT_COLORS.map((c) => (
+            {colors.map((c) => (
               <button
                 key={c.id}
                 type="button"
@@ -407,7 +465,13 @@ export function HighlightableMaterial({
             )}
           </div>
         )}
-        <MarkdownContent content={content} sourceFilePath={sourceFilePath} />
+        <div ref={markdownHostRef} key={`${storageKey}::${content}`}>
+          <MarkdownContent
+            className={variant === 'inline' ? 'question-stem' : undefined}
+            content={content}
+            sourceFilePath={sourceFilePath}
+          />
+        </div>
       </div>
     </div>
   )

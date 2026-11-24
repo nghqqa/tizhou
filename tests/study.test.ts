@@ -3,13 +3,22 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { buildQuestionUnits, takeUnits } from '../src/main/services/study'
+import {
+  buildQuestionUnits,
+  normalizeDataAnalysisUnits,
+  StudyService,
+  takeUnits
+} from '../src/main/services/study'
 import { DatabaseService } from '../src/main/services/database'
-import { StudyService } from '../src/main/services/study'
 import { VaultService } from '../src/main/services/vault'
 import type { Question } from '../src/shared/contracts'
 
-function question(id: string, groupId?: string, groupOrder?: number): Question {
+function question(
+  id: string,
+  groupId?: string,
+  groupOrder?: number,
+  extra: Partial<Question> = {}
+): Question {
   return {
     id,
     subject: 'xingce',
@@ -27,7 +36,8 @@ function question(id: string, groupId?: string, groupOrder?: number): Question {
     tags: [],
     contentHash: id,
     ...(groupId ? { groupId } : {}),
-    ...(groupOrder !== undefined ? { groupOrder } : {})
+    ...(groupOrder !== undefined ? { groupOrder } : {}),
+    ...extra
   }
 }
 
@@ -56,6 +66,94 @@ describe('buildQuestionUnits', () => {
     expect(units).toHaveLength(2)
     expect(units.map((unit) => unit.length).sort((x, y) => y - x)).toEqual([2, 1])
   })
+
+  it('跨模块或不同材料发生 groupId 碰撞时严格拆分为独立组', () => {
+    const da = [3, 1, 5, 2, 4].map((order) =>
+      question(`da-${order}`, 'xz-mat-collide', order, {
+        category: '资料分析',
+        material: '资料分析专属图表材料'
+      })
+    )
+    const lang = [2, 5, 1, 4, 3].map((order) =>
+      question(`yy-${order}`, 'xz-mat-collide', order, {
+        category: '言语理解与表达',
+        material: '悬泉置遗址篇章阅读材料'
+      })
+    )
+    const daOther = [1, 2, 3, 4, 5].map((order) =>
+      question(`da2-${order}`, 'xz-mat-collide', order, {
+        category: '资料分析',
+        material: '另一份资料分析材料'
+      })
+    )
+    const interleaved = [
+      da[0]!,
+      lang[0]!,
+      da[1]!,
+      lang[1]!,
+      da[2]!,
+      lang[2]!,
+      da[3]!,
+      lang[3]!,
+      da[4]!,
+      lang[4]!,
+      ...daOther
+    ]
+    const units = buildQuestionUnits(interleaved)
+    expect(units).toHaveLength(3)
+    expect(units.map((u) => u.map((q) => q.id))).toEqual([
+      ['da-1', 'da-2', 'da-3', 'da-4', 'da-5'],
+      ['yy-1', 'yy-2', 'yy-3', 'yy-4', 'yy-5'],
+      ['da2-1', 'da2-2', 'da2-3', 'da2-4', 'da2-5']
+    ])
+  })
+
+  it('无 groupId 的纯图片短材料按 papers 卷内序号连续归组为 1→5', () => {
+    const pool = [4, 2, 5, 1, 3].map((idx) =>
+      question(`oej-${idx}`, undefined, undefined, {
+        material: '![](assets/chart-1.png)',
+        paper: '2026国考',
+        papers: [{ paper: '2026国考', order: 90 + idx }]
+      })
+    )
+    const units = buildQuestionUnits(pool)
+    expect(units).toHaveLength(1)
+    expect(units[0]!.map((item) => item.id)).toEqual(['oej-1', 'oej-2', 'oej-3', 'oej-4', 'oej-5'])
+  })
+})
+
+describe('normalizeDataAnalysisUnits', () => {
+  it('超长资料分析组截锁前 5 题；存在完整 5 题套时清除全部残题，无完整套时仅豁免 builtin-* 示例题', () => {
+    const over6 = [1, 2, 3, 4, 5, 6].map((o) => question(`over-${o}`, 'g-over', o))
+    const frag2 = [1, 2].map((o) => question(`frag-${o}`, 'g-frag', o))
+    const nonDa = [question('yy-1', undefined, undefined, { category: '言语理解与表达' })]
+    const builtinDa = [question('builtin-data-001')]
+
+    const strictWithFullSet = normalizeDataAnalysisUnits([over6, frag2, nonDa, builtinDa], true)
+    expect(strictWithFullSet).toHaveLength(2)
+    expect(strictWithFullSet[0]!.map((q) => q.id)).toEqual([
+      'over-1',
+      'over-2',
+      'over-3',
+      'over-4',
+      'over-5'
+    ])
+    expect(strictWithFullSet[1]!.map((q) => q.id)).toEqual(['yy-1'])
+
+    const strictBuiltinFallback = normalizeDataAnalysisUnits([frag2, nonDa, builtinDa], true)
+    expect(strictBuiltinFallback).toHaveLength(2)
+    expect(strictBuiltinFallback[0]!.map((q) => q.id)).toEqual(['yy-1'])
+    expect(strictBuiltinFallback[1]!.map((q) => q.id)).toEqual(['builtin-data-001'])
+
+    const nonStrict = normalizeDataAnalysisUnits([over6, frag2, nonDa], false)
+    expect(nonStrict).toHaveLength(3)
+    expect(nonStrict[0]!).toHaveLength(5)
+    expect(nonStrict[1]!).toHaveLength(2)
+
+    const pureFragOnly = normalizeDataAnalysisUnits([frag2], true)
+    expect(pureFragOnly).toHaveLength(1)
+    expect(pureFragOnly[0]!).toHaveLength(2)
+  })
 })
 
 describe('takeUnits', () => {
@@ -70,19 +168,32 @@ describe('takeUnits', () => {
     const big = [1, 2, 3, 4, 5].map((order) => question(`b${order}`, 'kbg-b', order))
     const small = [question('s1'), question('s2')]
     const picked = takeUnits([big, small], 5)
-    // 大组放不进剩余 5-2=3 的位置时先跳过，小组回填，最后仍以能收的整组结尾
     expect(picked.length).toBeLessThanOrEqual(5)
     const groupIds = picked.filter((item) => item.groupId === 'kbg-b')
     if (groupIds.length > 0) {
-      // 收了组就必须整组连续且按序
       expect(groupIds.map((item) => item.id)).toEqual(['b1', 'b2', 'b3', 'b4', 'b5'])
     }
   })
 
-  it('首个单元超长时截断但不破坏连续性', () => {
-    const group = [1, 2, 3, 4, 5].map((order) => question(`g${order}`, 'kbg-a', order))
-    const picked = takeUnits([group], 3)
-    expect(picked.map((item) => item.id)).toEqual(['g1', 'g2', 'g3'])
+  it('锁定 5 题资料分析组在 count 不足 5 时也绝不截断为残缺题数', () => {
+    const daGroup = [1, 2, 3, 4, 5].map((order) => question(`g${order}`, 'kbg-a', order))
+    expect(takeUnits([daGroup], 3).map((item) => item.id)).toEqual(['g1', 'g2', 'g3', 'g4', 'g5'])
+
+    // 混合池存在可放下的非资料分析小题时，整组跳过 5 题资料分析而不破坏其完整性
+    const nonDaSingles = [1, 2, 3].map((n) => [
+      question(`n${n}`, undefined, undefined, { category: '言语理解' })
+    ])
+    expect(takeUnits([daGroup, ...nonDaSingles], 3).map((item) => item.id)).toEqual([
+      'n1',
+      'n2',
+      'n3'
+    ])
+
+    // 非资料分析多题单元仍支持按 count 截断
+    const langGroup = [1, 2, 3, 4, 5].map((order) =>
+      question(`l${order}`, 'yy-a', order, { category: '言语理解' })
+    )
+    expect(takeUnits([langGroup], 3).map((item) => item.id)).toEqual(['l1', 'l2', 'l3'])
   })
 })
 
@@ -180,6 +291,152 @@ describe('StudyService.selectPractice（抽题池与筛选）', () => {
     // 内置 8 题 + 3 道筛选种子全部进入池（列表查询默认 500 不截断本规模）
     expect(picked.length).toBeGreaterThanOrEqual(11)
     expect(picked.map((item) => item.id)).toContain('filter-q-3')
+  })
+
+  it('资料分析抽题严格锁定 5 题连续：防碰撞、去残组、截超组且随机与自适应不打乱题序', () => {
+    const vaultId = database.getActiveVault()!.id
+    const db = (
+      database as unknown as {
+        db: { prepare: (sql: string) => { run: (...v: unknown[]) => unknown } }
+      }
+    ).db
+    const insertRich = db.prepare(
+      `INSERT INTO questions(
+        id, vault_id, subject, category, type, stem, options_json, answer_json, explanation,
+        difficulty, source, paper, group_id, group_order, material, papers_json,
+        tags_json, content_hash, indexed_at
+      ) VALUES (?, ?, 'xingce', ?, 'single', ?, ?, '["A"]', '解析',
+        3, '真题测试', '2026国考', ?, ?, ?, ?, '["资料套题"]', ?, '2026-01-01')`
+    )
+    const opts = JSON.stringify([
+      { key: 'A', text: '1' },
+      { key: 'B', text: '2' }
+    ])
+    const seedRow = (
+      id: string,
+      category: string,
+      groupId: string | null,
+      groupOrder: number | null,
+      material: string | null,
+      paperOrder?: number
+    ): void => {
+      insertRich.run(
+        id,
+        vaultId,
+        category,
+        `测试题干 ${id}`,
+        opts,
+        groupId,
+        groupOrder,
+        material,
+        paperOrder ? JSON.stringify([{ paper: '2026国考', order: paperOrder }]) : null,
+        `hash-${id}`
+      )
+    }
+
+    // 1) 与言语理解碰撞同一 group_id 的 5 题资料分析
+    for (let i = 1; i <= 5; i += 1) {
+      seedRow(`col-da-${i}`, '资料分析', 'xz-mat-collide', i, '材料A：基本医保统筹基金')
+      seedRow(`col-yy-${i}`, '言语理解与表达', 'xz-mat-collide', i, '材料B：悬泉置遗址篇章阅读')
+    }
+    // 2) 超长 6 题脏组（第 6 题必须被裁剪）
+    for (let i = 1; i <= 6; i += 1) {
+      seedRow(`over-da-${i}`, '资料分析', 'da-over6', i, '材料C：超长脏组材料')
+    }
+    // 3) 无 group_id / 无 group_order 的纯图片短材料（仅靠 papers_json 保序）
+    for (let i = 1; i <= 5; i += 1) {
+      seedRow(`img-da-${i}`, '资料分析', null, null, '![](assets/chart-short.png)', 90 + i)
+    }
+    // 4) 残缺 2 题组与无材料散题（正常出题必须过滤，错题模式仍可取出）
+    seedRow('frag-da-1', '资料分析', 'da-frag2', 1, '材料D：残缺2题')
+    seedRow('frag-da-2', '资料分析', 'da-frag2', 2, '材料D：残缺2题')
+    seedRow('single-da-1', '资料分析', null, null, null)
+
+    const assertValidDaBlocks = (picked: Question[], expectedCount: number): void => {
+      expect(picked).toHaveLength(expectedCount)
+      expect(picked.every((item) => item.category === '资料分析')).toBe(true)
+      for (const item of picked) {
+        expect(item.id).not.toBe('over-da-6')
+        expect(item.id).not.toMatch(/^frag-da-/)
+        expect(item.id).not.toBe('single-da-1')
+        expect(item.id).not.toMatch(/^col-yy-/)
+      }
+      for (let start = 0; start < picked.length; start += 5) {
+        const block = picked.slice(start, start + 5)
+        expect(block).toHaveLength(5)
+        const mats = new Set(block.map((item) => item.material))
+        expect(mats.size).toBe(1)
+        const prefix = block[0]!.id.replace(/-\d+$/, '')
+        expect(block.map((item) => item.id)).toEqual(
+          [1, 2, 3, 4, 5].map((idx) => `${prefix}-${idx}`)
+        )
+      }
+    }
+
+    // 顺序训练：3 套共 15 题；若请求 7 题则锁定只返回 1 套完整 5 题，绝不凑残题
+    assertValidDaBlocks(
+      study.selectPractice({
+        mode: 'sequence',
+        count: 15,
+        feedbackMode: 'immediate',
+        filter: { category: '资料分析' }
+      }),
+      15
+    )
+    assertValidDaBlocks(
+      study.selectPractice({
+        mode: 'sequence',
+        count: 7,
+        feedbackMode: 'immediate',
+        filter: { category: '资料分析' }
+      }),
+      5
+    )
+
+    // 制造一条资料分析错题记录以触发自适应加权分支，验证随机和自适应多次抽题均 5 题连续不乱序
+    database.submitAttempt({
+      questionId: 'frag-da-1',
+      answer: ['B'],
+      durationSeconds: 10,
+      mode: 'practice'
+    })
+    for (const mode of ['random', 'adaptive'] as const) {
+      for (let round = 0; round < 15; round += 1) {
+        assertValidDaBlocks(
+          study.selectPractice({
+            mode,
+            count: 15,
+            feedbackMode: 'immediate',
+            filter: { category: '资料分析' }
+          }),
+          15
+        )
+      }
+    }
+
+    // 全库混合训练：池内存在完整 5 题资料分析套题时，全部不足 5 题的资料分析残题（含内置单题）均被严格剔除
+    const mixed = study.selectPractice({
+      mode: 'sequence',
+      count: 60,
+      feedbackMode: 'immediate',
+      filter: {}
+    })
+    expect(mixed.map((q) => q.id)).not.toContain('frag-da-1')
+    expect(mixed.map((q) => q.id)).not.toContain('single-da-1')
+    expect(mixed.map((q) => q.id)).not.toContain('builtin-data-001')
+    assertValidDaBlocks(
+      mixed.filter((q) => q.category === '资料分析'),
+      15
+    )
+
+    // 错题专项模式下仍允许精准取出单道错题（不因未满 5 题而无法复习错题）
+    const wrongPicked = study.selectPractice({
+      mode: 'random',
+      count: 10,
+      feedbackMode: 'immediate',
+      filter: { category: '资料分析', onlyWrong: true }
+    })
+    expect(wrongPicked.map((item) => item.id)).toEqual(['frag-da-1'])
   })
 })
 

@@ -1,4 +1,9 @@
 import { splitSearchTerms } from '../../../shared/search'
+import {
+  readLocalStorage,
+  removeLocalStorage,
+  writeLocalStorage
+} from '../hooks/useLocalStorageState'
 
 export interface EssayWordLimit {
   min?: number
@@ -110,22 +115,13 @@ export function formatMaterialSource(source?: string): string {
 
 /** 读取已记忆的筛选地区（页内未单独选择时回退全局默认考区） */
 export function readStoredRegion(storageKey: string, fallbackRegion = ''): string {
-  try {
-    const stored = window.localStorage.getItem(storageKey)
-    return stored !== null ? stored : fallbackRegion
-  } catch {
-    return fallbackRegion
-  }
+  return readLocalStorage(storageKey, fallbackRegion)
 }
 
 /** 持久化当前选择的筛选地区 */
 export function writeStoredRegion(storageKey: string, region: string): void {
-  try {
-    if (region) window.localStorage.setItem(storageKey, region)
-    else window.localStorage.removeItem(storageKey)
-  } catch {
-    /* 忽略受限环境下的 localStorage 写入失败 */
-  }
+  if (region) writeLocalStorage(storageKey, region)
+  else removeLocalStorage(storageKey)
 }
 
 export interface DocumentCategoryBucket {

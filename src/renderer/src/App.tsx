@@ -10,6 +10,8 @@ import {
 } from '@fluentui/react-components'
 import {
   ArrowClockwiseIcon,
+  ArrowsInSimpleIcon,
+  ArrowsOutSimpleIcon,
   BrainIcon,
   BookOpenTextIcon,
   BooksIcon,
@@ -25,6 +27,7 @@ import {
   MagnifyingGlassIcon,
   MoonIcon,
   NotePencilIcon,
+  QuestionIcon,
   RobotIcon,
   SlidersHorizontalIcon,
   SparkleIcon,
@@ -34,28 +37,31 @@ import {
   TargetIcon
 } from '@phosphor-icons/react'
 import { NavLink, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
+import type { AppUpdateStatus } from '@shared/contracts'
 import { darkTheme, lightTheme } from './theme'
 import { useAppStore } from './store'
 import { invoke } from './api'
+import { hasOpenModal, isEditableTarget, isMacPlatform } from './services/shortcuts'
 import { LoadingState } from './components/ui'
 import { CommandPalette } from './components/CommandPalette'
 import { MarkdownContent } from './components/MarkdownContent'
 import { RouteErrorBoundary } from './components/RouteErrorBoundary'
+import { ShortcutHelpDialog } from './components/ShortcutHelpDialog'
 
 const DashboardPage = lazy(() =>
   import('./pages/DashboardPage').then((module) => ({ default: module.DashboardPage }))
 )
 const PracticePage = lazy(() =>
-  import('./pages/PracticePages').then((module) => ({ default: module.PracticePage }))
+  import('./pages/practice/PracticePage').then((module) => ({ default: module.PracticePage }))
 )
 const ReviewPage = lazy(() =>
-  import('./pages/PracticePages').then((module) => ({ default: module.ReviewPage }))
+  import('./pages/practice/ReviewPage').then((module) => ({ default: module.ReviewPage }))
 )
 const ExamHomePage = lazy(() =>
-  import('./pages/ExamPages').then((module) => ({ default: module.ExamHomePage }))
+  import('./pages/exam/ExamHomePage').then((module) => ({ default: module.ExamHomePage }))
 )
 const ExamRunPage = lazy(() =>
-  import('./pages/ExamPages').then((module) => ({ default: module.ExamRunPage }))
+  import('./pages/exam/ExamRunPage').then((module) => ({ default: module.ExamRunPage }))
 )
 const ExamResultPage = lazy(() =>
   import('./pages/ExamResultPage').then((module) => ({ default: module.ExamResultPage }))
@@ -64,7 +70,7 @@ const KnowledgePage = lazy(() =>
   import('./pages/KnowledgePages').then((module) => ({ default: module.KnowledgePage }))
 )
 const KnowledgeBuilderPage = lazy(() =>
-  import('./pages/KnowledgeBuilderPage').then((module) => ({
+  import('./pages/knowledge-builder/KnowledgeBuilderPage').then((module) => ({
     default: module.KnowledgeBuilderPage
   }))
 )
@@ -72,26 +78,30 @@ const PatternsPage = lazy(() =>
   import('./pages/KnowledgePages').then((module) => ({ default: module.PatternsPage }))
 )
 const ShenlunSolutionPage = lazy(() =>
-  import('./pages/ShenlunSolutionPage').then((module) => ({ default: module.ShenlunSolutionPage }))
+  import('./pages/shenlun/ShenlunSolutionPage').then((module) => ({
+    default: module.ShenlunSolutionPage
+  }))
 )
 const ReportsPage = lazy(() =>
-  import('./pages/InsightPages').then((module) => ({ default: module.ReportsPage }))
+  import('./pages/insights/ReportsPage').then((module) => ({ default: module.ReportsPage }))
 )
 const DiagnosisPage = lazy(() =>
-  import('./pages/InsightPages').then((module) => ({ default: module.DiagnosisPage }))
+  import('./pages/insights/DiagnosisPage').then((module) => ({ default: module.DiagnosisPage }))
 )
-const AiPage = lazy(() => import('./pages/AiPages').then((module) => ({ default: module.AiPage })))
+const AiPage = lazy(() =>
+  import('./pages/ai/AiAssistantPage').then((module) => ({ default: module.AiPage }))
+)
 const AiTrainingPage = lazy(() =>
-  import('./pages/AiPages').then((module) => ({ default: module.AiTrainingPage }))
+  import('./pages/ai/AiTrainingPage').then((module) => ({ default: module.AiTrainingPage }))
 )
 const ModelSettingsPage = lazy(() =>
-  import('./pages/AiPages').then((module) => ({ default: module.ModelSettingsPage }))
+  import('./pages/ai/ModelSettingsPage').then((module) => ({ default: module.ModelSettingsPage }))
 )
 const EnvironmentPage = lazy(() =>
-  import('./pages/SettingsPages').then((module) => ({ default: module.EnvironmentPage }))
+  import('./pages/settings/EnvironmentPage').then((module) => ({ default: module.EnvironmentPage }))
 )
 const SettingsPage = lazy(() =>
-  import('./pages/SettingsPages').then((module) => ({ default: module.SettingsPage }))
+  import('./pages/settings/SettingsPage').then((module) => ({ default: module.SettingsPage }))
 )
 
 type IconComponent = ComponentType<{
@@ -153,28 +163,22 @@ function AppShell(): React.JSX.Element {
     loading,
     error,
     toast,
+    zenMode,
+    isFullscreen,
     initialize,
     refreshVault,
     clearError,
     clearToast,
-    updateSettings
+    updateSettings,
+    toggleZenMode,
+    setZenMode,
+    setFullscreen
   } = useAppStore()
   const location = useLocation()
   const navigate = useNavigate()
   const [paletteOpen, setPaletteOpen] = useState(false)
-  const [updateDialog, setUpdateDialog] = useState<{
-    open: boolean
-    checking: boolean
-    available: boolean
-    downloading: boolean
-    downloaded: boolean
-    progress?: number
-    version?: string
-    currentVersion: string
-    releaseNotes?: string
-    source?: 'cnb' | 'github'
-    error?: string
-  }>({
+  const [shortcutHelpOpen, setShortcutHelpOpen] = useState(false)
+  const [updateDialog, setUpdateDialog] = useState<AppUpdateStatus & { open: boolean }>({
     open: false,
     checking: false,
     available: false,
@@ -182,6 +186,7 @@ function AppShell(): React.JSX.Element {
     downloaded: false,
     currentVersion: ''
   })
+  const isMac = isMacPlatform()
   const isDark =
     data?.settings.theme === 'light'
       ? false
@@ -194,15 +199,51 @@ function AppShell(): React.JSX.Element {
   }
 
   useEffect(() => {
+    void invoke<boolean>({ method: 'window.fullscreen.get' })
+      .then((fullscreen) => setFullscreen(fullscreen))
+      .catch(() => {})
+    return window.workbench?.onFullscreenChanged?.((fullscreen) => {
+      setFullscreen(fullscreen)
+      setZenMode(fullscreen)
+    })
+  }, [setFullscreen, setZenMode])
+
+  useEffect(() => {
     const onGlobalKeyDown = (event: KeyboardEvent): void => {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
         event.preventDefault()
+        setShortcutHelpOpen(false)
         setPaletteOpen((value) => !value)
+        return
+      }
+      if (
+        event.altKey &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        event.key.toLowerCase() === 'z' &&
+        !hasOpenModal()
+      ) {
+        event.preventDefault()
+        toggleZenMode()
+        return
+      }
+      if (
+        event.key === '?' &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        !event.altKey &&
+        !isEditableTarget(event.target) &&
+        !paletteOpen &&
+        !updateDialog.open &&
+        (!hasOpenModal() || shortcutHelpOpen)
+      ) {
+        event.preventDefault()
+        setShortcutHelpOpen((value) => !value)
       }
     }
     window.addEventListener('keydown', onGlobalKeyDown)
     return () => window.removeEventListener('keydown', onGlobalKeyDown)
-  }, [])
+  }, [paletteOpen, shortcutHelpOpen, toggleZenMode, updateDialog.open])
 
   const updateBusyRef = useRef(false)
 
@@ -211,17 +252,7 @@ function AppShell(): React.JSX.Element {
     updateBusyRef.current = true
     setUpdateDialog((prev) => ({ ...prev, open: true, checking: true, error: undefined }))
     try {
-      const result = await invoke<{
-        available: boolean
-        downloading: boolean
-        downloaded: boolean
-        progress?: number
-        version?: string
-        releaseNotes?: string
-        error?: string
-        currentVersion: string
-        source?: 'cnb' | 'github'
-      }>({ method: 'app.update.check' })
+      const result = await invoke({ method: 'app.update.check' })
       setUpdateDialog({
         open: true,
         checking: false,
@@ -250,12 +281,7 @@ function AppShell(): React.JSX.Element {
   const startUpdateDownload = async (): Promise<void> => {
     setUpdateDialog((prev) => ({ ...prev, downloading: true, progress: 0, error: undefined }))
     const poll = window.setInterval(() => {
-      void invoke<{
-        downloading: boolean
-        downloaded: boolean
-        progress?: number
-        error?: string
-      }>({ method: 'app.update.status' })
+      void invoke({ method: 'app.update.status' })
         .then((status) => {
           setUpdateDialog((prev) => ({
             ...prev,
@@ -268,12 +294,7 @@ function AppShell(): React.JSX.Element {
         .catch(() => {})
     }, 350)
     try {
-      const dlResult = await invoke<{
-        downloaded: boolean
-        downloading: boolean
-        progress?: number
-        error?: string
-      }>({ method: 'app.update.download' })
+      const dlResult = await invoke({ method: 'app.update.download' })
       setUpdateDialog((prev) => ({
         ...prev,
         downloading: dlResult.downloading,
@@ -333,8 +354,8 @@ function AppShell(): React.JSX.Element {
   }
 
   return (
-    <div className="app-shell">
-      <aside className="sidebar">
+    <div className={`app-shell${zenMode ? ' is-zen' : ''}`}>
+      <aside className="sidebar" aria-hidden={zenMode || undefined}>
         <div className="brand">
           <div className="brand-mark" aria-hidden>
             题
@@ -352,7 +373,7 @@ function AppShell(): React.JSX.Element {
         >
           <MagnifyingGlassIcon size={14} aria-hidden />
           <span>快捷检索</span>
-          <kbd className="command-kbd">Ctrl+K</kbd>
+          <kbd className="command-kbd">{isMac ? '⌘K' : 'Ctrl+K'}</kbd>
         </button>
         <nav className="main-nav" aria-label="主导航">
           {groups.map((group) => (
@@ -384,7 +405,7 @@ function AppShell(): React.JSX.Element {
             title={isDark ? '切换到浅色模式（白天）' : '切换到深色模式（夜间）'}
             onClick={toggleTheme}
           >
-            <span className="sidebar-footer-label">{isDark ? '浅色模式' : '深色模式'}</span>
+            <span className="sidebar-footer-label">{isDark ? '浅色' : '深色'}</span>
           </Button>
           <Button
             appearance="subtle"
@@ -394,8 +415,16 @@ function AppShell(): React.JSX.Element {
             title="检查更新"
             onClick={() => void checkForUpdates()}
           >
-            <span className="sidebar-footer-label">检查更新</span>
+            <span className="sidebar-footer-label">更新</span>
           </Button>
+          <Button
+            appearance="subtle"
+            size="small"
+            icon={<QuestionIcon size={16} />}
+            aria-label="快捷键速查"
+            title="快捷键与操作速查 (?)"
+            onClick={() => setShortcutHelpOpen(true)}
+          />
         </div>
         <div className="vault-summary">
           <StatusIndicator builtin={data.vault.isBuiltin} />
@@ -415,6 +444,31 @@ function AppShell(): React.JSX.Element {
           />
         </div>
       </aside>
+      {zenMode && (
+        <div className="zen-topbar" role="toolbar" aria-label="沉浸专注控制">
+          <span className="zen-topbar-label">沉浸专注模式</span>
+          <div className="zen-topbar-actions">
+            <button
+              type="button"
+              className="zen-chip-btn"
+              title={isFullscreen ? '退出系统全屏 (F11)' : '切换系统全屏 (F11)'}
+              onClick={() => void invoke({ method: 'window.fullscreen.toggle' })}
+            >
+              <ArrowsOutSimpleIcon size={13} aria-hidden />
+              <span>{isFullscreen ? '退出全屏' : '全屏 F11'}</span>
+            </button>
+            <button
+              type="button"
+              className="zen-chip-btn"
+              title={`展开左侧导航栏 (${isMac ? '⌥Z' : 'Alt+Z'})`}
+              onClick={() => setZenMode(false)}
+            >
+              <ArrowsInSimpleIcon size={13} aria-hidden />
+              <span>退出专注 ({isMac ? '⌥Z' : 'Alt+Z'})</span>
+            </button>
+          </div>
+        </div>
+      )}
       <main className="workspace" id="main-content">
         {error && (
           <div className="global-message">
@@ -475,7 +529,10 @@ function AppShell(): React.JSX.Element {
         open={paletteOpen}
         onClose={() => setPaletteOpen(false)}
         onToggleTheme={toggleTheme}
+        onToggleZen={toggleZenMode}
+        onOpenShortcuts={() => setShortcutHelpOpen(true)}
       />
+      <ShortcutHelpDialog open={shortcutHelpOpen} onClose={() => setShortcutHelpOpen(false)} />
       {updateDialog.open && (
         <div
           className="update-modal-backdrop"

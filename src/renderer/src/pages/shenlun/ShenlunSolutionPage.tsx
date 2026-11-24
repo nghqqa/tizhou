@@ -1,15 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Button, Field, Input, Spinner, Tab, TabList } from '@fluentui/react-components'
-import {
-  ArrowLeftIcon,
-  ArrowRightIcon,
-  ClockIcon,
-  FloppyDiskIcon,
-  MagnifyingGlassIcon,
-  SparkleIcon,
-  XIcon
-} from '@phosphor-icons/react'
 import { useSearchParams } from 'react-router-dom'
+import { Button, Spinner, Tab, TabList } from '@fluentui/react-components'
+import { FloppyDiskIcon, SparkleIcon, StopIcon } from '@phosphor-icons/react'
 import type {
   ConstructedAttemptRecord,
   ConstructedDraft,
@@ -19,7 +11,6 @@ import type {
   QuestionSummary
 } from '@shared/contracts'
 import {
-  SHENLUN_QUESTION_TYPES,
   classifyShenlunType,
   formatShenlunMaterialParagraphs,
   inspectShenlunMaterialQuality,
@@ -27,54 +18,42 @@ import {
   splitShenlunMaterialBlocks,
   type ShenlunQuestionType
 } from '@shared/shenlun'
-import { formatFullDate, invoke } from '../api'
-import { HighlightableMaterial } from '../components/HighlightableMaterial'
-import { MarkdownContent } from '../components/MarkdownContent'
-import { ReadingTypographyBar, useReadingTypography } from '../components/ReadingTypographyControl'
-import { RegionCascadePicker } from '../components/RegionCascadePicker'
-import { ShenlunAnswerSheet } from '../components/ShenlunAnswerSheet'
-import { ShenlunPromptPicker } from '../components/ShenlunPromptPicker'
-import { EmptyState, ErrorState, LoadingState, PageHeader, Section } from '../components/ui'
-import { useImeSearchInput } from '../services/search-input'
+import { invoke } from '../../api'
+import { HighlightableMaterial } from '../../components/HighlightableMaterial'
+import { MarkdownContent } from '../../components/MarkdownContent'
+import { QuestionEditDialog } from '../../components/QuestionEditDialog'
+import { useReadingTypography } from '../../components/ReadingTypographyControl'
+import { ShenlunAnswerSheet } from '../../components/ShenlunAnswerSheet'
+import { EmptyState, ErrorState, LoadingState, PageHeader, Section } from '../../components/ui'
 import {
-  extractWordLimit,
-  formatMaterialSource,
-  readStoredRegion,
-  writeStoredRegion
-} from '../services/study-helpers'
-import { useAppStore } from '../store'
-
-// 下拉预览的优雅截断：压缩空白后在限长内回退到最近的句读，
-// 没有句读可退时才硬切，始终以省略号提示有下文
-function stemPreview(stem: string, max = 60): string {
-  const compact = stem.replace(/\s+/g, '')
-  if (compact.length <= max) return compact
-  const head = compact.slice(0, max)
-  const boundary = Math.max(
-    head.lastIndexOf('。'),
-    head.lastIndexOf('；'),
-    head.lastIndexOf('，'),
-    head.lastIndexOf('、')
-  )
-  return (boundary > 20 ? head.slice(0, boundary + 1) : head) + '…'
-}
-
-type ShenlunQualityFilter = 'all' | 'hide-incomplete' | 'verified'
-
-function readStoredQualityFilter(): ShenlunQualityFilter {
-  try {
-    const raw = window.localStorage.getItem('tizhou:shenlun-quality-filter')
-    if (raw === 'hide-incomplete' || raw === 'verified') return raw
-  } catch {
-    /* 忽略本地存储受限 */
-  }
-  return 'all'
-}
+  BOOLEAN_FLAG_CODEC,
+  BOOLEAN_OPT_IN_CODEC,
+  useLocalStorageState
+} from '../../hooks/useLocalStorageState'
+import {
+  cancelAiStream,
+  extractShenlunStreamPreview,
+  subscribeAiStream
+} from '../../services/ai-stream'
+import { hasOpenModal, isEditableTarget } from '../../services/shortcuts'
+import { useImeSearchInput } from '../../services/search-input'
+import { extractWordLimit, readStoredRegion, writeStoredRegion } from '../../services/study-helpers'
+import { useAppStore } from '../../store'
+import { QUALITY_FILTER_CODEC, SHEET_MODE_CODEC, type ShenlunQualityFilter } from './constants'
+import { ShenlunEvaluationPanel } from './ShenlunEvaluationPanel'
+import { ShenlunFilterBar } from './ShenlunFilterBar'
+import { ShenlunHistoryPanel } from './ShenlunHistoryPanel'
+import { ShenlunNavBar } from './ShenlunNavBar'
 
 export function ShenlunSolutionPage(): React.JSX.Element {
   const [searchParams, setSearchParams] = useSearchParams()
   const requestedPromptId = searchParams.get('promptId') ?? ''
   const defaultRegion = useAppStore((state) => state.data?.settings.defaultRegion ?? '')
+  const zenMode = useAppStore((state) => state.zenMode)
+  const toggleZenMode = useAppStore((state) => state.toggleZenMode)
+  const vault = useAppStore((state) => state.data?.vault)
+  const refreshVault = useAppStore((state) => state.refreshVault)
+  const showToast = useAppStore((state) => state.showToast)
   const [prompts, setPrompts] = useState<QuestionSummary[]>()
   const [promptId, setPromptId] = useState(requestedPromptId)
   const [currentDetail, setCurrentDetail] = useState<Question | undefined>()
@@ -93,14 +72,16 @@ export function ShenlunSolutionPage(): React.JSX.Element {
   })
   const [hasAnyPrompts, setHasAnyPrompts] = useState<boolean | null>(null)
   const [onlyUnattempted, setOnlyUnattempted] = useState(false)
-  const [qualityFilter, setQualityFilter] = useState<ShenlunQualityFilter>(readStoredQualityFilter)
-  const [officialTypography, setOfficialTypography] = useState<boolean>(() => {
-    try {
-      return window.localStorage.getItem('tizhou:shenlun-official-typography') === '1'
-    } catch {
-      return false
-    }
-  })
+  const [qualityFilter, setQualityFilter] = useLocalStorageState<ShenlunQualityFilter>(
+    'tizhou:shenlun-quality-filter',
+    'all',
+    QUALITY_FILTER_CODEC
+  )
+  const [officialTypography, setOfficialTypography] = useLocalStorageState<boolean>(
+    'tizhou:shenlun-official-typography',
+    false,
+    BOOLEAN_OPT_IN_CODEC
+  )
   const reading = useReadingTypography()
   const [content, setContent] = useState('')
   const [evaluation, setEvaluation] = useState<ConstructedEvaluation>()
@@ -110,31 +91,28 @@ export function ShenlunSolutionPage(): React.JSX.Element {
   const [view, setView] = useState<'write' | 'reference' | 'history'>('write')
   const [saving, setSaving] = useState(false)
   const [evaluating, setEvaluating] = useState(false)
+  const [streamEvalRaw, setStreamEvalRaw] = useState('')
+  const [editOpen, setEditOpen] = useState(false)
   const [error, setError] = useState('')
   const [expandedHistoryIds, setExpandedHistoryIds] = useState<Record<string, boolean>>({})
   const [materialTab, setMaterialTab] = useState<'all' | number>('all')
-  const [sheetMode, setSheetMode] = useState<'sheet' | 'plain'>(() => {
-    try {
-      return window.localStorage.getItem('tizhou:shenlun-sheet-mode') === 'plain'
-        ? 'plain'
-        : 'sheet'
-    } catch {
-      return 'sheet'
-    }
-  })
+  const [sheetMode, setSheetMode] = useLocalStorageState<'sheet' | 'plain'>(
+    'tizhou:shenlun-sheet-mode',
+    'sheet',
+    SHEET_MODE_CODEC
+  )
   const [elapsedSeconds, setElapsedSeconds] = useState(0)
-  const [showTimer, setShowTimer] = useState<boolean>(() => {
-    try {
-      return window.localStorage.getItem('tizhou:shenlun-show-timer') !== '0'
-    } catch {
-      return true
-    }
-  })
+  const [showTimer, setShowTimer] = useLocalStorageState<boolean>(
+    'tizhou:shenlun-show-timer',
+    true,
+    BOOLEAN_FLAG_CODEC
+  )
   const saveTimer = useRef<number | undefined>(undefined)
   const activePromptIdRef = useRef(promptId)
   activePromptIdRef.current = promptId
   const pendingDraftRef = useRef<{ promptId: string; title: string; content: string } | null>(null)
   const questionCacheRef = useRef(new Map<string, Question>())
+  const evalStreamCancelRef = useRef<(() => void) | null>(null)
 
   // 按题汇总已评估状态（最新得分与提交次数）
   const statusByPrompt = useMemo(() => {
@@ -251,14 +229,6 @@ export function ShenlunSolutionPage(): React.JSX.Element {
       })
   }, [])
 
-  useEffect(() => {
-    try {
-      window.localStorage.setItem('tizhou:shenlun-sheet-mode', sheetMode)
-    } catch {
-      /* 忽略本地存储受限 */
-    }
-  }, [sheetMode])
-
   const activeQuestionType = current
     ? classifyShenlunType(current.category, current.stem)
     : '单一题'
@@ -274,18 +244,6 @@ export function ShenlunSolutionPage(): React.JSX.Element {
     return () => window.clearInterval(timer)
   }, [promptId, hasActivePrompt])
 
-  function toggleTimerVisibility(): void {
-    setShowTimer((prev) => {
-      const next = !prev
-      try {
-        window.localStorage.setItem('tizhou:shenlun-show-timer', next ? '1' : '0')
-      } catch {
-        /* 忽略 */
-      }
-      return next
-    })
-  }
-
   function handleExtractToDraft(excerpts: string[]): void {
     let next = content
     let added = false
@@ -299,25 +257,6 @@ export function ShenlunSolutionPage(): React.JSX.Element {
     if (added) updateDraftContent(next)
     if (view !== 'write') setView('write')
   }
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(
-        'tizhou:shenlun-official-typography',
-        officialTypography ? '1' : '0'
-      )
-    } catch {
-      /* 忽略受限环境下的 localStorage 写入失败 */
-    }
-  }, [officialTypography])
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem('tizhou:shenlun-quality-filter', qualityFilter)
-    } catch {
-      /* 忽略本地存储受限 */
-    }
-  }, [qualityFilter])
 
   // 响应 URL 参数跳转（例如从学习报告「申论作答记录」点进复盘），评估进行中忽略外部切题
   useEffect(() => {
@@ -470,13 +409,43 @@ export function ShenlunSolutionPage(): React.JSX.Element {
     return () => {
       window.removeEventListener('beforeunload', flushNow)
       flushNow()
+      evalStreamCancelRef.current?.()
     }
   }, [])
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (hasOpenModal()) return
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
+        if (!current) return
+        event.preventDefault()
+        void saveDraft(true)
+        return
+      }
+      if (
+        event.altKey &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        !evaluating &&
+        !isEditableTarget(event.target)
+      ) {
+        if (event.key === 'ArrowLeft') {
+          event.preventDefault()
+          void goAdjacent(-1)
+        } else if (event.key === 'ArrowRight') {
+          event.preventDefault()
+          void goAdjacent(1)
+        }
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [current, evaluating, visiblePrompts, currentIndex, content])
 
   async function persistDraftSnapshot(
     snapshot: { promptId: string; title: string; content: string },
     showState = false
-  ): Promise<void> {
+  ): Promise<boolean> {
     if (showState) setSaving(true)
     try {
       await invoke({
@@ -491,25 +460,27 @@ export function ShenlunSolutionPage(): React.JSX.Element {
       if (pendingDraftRef.current === snapshot) {
         pendingDraftRef.current = null
       }
+      return true
     } catch (cause) {
       if (activePromptIdRef.current === snapshot.promptId) {
         setError(cause instanceof Error ? cause.message : '草稿保存失败')
       }
+      return false
     } finally {
       if (showState) setSaving(false)
     }
   }
 
-  async function flushPendingDraft(showState = false): Promise<void> {
+  async function flushPendingDraft(showState = false): Promise<boolean> {
     window.clearTimeout(saveTimer.current)
     const pending = pendingDraftRef.current
     if (pending) {
-      await persistDraftSnapshot(pending, showState)
-      return
+      return persistDraftSnapshot(pending, showState)
     }
     if (showState && promptId && current) {
-      await persistDraftSnapshot({ promptId, title: current.stem.slice(0, 40), content }, true)
+      return persistDraftSnapshot({ promptId, title: current.stem.slice(0, 40), content }, true)
     }
+    return false
   }
 
   function updateDraftContent(nextContent: string): void {
@@ -524,7 +495,10 @@ export function ShenlunSolutionPage(): React.JSX.Element {
   }
 
   async function saveDraft(showState = true): Promise<void> {
-    await flushPendingDraft(showState)
+    const ok = await flushPendingDraft(showState)
+    if (ok && showState) {
+      showToast('草稿已保存')
+    }
   }
 
   async function switchPrompt(nextId: string): Promise<void> {
@@ -555,12 +529,25 @@ export function ShenlunSolutionPage(): React.JSX.Element {
   }
 
   async function evaluate(): Promise<void> {
-    if (!current) return
+    if (!current || evaluating) return
     const targetPromptId = current.id
     const targetTitle = current.stem.slice(0, 40)
     const targetContent = content
+    const requestId =
+      typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+        ? crypto.randomUUID()
+        : `eval-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
     setEvaluating(true)
+    setStreamEvalRaw('')
     setError('')
+    const unsubscribe = subscribeAiStream(requestId, (accumulated) => {
+      if (activePromptIdRef.current === targetPromptId) {
+        setStreamEvalRaw(accumulated)
+      }
+    })
+    evalStreamCancelRef.current = () => {
+      void cancelAiStream(requestId)
+    }
     try {
       await flushPendingDraft(false)
       await persistDraftSnapshot(
@@ -569,7 +556,12 @@ export function ShenlunSolutionPage(): React.JSX.Element {
       )
       const result = await invoke<ConstructedEvaluation>({
         method: 'constructed.evaluate',
-        params: { promptId: targetPromptId, title: targetTitle, content: targetContent }
+        params: {
+          promptId: targetPromptId,
+          title: targetTitle,
+          content: targetContent,
+          requestId
+        }
       })
       const [history] = await Promise.all([
         activePromptIdRef.current === targetPromptId
@@ -587,9 +579,17 @@ export function ShenlunSolutionPage(): React.JSX.Element {
       }
     } catch (cause) {
       if (activePromptIdRef.current === targetPromptId) {
-        setError(cause instanceof Error ? cause.message : '评估失败')
+        const msg = cause instanceof Error ? cause.message : '评估失败'
+        if (msg.includes('已停止')) {
+          showToast('已停止本次 AI 批改')
+        } else {
+          setError(msg)
+        }
       }
     } finally {
+      unsubscribe()
+      evalStreamCancelRef.current = null
+      setStreamEvalRaw('')
       setEvaluating(false)
     }
   }
@@ -673,145 +673,88 @@ export function ShenlunSolutionPage(): React.JSX.Element {
             >
               {saving ? '保存中' : '保存草稿'}
             </Button>
-            <Button
-              appearance="primary"
-              icon={<SparkleIcon />}
-              disabled={evaluating || !current}
-              onClick={() => void evaluate()}
-            >
-              {evaluating ? '评估中' : '提交评估'}
-            </Button>
+            {evaluating ? (
+              <Button
+                appearance="secondary"
+                icon={<StopIcon weight="fill" />}
+                onClick={() => evalStreamCancelRef.current?.()}
+              >
+                停止批改
+              </Button>
+            ) : (
+              <Button
+                appearance="primary"
+                icon={<SparkleIcon />}
+                disabled={!current}
+                onClick={() => void evaluate()}
+              >
+                提交评估
+              </Button>
+            )}
           </>
         }
       />
       {error && <ErrorState message={error} />}
+      {evaluating &&
+        (() => {
+          const streamPreview = extractShenlunStreamPreview(streamEvalRaw)
+          return (
+            <Section className="shenlun-stream-card">
+              <div className="shenlun-stream-head">
+                <div className="button-row">
+                  <Spinner size="tiny" label="正在评估答案（AI 实时批改）" />
+                  {streamPreview.chars > 0 && (
+                    <span className="pill">已接收 {streamPreview.chars} 字</span>
+                  )}
+                  {streamPreview.score !== undefined && (
+                    <span className="pill">暂估得分 {streamPreview.score}</span>
+                  )}
+                </div>
+                <Button
+                  size="small"
+                  appearance="secondary"
+                  icon={<StopIcon weight="fill" />}
+                  onClick={() => evalStreamCancelRef.current?.()}
+                >
+                  停止生成
+                </Button>
+              </div>
+              {streamPreview.snippet && (
+                <div className="shenlun-stream-preview">
+                  <span>{streamPreview.snippet}</span>
+                  <span className="ai-stream-cursor" aria-hidden="true" />
+                </div>
+              )}
+            </Section>
+          )
+        })()}
       <Section>
-        <div className="shenlun-filter-grid">
-          <Field label="地区 / 分类">
-            <RegionCascadePicker
-              regions={regions}
-              regionCounts={regionCounts}
-              value={region}
-              disabled={evaluating}
-              items={(visiblePrompts ?? []).map((prompt) => {
-                const status = statusByPrompt.get(prompt.id)
-                const metaParts = [
-                  prompt.region,
-                  prompt.year ? `${prompt.year}年` : '',
-                  classifyShenlunType(prompt.category, prompt.stemPreview),
-                  prompt.source ? formatMaterialSource(prompt.source) : '',
-                  status ? `已评 ${status.latestScore} 分` : ''
-                ].filter(Boolean)
-                return {
-                  id: prompt.id,
-                  label: stemPreview(prompt.stemPreview, 42),
-                  meta: metaParts.join(' · ')
-                }
-              })}
-              selectedItemId={promptId}
-              onChange={(nextRegion, _paper, nextPromptId) => {
-                if (nextRegion !== region) {
-                  setRegion(nextRegion)
-                  writeStoredRegion('tizhou:shenlun-region', nextRegion)
-                }
-                if (nextPromptId) void switchPrompt(nextPromptId)
-              }}
-            />
-          </Field>
-          <Field className="grow" label="搜索题目">
-            <Input
-              value={search.value}
-              disabled={evaluating}
-              contentBefore={<MagnifyingGlassIcon />}
-              contentAfter={
-                search.value ? (
-                  <button
-                    type="button"
-                    className="search-clear-btn"
-                    aria-label="清除搜索关键词"
-                    disabled={evaluating}
-                    onMouseDown={(event) => event.preventDefault()}
-                    onClick={() => search.clear()}
-                  >
-                    <XIcon size={13} />
-                  </button>
-                ) : undefined
-              }
-              onChange={(event, data) => search.handleChange(data.value, event.nativeEvent)}
-              onCompositionStart={search.handleCompositionStart}
-              onCompositionEnd={search.handleCompositionEnd}
-              onKeyDown={search.handleKeyDown}
-              placeholder="按题干、材料、卷名或年份搜索（空格分隔多词）"
-            />
-          </Field>
-          <Field className="grow" label="选择题目">
-            <ShenlunPromptPicker
-              prompts={visiblePrompts ?? []}
-              value={promptId}
-              statusByPrompt={statusByPrompt}
-              disabled={evaluating || !totalVisible}
-              onSelect={(id) => void switchPrompt(id)}
-            />
-          </Field>
-        </div>
-        <div className="shenlun-chip-strip">
-          <div className="shenlun-type-bar" role="tablist" aria-label="申论题型分类">
-            <button
-              type="button"
-              role="tab"
-              aria-selected={shenlunType === ''}
-              className={`shenlun-type-chip${shenlunType === '' ? ' is-active' : ''}`}
-              disabled={evaluating}
-              onClick={() => setShenlunType('')}
-            >
-              全部题型 ({qualityFilteredPrompts?.length ?? prompts.length})
-            </button>
-            {SHENLUN_QUESTION_TYPES.map((kind) => (
-              <button
-                key={kind}
-                type="button"
-                role="tab"
-                aria-selected={shenlunType === kind}
-                className={`shenlun-type-chip${shenlunType === kind ? ' is-active' : ''}`}
-                disabled={evaluating}
-                onClick={() => setShenlunType(kind)}
-              >
-                {kind} ({typeCounts[kind]})
-              </button>
-            ))}
-          </div>
-          <span className="shenlun-chip-divider" aria-hidden="true" />
-          <div className="shenlun-quality-bar" role="group" aria-label="材料完整度筛选">
-            <span className="shenlun-quality-label">材料完整度：</span>
-            <button
-              type="button"
-              aria-pressed={qualityFilter === 'all'}
-              className={`shenlun-quality-chip${qualityFilter === 'all' ? ' is-active' : ''}`}
-              disabled={evaluating}
-              onClick={() => void selectQualityFilter('all')}
-            >
-              全部材料 ({qualityCounts.all})
-            </button>
-            <button
-              type="button"
-              aria-pressed={qualityFilter === 'hide-incomplete'}
-              className={`shenlun-quality-chip${qualityFilter === 'hide-incomplete' ? ' is-active' : ''}`}
-              disabled={evaluating}
-              onClick={() => void selectQualityFilter('hide-incomplete')}
-            >
-              隐藏残缺 ({qualityCounts.cleanable})
-            </button>
-            <button
-              type="button"
-              aria-pressed={qualityFilter === 'verified'}
-              className={`shenlun-quality-chip${qualityFilter === 'verified' ? ' is-active' : ''}`}
-              disabled={evaluating}
-              onClick={() => void selectQualityFilter('verified')}
-            >
-              精校带解析 ({qualityCounts.verified})
-            </button>
-          </div>
-        </div>
+        <ShenlunFilterBar
+          regions={regions}
+          regionCounts={regionCounts}
+          region={region}
+          promptId={promptId}
+          promptsCount={prompts.length}
+          qualityFilteredCount={qualityFilteredPrompts?.length}
+          visiblePrompts={visiblePrompts ?? []}
+          statusByPrompt={statusByPrompt}
+          search={search}
+          shenlunType={shenlunType}
+          typeCounts={typeCounts}
+          qualityFilter={qualityFilter}
+          qualityCounts={qualityCounts}
+          evaluating={evaluating}
+          onRegionOrPromptChange={(nextRegion, nextPromptId) => {
+            if (nextRegion !== region) {
+              setRegion(nextRegion)
+              writeStoredRegion('tizhou:shenlun-region', nextRegion)
+            }
+            if (nextPromptId) void switchPrompt(nextPromptId)
+          }}
+          onSelectPrompt={(id) => void switchPrompt(id)}
+          onSelectType={setShenlunType}
+          onSelectQualityFilter={(filter) => void selectQualityFilter(filter)}
+        />
         {prompts.length === 0 ? (
           loadingPrompts ? (
             <LoadingState label="正在检索申论题目" />
@@ -856,144 +799,31 @@ export function ShenlunSolutionPage(): React.JSX.Element {
           )
         ) : (
           <>
-            <div className="solution-nav-bar">
-              <div className="question-meta">
-                {(current?.region ?? currentSummary?.region) && (
-                  <span className="pill">{current?.region ?? currentSummary?.region}</span>
-                )}
-                {(() => {
-                  const summaryOrDetail = current ?? currentSummary
-                  if (!summaryOrDetail) return null
-                  const kind = classifyShenlunType(
-                    summaryOrDetail.category,
-                    current?.stem ?? currentSummary?.stemPreview
-                  )
-                  return (
-                    <>
-                      <span className="pill">{kind}</span>
-                      {(current?.year ?? currentSummary?.year) && (
-                        <span className="pill">{current?.year ?? currentSummary?.year}</span>
-                      )}
-                      {(() => {
-                        const paperName = (current?.paper ?? currentSummary?.paper ?? '').trim()
-                        const rawSource = current?.source ?? currentSummary?.source ?? ''
-                        const sourceLabel = formatMaterialSource(rawSource)
-                        const showSource = Boolean(
-                          sourceLabel &&
-                          sourceLabel !== paperName &&
-                          !paperName.includes(sourceLabel)
-                        )
-                        return (
-                          <>
-                            {paperName && <span className="pill">{paperName}</span>}
-                            {showSource && (
-                              <span className="pill" title={rawSource}>
-                                教材来源：{sourceLabel}
-                              </span>
-                            )}
-                          </>
-                        )
-                      })()}
-                      {summaryOrDetail.category && summaryOrDetail.category !== kind && (
-                        <span className="pill">{summaryOrDetail.category}</span>
-                      )}
-                    </>
-                  )
-                })()}
-                {(current ?? currentSummary) && (
-                  <span className="pill">难度 {(current ?? currentSummary)!.difficulty}</span>
-                )}
-                {currentQuality?.level === 'verified' && (
-                  <span className="pill is-verified">完整精校</span>
-                )}
-                {currentQuality?.level === 'incomplete' && (
-                  <span
-                    className="pill is-warning"
-                    title={
-                      currentQuality.issues.length > 0
-                        ? `检测到：${currentQuality.issues.join('、')}`
-                        : '材料存在提取残缺'
-                    }
-                  >
-                    材料有残缺
-                  </span>
-                )}
-                {currentStatus && (
-                  <span className="pill is-evaluated">
-                    已评 {currentStatus.count} 次 · 最新 {currentStatus.latestScore} 分
-                  </span>
-                )}
-              </div>
-              <div className="solution-nav-actions">
-                {(() => {
-                  const overtimeThreshold = activeQuestionType === '作文题' ? 3600 : 1200
-                  const timerText = `${String(Math.floor(elapsedSeconds / 60)).padStart(2, '0')}:${String(elapsedSeconds % 60).padStart(2, '0')}`
-                  return (
-                    <button
-                      type="button"
-                      className={`practice-timer${showTimer && elapsedSeconds >= overtimeThreshold ? ' is-overtime' : ''}`}
-                      title={
-                        showTimer
-                          ? `单题建议用时 ${activeQuestionType === '作文题' ? '60' : '20'} 分钟（点击隐藏计时）`
-                          : '点击显示单题计时'
-                      }
-                      onClick={toggleTimerVisibility}
-                    >
-                      <ClockIcon size={12} />
-                      {showTimer ? timerText : '计时已隐藏'}
-                    </button>
-                  )
-                })()}
-                <ReadingTypographyBar
-                  contextLabel="申论阅读"
-                  typography={reading.typography}
-                  onUpdate={reading.update}
-                  onStepScale={reading.stepScale}
-                  onResetScale={reading.resetScale}
-                />
-                <Button
-                  size="small"
-                  appearance={officialTypography ? 'primary' : 'outline'}
-                  aria-pressed={officialTypography}
-                  title="按党政机关公文排版习惯（仿宋正文、黑体/楷体标题、首行缩进）呈现材料与作答"
-                  onClick={() => setOfficialTypography((value) => !value)}
-                >
-                  公文体
-                </Button>
-                <Button
-                  size="small"
-                  appearance={onlyUnattempted ? 'primary' : 'outline'}
-                  disabled={evaluating}
-                  onClick={() => void toggleOnlyUnattempted()}
-                >
-                  {onlyUnattempted ? '显示全部题目' : '只看未做'}
-                </Button>
-                <div className="solution-pager">
-                  <Button
-                    size="small"
-                    icon={<ArrowLeftIcon />}
-                    disabled={evaluating || !hasPrev}
-                    onClick={() => void goAdjacent(-1)}
-                  >
-                    上一题
-                  </Button>
-                  {totalVisible > 0 && currentIndex >= 0 && (
-                    <span className="solution-pager-count">
-                      {currentIndex + 1} / {totalVisible}
-                    </span>
-                  )}
-                  <Button
-                    size="small"
-                    icon={<ArrowRightIcon />}
-                    iconPosition="after"
-                    disabled={evaluating || !hasNext}
-                    onClick={() => void goAdjacent(1)}
-                  >
-                    下一题
-                  </Button>
-                </div>
-              </div>
-            </div>
+            <ShenlunNavBar
+              current={current}
+              currentSummary={currentSummary}
+              currentQuality={currentQuality}
+              currentStatus={currentStatus}
+              activeQuestionType={activeQuestionType}
+              elapsedSeconds={elapsedSeconds}
+              showTimer={showTimer}
+              reading={reading}
+              officialTypography={officialTypography}
+              onlyUnattempted={onlyUnattempted}
+              evaluating={evaluating}
+              hasPrev={hasPrev}
+              hasNext={hasNext}
+              currentIndex={currentIndex}
+              totalVisible={totalVisible}
+              zenMode={zenMode}
+              canEdit={Boolean(!vault?.isBuiltin && current?.filePath)}
+              onToggleTimer={() => setShowTimer((prev) => !prev)}
+              onToggleOfficialTypography={() => setOfficialTypography((value) => !value)}
+              onToggleOnlyUnattempted={() => void toggleOnlyUnattempted()}
+              onToggleZenMode={toggleZenMode}
+              onOpenEdit={() => setEditOpen(true)}
+              onGoAdjacent={(delta) => void goAdjacent(delta)}
+            />
             <div
               ref={reading.surfaceRef}
               className={`essay-columns question-reading-surface${officialTypography ? ' is-official-doc' : ''}`}
@@ -1171,116 +1001,65 @@ export function ShenlunSolutionPage(): React.JSX.Element {
                     />
                   </div>
                 ) : (
-                  <div className="answer-panel">
-                    {promptHistory.length === 0 ? (
-                      <p className="muted">
-                        本题尚无评估记录，提交评估后会在此保留每次作答与点评。
-                      </p>
-                    ) : (
-                      <div className="solution-history-list">
-                        {promptHistory.map((record, index) => {
-                          const active = record.id === selectedHistoryId
-                          const trimmed = record.content.trim()
-                          const wordCount = record.content.replace(/\s/g, '').length
-                          const canExpand = trimmed.length > 140 || trimmed.split('\n').length > 4
-                          const expanded = Boolean(expandedHistoryIds[record.id])
-                          return (
-                            <div
-                              key={record.id}
-                              className={`solution-history-item${active ? ' is-active' : ''}`}
-                            >
-                              <div className="solution-history-head">
-                                <div>
-                                  <strong>
-                                    第 {promptHistory.length - index} 次 · {record.evaluation.score}{' '}
-                                    分
-                                  </strong>
-                                  <span className="solution-history-meta">
-                                    {formatFullDate(record.createdAt)} · {wordCount} 字 ·{' '}
-                                    {record.evaluation.provider}
-                                  </span>
-                                </div>
-                                <div className="solution-history-actions">
-                                  <Button
-                                    size="small"
-                                    appearance={active ? 'primary' : 'subtle'}
-                                    onClick={() => {
-                                      setEvaluation(record.evaluation)
-                                      setSelectedHistoryId(record.id)
-                                    }}
-                                  >
-                                    {active ? '查看中' : '查看点评'}
-                                  </Button>
-                                  <Button
-                                    size="small"
-                                    disabled={evaluating}
-                                    onClick={() => loadHistoryDraft(record)}
-                                  >
-                                    载入修改
-                                  </Button>
-                                </div>
-                              </div>
-                              <p
-                                className={`solution-history-preview${expanded ? ' is-expanded' : ''}`}
-                              >
-                                {trimmed || '（空作答）'}
-                              </p>
-                              {canExpand && (
-                                <button
-                                  type="button"
-                                  className="solution-history-expand"
-                                  onClick={() =>
-                                    setExpandedHistoryIds((prev) => ({
-                                      ...prev,
-                                      [record.id]: !prev[record.id]
-                                    }))
-                                  }
-                                >
-                                  {expanded ? '收起全文' : '展开全文'}
-                                </button>
-                              )}
-                            </div>
-                          )
-                        })}
-                      </div>
-                    )}
-                  </div>
+                  <ShenlunHistoryPanel
+                    promptHistory={promptHistory}
+                    selectedHistoryId={selectedHistoryId}
+                    expandedHistoryIds={expandedHistoryIds}
+                    evaluating={evaluating}
+                    onSelectEvaluation={(record) => {
+                      setEvaluation(record.evaluation)
+                      setSelectedHistoryId(record.id)
+                    }}
+                    onLoadDraft={loadHistoryDraft}
+                    onToggleExpand={(recordId) =>
+                      setExpandedHistoryIds((prev) => ({
+                        ...prev,
+                        [recordId]: !prev[recordId]
+                      }))
+                    }
+                  />
                 )}
               </div>
             </div>
           </>
         )}
       </Section>
-      {evaluating && (
-        <Section>
-          <Spinner label="正在评估答案" />
-        </Section>
-      )}
-      {current && evaluation && (
-        <Section
-          title={`评估结果：${evaluation.score} 分`}
-          description={`${evaluation.provider} · ${formatFullDate(evaluation.createdAt)}`}
-        >
-          <div className="grid three">
-            {evaluation.dimensions.map((dimension) => (
-              <div className="stat eval-dim-card" key={dimension.name}>
-                <span>{dimension.name}</span>
-                <strong>{dimension.score}</strong>
-                <small>{dimension.comment}</small>
-              </div>
-            ))}
-          </div>
-          <div className="answer-panel">
-            <h3>综合反馈</h3>
-            <p>{evaluation.summary}</p>
-            <ol>
-              {evaluation.suggestions.map((suggestion) => (
-                <li key={suggestion}>{suggestion}</li>
-              ))}
-            </ol>
-          </div>
-        </Section>
-      )}
+      {current && evaluation && <ShenlunEvaluationPanel evaluation={evaluation} />}
+      <QuestionEditDialog
+        question={current ?? null}
+        open={editOpen}
+        onClose={() => setEditOpen(false)}
+        onSaved={(updated) => {
+          questionCacheRef.current.set(updated.id, updated)
+          setCurrentDetail(updated)
+          const quality = inspectShenlunMaterialQuality(updated.material, {
+            explanation: updated.explanation
+          })
+          setPrompts((prev) =>
+            prev?.map((item) =>
+              item.id === updated.id
+                ? {
+                    ...item,
+                    category: updated.category,
+                    difficulty: updated.difficulty,
+                    stemPreview: updated.stem.slice(0, 120),
+                    hasReferenceAnswer: quality.hasReferenceAnswer,
+                    materialQuality: quality.level,
+                    materialIssues: quality.issues
+                  }
+                : item
+            )
+          )
+          if (
+            typeof materialTab === 'number' &&
+            splitShenlunMaterialBlocks(updated.material ?? '').length <= materialTab
+          ) {
+            setMaterialTab('all')
+          }
+          void refreshVault()
+          showToast('勘误已保存并重新索引')
+        }}
+      />
     </div>
   )
 }
