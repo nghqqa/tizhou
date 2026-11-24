@@ -5,10 +5,12 @@ import type {
   LearningPlan,
   LearningPlanItem,
   PracticeSelection,
-  Question
+  Question,
+  QuestionFilter
 } from '../../shared/contracts'
 import { FEATURE_PROMPTS, taskDataEnvelope } from '../../shared/prompts'
 import { classifyShenlunType } from '../../shared/shenlun'
+import { expandCategoryAliases } from '../../shared/study-constants'
 import { AiService } from './ai'
 import { DatabaseService } from './database'
 import { clamp, now, sha256Hex } from '../utils/common'
@@ -216,6 +218,37 @@ export class StudyService {
     return takeUnits(shuffled(units), count)
   }
 
+  /** 按模块配比组合模考试卷（如国考 130 / 省考 120 / 高频冲刺预设）；
+   *  资料分析同样经 selectPractice 走整套 5 题连续锁死保护，并自动兼容不同题库模块别名 */
+  selectExamByQuotas(
+    quotas: Array<{ category: string; count: number }>,
+    filter: QuestionFilter = {}
+  ): Question[] {
+    const picked: Question[] = []
+    const seenIds = new Set<string>()
+    for (const quota of quotas) {
+      const want = clamp(Math.round(quota.count), 1, 100)
+      const aliases = expandCategoryAliases(quota.category)
+      const scopedFilter: QuestionFilter = {
+        ...filter,
+        subject: 'xingce',
+        category: aliases.length === 1 ? aliases[0] : undefined,
+        categories: aliases.length > 1 ? aliases : undefined
+      }
+      const chunk = this.selectPractice({
+        mode: 'random',
+        count: want,
+        filter: scopedFilter
+      })
+      for (const q of chunk) {
+        if (seenIds.has(q.id)) continue
+        seenIds.add(q.id)
+        picked.push(q)
+      }
+    }
+    return picked
+  }
+
   getDiagnosis(): DiagnosisResult {
     const report = this.database.getReport('all')
     const categories = report.categoryStats.filter((item) => item.attempts > 0)
@@ -283,27 +316,38 @@ export class StudyService {
         day,
         type: 'read_knowledge',
         title: `阅读：${category}核心方法`,
+        category,
         target: Math.max(10, Math.round(dailyMinutes * 0.25)),
         completed: 0,
-        done: false
+        done: false,
+        route: /申论|公文|写作|概括|对策|贯彻/.test(category)
+          ? '/thinking/shenlun'
+          : '/thinking/xingce'
       })
       items.push({
         id: randomUUID(),
         day,
         type: 'official_practice',
         title: `专项训练：${category}`,
+        category,
         target: practiceTarget,
         completed: 0,
-        done: false
+        done: false,
+        route:
+          category === '综合能力'
+            ? `/practice?mode=adaptive&count=${practiceTarget}`
+            : `/practice?mode=adaptive&count=${practiceTarget}&category=${encodeURIComponent(category)}`
       })
       items.push({
         id: randomUUID(),
         day,
         type: day % 3 === 0 ? 'ai_variant' : 'official_review',
         title: day % 3 === 0 ? `变式训练：${category}` : '到期错题复习',
+        category: day % 3 === 0 ? category : undefined,
         target: day % 3 === 0 ? 3 : 5,
         completed: 0,
-        done: false
+        done: false,
+        route: day % 3 === 0 ? '/ai-training' : '/review'
       })
     }
     return {

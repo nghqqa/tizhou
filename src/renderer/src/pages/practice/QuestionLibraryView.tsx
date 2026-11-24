@@ -35,6 +35,7 @@ export function QuestionLibraryView({
   const [categories, setCategories] = useState<Category[]>([])
   const [category, setCategory] = useState('')
   const [wrongCause, setWrongCause] = useState('')
+  const [stubbornOnly, setStubbornOnly] = useState(false)
   const search = useImeSearchInput({ delayMs: 200 })
   const activeQuery = search.debouncedValue.trim()
   const [expandedId, setExpandedId] = useState('')
@@ -56,7 +57,7 @@ export function QuestionLibraryView({
 
   useEffect(() => {
     setPage(1)
-  }, [tab, category, wrongCause, activeQuery])
+  }, [tab, category, wrongCause, stubbornOnly, activeQuery])
 
   useEffect(() => {
     let cancelled = false
@@ -68,6 +69,7 @@ export function QuestionLibraryView({
         category: category || undefined,
         wrongCause: tab === 'wrong' && wrongCause ? wrongCause : undefined,
         query: activeQuery || undefined,
+        minWrongCount: tab === 'wrong' && stubbornOnly ? 2 : undefined,
         limit: 200
       }
     })
@@ -88,7 +90,7 @@ export function QuestionLibraryView({
     return () => {
       cancelled = true
     }
-  }, [tab, category, wrongCause, activeQuery])
+  }, [tab, category, wrongCause, stubbornOnly, activeQuery])
 
   async function toggleFavoriteItem(item: QuestionLibraryItem): Promise<void> {
     const nextFav = !item.favorite
@@ -258,17 +260,24 @@ export function QuestionLibraryView({
           </Select>
         </Field>
         {tab === 'wrong' && (
-          <Field label="错因筛选">
-            <Select value={wrongCause} onChange={(_, data) => setWrongCause(data.value)}>
-              <option value="">全部错因</option>
-              {WRONG_CAUSE_OPTIONS.map((cause) => (
-                <option key={cause} value={cause}>
-                  {cause}
-                </option>
-              ))}
-              <option value="未标注">未标注</option>
-            </Select>
-          </Field>
+          <>
+            <Field label="错因筛选">
+              <Select value={wrongCause} onChange={(_, data) => setWrongCause(data.value)}>
+                <option value="">全部错因</option>
+                {WRONG_CAUSE_OPTIONS.map((cause) => (
+                  <option key={cause} value={cause}>
+                    {cause}
+                  </option>
+                ))}
+                <option value="未标注">未标注</option>
+              </Select>
+            </Field>
+            <Checkbox
+              label="仅看顽固错题（错≥2次）"
+              checked={stubbornOnly}
+              onChange={(_, data) => setStubbornOnly(Boolean(data.checked))}
+            />
+          </>
         )}
       </div>
       {error && <ErrorState message={error} />}
@@ -292,7 +301,11 @@ export function QuestionLibraryView({
                       <span className="pill">{q.category}</span>
                       <span className="pill">难度 {q.difficulty}</span>
                       {item.wrongCount > 0 && (
-                        <span className="pill warning">错 {item.wrongCount} 次</span>
+                        <span className={`pill ${item.wrongCount >= 2 ? 'negative' : 'warning'}`}>
+                          {item.wrongCount >= 2
+                            ? `顽固 ×${item.wrongCount}`
+                            : `错 ${item.wrongCount} 次`}
+                        </span>
                       )}
                       {item.lastWrongCause && <span className="pill">{item.lastWrongCause}</span>}
                       {item.dueAt && <span className="pill">复习 {formatDate(item.dueAt)}</span>}

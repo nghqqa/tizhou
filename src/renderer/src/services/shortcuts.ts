@@ -52,6 +52,7 @@ const PRACTICE_GROUP: ShortcutGroup = {
     { keys: ['A–H', '1–8'], description: '快速选中对应客观题选项（极速模式下选即提交）' },
     { keys: ['右键选项'], description: '给选项加/去排除划线标记' },
     { keys: ['Enter'], description: '提交当前题目作答' },
+    { keys: ['1–4'], description: '提交看解析后直接按记忆熟练度打分（重来 / 困难 / 掌握 / 轻松）' },
     { keys: ['N'], description: '提交查看解析后进入下一题' },
     { keys: ['← / →'], description: '在上一题 / 下一题之间切换' },
     { keys: ['U'], description: '标记 / 取消「不确定待复查」' },
@@ -98,6 +99,18 @@ const SCRATCHPAD_GROUP: ShortcutGroup = {
   ]
 }
 
+const FLASHCARD_GROUP: ShortcutGroup = {
+  id: 'flashcard',
+  title: '主动回忆闪卡（知识中心弹窗内）',
+  items: [
+    { keys: ['Space'], description: '翻转当前闪卡（题面 ⇄ 参考答案）' },
+    { keys: ['1'], description: '没记牢，插回队尾稍后再背' },
+    { keys: ['2'], description: '已记住，计入本轮掌握数' },
+    { keys: ['← / →'], description: '切换上一张 / 下一张闪卡' },
+    { keys: ['Esc'], description: '关闭闪卡自测弹窗' }
+  ]
+}
+
 function adaptKeyForPlatform(key: string, isMac: boolean): string {
   if (!isMac) return key
   if (key === 'Ctrl') return '⌘'
@@ -139,6 +152,7 @@ export function getContextualShortcuts(
     SHENLUN_GROUP,
     AI_GROUP,
     SCRATCHPAD_GROUP,
+    FLASHCARD_GROUP,
     GLOBAL_GROUP
   ].map((group) => adaptGroupForPlatform(group, isMac))
   const currentGroup = currentId ? (all.find((g) => g.id === currentId) ?? null) : null

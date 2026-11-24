@@ -24,6 +24,7 @@ import {
   Stat
 } from '../../components/ui'
 import { useAppStore } from '../../store'
+import { EfficiencyQuadrantChart } from './EfficiencyQuadrantChart'
 
 export function ReportsPage(): React.JSX.Element {
   const navigate = useNavigate()
@@ -212,6 +213,7 @@ export function ReportsPage(): React.JSX.Element {
                   </ResponsiveContainer>
                 </div>
               </Section>
+              <EfficiencyQuadrantChart categoryStats={report.categoryStats} />
               <div className="grid two">
                 <Section title="模块表现">
                   <table className="report-table">

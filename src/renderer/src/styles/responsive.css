@@ -25,7 +25,9 @@
   }
 }
 @media (max-width: 640px) {
-  .builder-options {
+  .builder-options,
+  .warmup-options,
+  .exam-preset-grid {
     grid-template-columns: 1fr;
   }
 }
@@ -165,6 +167,9 @@
 }
 
 @media (max-width: 1080px) {
+  .exam-preset-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
   .material-split-layout,
   .formula-cheat-card,
   .ai-chat-layout {

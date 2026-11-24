@@ -750,3 +750,68 @@
 .builder-artifact-select p {
   margin: 4px 0 0;
 }
+
+/* ── 学习报告页：正确率 × 耗时四象限效率矩阵 ── */
+.quadrant-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.quadrant-chart-wrap {
+  width: 100%;
+  height: 320px;
+  min-height: 260px;
+  margin: 8px 0 10px;
+  padding: 8px 4px 0 0;
+  border: 1px solid var(--tz-border);
+  border-radius: var(--tz-radius);
+  background: var(--tz-surface-2);
+}
+.quadrant-tooltip {
+  display: grid;
+  gap: 3px;
+  padding: 9px 12px;
+  border: 1px solid var(--tz-border-strong);
+  border-radius: var(--tz-radius-sm);
+  background: var(--tz-surface);
+  color: var(--tz-ink-2);
+  font-size: var(--tz-text-xs);
+  box-shadow: var(--tz-shadow-md);
+}
+.quadrant-tooltip strong {
+  color: var(--tz-ink);
+  font-size: var(--tz-text-sm);
+}
+.quadrant-tooltip-advice {
+  margin-top: 2px;
+  color: var(--tz-vermillion);
+  font-weight: 600;
+}
+.quadrant-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.quadrant-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border: 1px solid var(--tz-border);
+  border-radius: 999px;
+  background: var(--tz-surface-2);
+  color: var(--tz-ink);
+  font-size: var(--tz-text-xs);
+  cursor: pointer;
+}
+.quadrant-chip:hover {
+  border-color: var(--tz-vermillion-border);
+  background: var(--tz-vermillion-bg);
+}
+.quadrant-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}

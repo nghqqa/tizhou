@@ -13,6 +13,7 @@ type InsightsAiHandlerKeys =
   | 'plan.apply'
   | 'plan.active'
   | 'plan.item.complete'
+  | 'plan.recordRead'
   | 'plan.cancel'
   | 'ai.config.get'
   | 'ai.config.save'
@@ -65,6 +66,7 @@ export function createInsightsAiHandlers(
     'plan.active': () => database.getActivePlan(),
     'plan.item.complete': (params) =>
       database.completePlanItem(params.planId, params.itemId, params.completed),
+    'plan.recordRead': (params) => database.recordPlanRead(params.category, params.minutes),
     'plan.cancel': (params) => database.cancelPlan(params.planId),
     'ai.config.get': () => ai.getConfig(),
     'ai.config.save': (params) => ai.saveConfig(params),

@@ -314,6 +314,21 @@
   color: var(--tz-ink-2);
   font-size: var(--tz-text-xs);
 }
+.pill.positive {
+  border-color: color-mix(in srgb, var(--tz-pine) 36%, transparent);
+  background: var(--tz-pine-bg);
+  color: var(--tz-pine);
+}
+.pill.negative {
+  border-color: var(--tz-vermillion-border);
+  background: var(--tz-vermillion-bg);
+  color: var(--tz-vermillion);
+}
+.pill.warning {
+  border-color: color-mix(in srgb, var(--tz-amber) 38%, transparent);
+  background: var(--tz-amber-bg);
+  color: var(--tz-amber);
+}
 
 /* ================================================================
    Forms
@@ -327,15 +342,33 @@
 }
 .toolbar > * {
   min-width: 140px;
+  max-width: 100%;
 }
 .toolbar .grow {
-  flex: 1;
+  flex: 1 1 220px;
+  min-width: 0;
 }
 .form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
 }
+.form-grid > * {
+  min-width: 0;
+}
 .form-grid .full {
   grid-column: 1 / -1;
+}
+.toolbar .fui-Select,
+.form-grid .fui-Select {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+.toolbar .fui-Select__select,
+.form-grid .fui-Select__select {
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

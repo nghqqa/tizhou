@@ -44,6 +44,8 @@ import { ShenlunEvaluationPanel } from './ShenlunEvaluationPanel'
 import { ShenlunFilterBar } from './ShenlunFilterBar'
 import { ShenlunHistoryPanel } from './ShenlunHistoryPanel'
 import { ShenlunNavBar } from './ShenlunNavBar'
+import { ShenlunPointChecklist } from './ShenlunPointChecklist'
+import { ShenlunSnippetDrawer } from './ShenlunSnippetDrawer'
 
 export function ShenlunSolutionPage(): React.JSX.Element {
   const [searchParams, setSearchParams] = useSearchParams()
@@ -56,6 +58,7 @@ export function ShenlunSolutionPage(): React.JSX.Element {
   const showToast = useAppStore((state) => state.showToast)
   const [prompts, setPrompts] = useState<QuestionSummary[]>()
   const [promptId, setPromptId] = useState(requestedPromptId)
+  const [loadedPromptId, setLoadedPromptId] = useState('')
   const [currentDetail, setCurrentDetail] = useState<Question | undefined>()
   const [region, setRegion] = useState(() =>
     requestedPromptId ? '' : readStoredRegion('tizhou:shenlun-region', defaultRegion)
@@ -93,6 +96,7 @@ export function ShenlunSolutionPage(): React.JSX.Element {
   const [evaluating, setEvaluating] = useState(false)
   const [streamEvalRaw, setStreamEvalRaw] = useState('')
   const [editOpen, setEditOpen] = useState(false)
+  const [snippetOpen, setSnippetOpen] = useState(false)
   const [error, setError] = useState('')
   const [expandedHistoryIds, setExpandedHistoryIds] = useState<Record<string, boolean>>({})
   const [materialTab, setMaterialTab] = useState<'all' | number>('all')
@@ -342,6 +346,7 @@ export function ShenlunSolutionPage(): React.JSX.Element {
       setSelectedHistoryId('')
       setPromptHistory([])
       setExpandedHistoryIds({})
+      setLoadedPromptId('')
       return
     }
     let cancelled = false
@@ -367,31 +372,36 @@ export function ShenlunSolutionPage(): React.JSX.Element {
         method: 'constructed.history',
         params: { promptId, limit: 50 }
       }).catch(() => [] as ConstructedAttemptRecord[])
-    ]).then(([questionDetail, draft, history]) => {
-      if (cancelled) return
-      if (questionDetail) {
-        questionCacheRef.current.set(promptId, questionDetail)
-        setCurrentDetail(questionDetail)
-      }
-      setContent(draft?.content ?? '')
-      setPromptHistory(history)
-      if (history.length > 0) {
-        setEvaluation(history[0]!.evaluation)
-        setSelectedHistoryId(history[0]!.id)
-      }
-      if (questionDetail?.material) {
-        const blocks = splitShenlunMaterialBlocks(questionDetail.material)
-        const rec = recommendShenlunMaterialIndices(
-          blocks,
-          questionDetail.stem,
-          questionDetail.explanation,
-          classifyShenlunType(questionDetail.category, questionDetail.stem)
-        )
-        setMaterialTab(blocks.length >= 3 && rec.length > 0 ? rec[0]! : 'all')
-      } else {
-        setMaterialTab('all')
-      }
-    })
+    ])
+      .then(([questionDetail, draft, history]) => {
+        if (cancelled) return
+        if (questionDetail) {
+          questionCacheRef.current.set(promptId, questionDetail)
+          setCurrentDetail(questionDetail)
+        }
+        setContent(draft?.content ?? '')
+        setPromptHistory(history)
+        if (history.length > 0) {
+          setEvaluation(history[0]!.evaluation)
+          setSelectedHistoryId(history[0]!.id)
+        }
+        if (questionDetail?.material) {
+          const blocks = splitShenlunMaterialBlocks(questionDetail.material)
+          const rec = recommendShenlunMaterialIndices(
+            blocks,
+            questionDetail.stem,
+            questionDetail.explanation,
+            classifyShenlunType(questionDetail.category, questionDetail.stem)
+          )
+          setMaterialTab(blocks.length >= 3 && rec.length > 0 ? rec[0]! : 'all')
+        } else {
+          setMaterialTab('all')
+        }
+        setLoadedPromptId(promptId)
+      })
+      .catch(() => {
+        if (!cancelled) setLoadedPromptId(promptId)
+      })
     return () => {
       cancelled = true
     }
@@ -797,6 +807,8 @@ export function ShenlunSolutionPage(): React.JSX.Element {
               onAction={() => void toggleOnlyUnattempted()}
             />
           )
+        ) : loadedPromptId !== promptId ? (
+          <LoadingState label="正在读取题目与草稿" />
         ) : (
           <>
             <ShenlunNavBar
@@ -817,10 +829,12 @@ export function ShenlunSolutionPage(): React.JSX.Element {
               totalVisible={totalVisible}
               zenMode={zenMode}
               canEdit={Boolean(!vault?.isBuiltin && current?.filePath)}
+              snippetOpen={snippetOpen}
               onToggleTimer={() => setShowTimer((prev) => !prev)}
               onToggleOfficialTypography={() => setOfficialTypography((value) => !value)}
               onToggleOnlyUnattempted={() => void toggleOnlyUnattempted()}
               onToggleZenMode={toggleZenMode}
+              onToggleSnippets={() => setSnippetOpen((prev) => !prev)}
               onOpenEdit={() => setEditOpen(true)}
               onGoAdjacent={(delta) => void goAdjacent(delta)}
             />
@@ -999,6 +1013,24 @@ export function ShenlunSolutionPage(): React.JSX.Element {
                       content={current?.explanation ?? ''}
                       sourceFilePath={current?.filePath}
                     />
+                    {current && (
+                      <ShenlunPointChecklist
+                        promptId={current.id}
+                        title={current.stem.slice(0, 60)}
+                        answer={current.answer}
+                        explanation={current.explanation}
+                        draftContent={content}
+                        onSaved={(saved) => {
+                          setPromptHistory((prev) => [
+                            saved,
+                            ...prev.filter((item) => item.id !== saved.id)
+                          ])
+                          setEvaluation(saved.evaluation)
+                          setSelectedHistoryId(saved.id)
+                          void refreshAllHistory()
+                        }}
+                      />
+                    )}
                   </div>
                 ) : (
                   <ShenlunHistoryPanel
@@ -1058,6 +1090,15 @@ export function ShenlunSolutionPage(): React.JSX.Element {
           }
           void refreshVault()
           showToast('勘误已保存并重新索引')
+        }}
+      />
+      <ShenlunSnippetDrawer
+        open={snippetOpen}
+        onClose={() => setSnippetOpen(false)}
+        onInsert={(text) => {
+          if (!current) return
+          updateDraftContent(`${content}${content.trim() ? '\n' : ''}${text}`)
+          setView('write')
         }}
       />
     </div>

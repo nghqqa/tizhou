@@ -355,7 +355,7 @@ export function DiagnosisPage(): React.JSX.Element {
         title={activePlan ? activePlan.title : preview ? '计划预览' : '生成学习计划'}
         description={
           activePlan
-            ? `${activePlan.durationDays} 天 · 每天 ${activePlan.dailyMinutes} 分钟 · ${activePlan.focus.join('、')}`
+            ? `${activePlan.durationDays} 天 · 每天 ${activePlan.dailyMinutes} 分钟 · ${activePlan.focus.join('、')} · 已自动联动日常刷题/复习/阅读打卡进度`
             : '先生成预览，确认后才会替换当前活动计划。'
         }
         actions={
@@ -449,7 +449,9 @@ export function DiagnosisPage(): React.JSX.Element {
                       <div>
                         <span>{item.title}</span>
                         <small className="muted">
-                          目标 {item.target} {item.type === 'read_knowledge' ? '分钟' : '项'}
+                          {activePlan
+                            ? `进度 ${item.completed} / ${item.target} ${item.type === 'read_knowledge' ? '分钟' : '项'}`
+                            : `目标 ${item.target} ${item.type === 'read_knowledge' ? '分钟' : '项'}`}
                         </small>
                       </div>
                       <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>

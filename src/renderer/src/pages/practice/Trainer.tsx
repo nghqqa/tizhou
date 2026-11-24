@@ -159,6 +159,7 @@ export function Trainer({
     false,
     BOOLEAN_OPT_IN_CODEC
   )
+  const [enqueuedIds, setEnqueuedIds] = useState<string[]>([])
   const [rapidAdvancePending, setRapidAdvancePending] = useState(false)
   const [editOpen, setEditOpen] = useState(false)
   const [showFormulaCard, setShowFormulaCard] = useState(false)
@@ -343,6 +344,15 @@ export function Trainer({
           : -1
       const option = current.options[optionIndex]
       if (option && !result && !currentRecord) choose(option.key)
+      if (review && result?.correct && /^[1-4]$/.test(event.key)) {
+        const ratingMap = ['forgot', 'hard', 'normal', 'easy'] as const
+        const chosenFeedback = ratingMap[Number(event.key) - 1]
+        if (chosenFeedback) {
+          event.preventDefault()
+          void rateReview(chosenFeedback)
+          return
+        }
+      }
       if (
         event.key === 'Enter' &&
         !result &&
@@ -367,7 +377,8 @@ export function Trainer({
     questions.length,
     sessionResults,
     session,
-    rapidMode
+    rapidMode,
+    review
   ])
 
   function restoreSession(active: PracticeSession): void {
@@ -562,8 +573,7 @@ export function Trainer({
           durationSeconds: Math.round((Date.now() - startedAt.current) / 1000),
           mode: review ? 'review' : 'practice',
           sessionId: session?.id,
-          wrongCause,
-          reviewFeedback: review ? reviewFeedback : undefined
+          wrongCause
         }
       })
       void refreshDashboard()
@@ -702,6 +712,68 @@ export function Trainer({
     }
   }
 
+  async function rateReview(feedback: 'forgot' | 'hard' | 'normal' | 'easy'): Promise<void> {
+    if (!current || !result) return
+    setReviewFeedback(feedback)
+    try {
+      const rated = await invoke<{
+        nextReviewAt?: string
+        mastered: boolean
+        intervalDays?: number
+        reviewStage: number
+      }>({
+        method: 'review.rate',
+        params: {
+          questionId: current.id,
+          feedback,
+          baselineStreak: result.reviewBaseline?.streak,
+          baselineStage: result.reviewBaseline?.stage
+        }
+      })
+      const updatedResult: AttemptResult = {
+        ...result,
+        nextReviewAt: rated.nextReviewAt,
+        mastered: rated.mastered,
+        intervalDays: rated.intervalDays
+      }
+      setResult(updatedResult)
+      setSessionResults((prev) =>
+        prev.map((item) =>
+          item.questionId === current.id ? { ...item, result: updatedResult } : item
+        )
+      )
+      void refreshDashboard()
+      const labelMap = {
+        forgot: '已标记重来，1 天后再次巩固',
+        hard: `已标记困难，${rated.intervalDays ?? 1} 天后复习`,
+        normal: rated.mastered
+          ? '掌握达标，已移出待复习队列'
+          : `已标记掌握，阶梯推进至 ${rated.intervalDays ?? 3} 天后复习`,
+        easy: rated.mastered
+          ? '秒杀达标，已移出待复习队列'
+          : `已标记秒杀，跃迁至 ${rated.intervalDays ?? 7} 天后复习`
+      }
+      showToast(labelMap[feedback])
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : '记忆评级更新失败')
+    }
+  }
+
+  async function enqueueSingleUncertain(questionId: string): Promise<void> {
+    if (enqueuedIds.includes(questionId)) return
+    try {
+      const res = await invoke<{ added: number; skipped: number }>({
+        method: 'review.enqueue',
+        params: { questionIds: [questionId], reason: '蒙对/不确定' }
+      })
+      setEnqueuedIds((prev) => (prev.includes(questionId) ? prev : [...prev, questionId]))
+      void refreshDashboard()
+      showToast(res.added > 0 ? '已加入明日间隔复习队列' : '该题已在待复习队列中')
+    } catch (cause) {
+      showToast(cause instanceof Error ? cause.message : '加入复习队列失败')
+    }
+  }
+
   async function appendSimilarQuestions(items: Question[]): Promise<void> {
     const existingIds = new Set(questions.map((item) => item.id))
     const toAppend = items.filter((item) => !existingIds.has(item.id))
@@ -787,6 +859,7 @@ export function Trainer({
       <SessionSummaryView
         questions={questions}
         sessionResults={sessionResults}
+        uncertainIds={session?.uncertainIds ?? []}
         summaryOnlyWrong={summaryOnlyWrong}
         onToggleOnlyWrong={() => setSummaryOnlyWrong((v) => !v)}
         onRetryWrong={(wrongQuestions) => {
@@ -1149,8 +1222,52 @@ export function Trainer({
                 </h3>
                 <p>参考答案：{result.expected.join('、')}</p>
                 <MarkdownContent content={result.explanation} sourceFilePath={current.filePath} />
-                {result.nextReviewAt && <p className="muted">已安排下一次间隔复习。</p>}
+                {result.nextReviewAt && (
+                  <p className="muted">
+                    已按艾宾浩斯阶梯安排复习：
+                    {result.intervalDays ? `${result.intervalDays} 天后再次巩固` : '已入待复习队列'}
+                    。
+                  </p>
+                )}
                 {result.mastered && <p className="positive">稳定答对，已标记为掌握。</p>}
+                {review && result.correct && (
+                  <div className="review-rate-bar">
+                    <span className="muted">对照解析评估记忆掌握度（快捷键 1–4）：</span>
+                    <div className="button-row">
+                      {(
+                        [
+                          { key: 'forgot', label: '1 重来 · 1天' },
+                          { key: 'hard', label: '2 困难 · 短期' },
+                          { key: 'normal', label: '3 掌握 · 推进' },
+                          { key: 'easy', label: '4 秒杀 · 跃阶' }
+                        ] as const
+                      ).map((btn) => (
+                        <Button
+                          key={btn.key}
+                          size="small"
+                          appearance={reviewFeedback === btn.key ? 'primary' : 'secondary'}
+                          onClick={() => void rateReview(btn.key)}
+                        >
+                          {btn.label}
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {!review && uncertain && result.correct && (
+                  <div className="button-row" style={{ marginTop: 8 }}>
+                    <Button
+                      size="small"
+                      appearance="secondary"
+                      disabled={enqueuedIds.includes(current.id)}
+                      onClick={() => void enqueueSingleUncertain(current.id)}
+                    >
+                      {enqueuedIds.includes(current.id)
+                        ? '已加入明日复习队列'
+                        : '标有不确定且已答对 · 加入明日间隔复习'}
+                    </Button>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -1227,8 +1344,6 @@ export function Trainer({
               .catch((cause) => setError(cause instanceof Error ? cause.message : '错因更新失败'))
           }
         }}
-        reviewFeedback={reviewFeedback}
-        onReviewFeedbackChange={setReviewFeedback}
         note={note}
         onNoteChange={(nextNote) => {
           cancelRapidAdvance()

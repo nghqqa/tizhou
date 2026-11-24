@@ -51,6 +51,39 @@ export interface PaperSummary {
   year?: number
 }
 
+export interface ShenlunPaperSummary {
+  paper: string
+  count: number
+  year?: number
+  region?: string
+}
+
+export interface PaperProgressItem {
+  paper: string
+  subject: Subject
+  year?: number
+  region?: string
+  questionCount: number
+  examCount: number
+  hasActiveExam: boolean
+  latestExamId?: string
+  latestScore?: number
+  bestScore?: number
+  latestDurationMinutes?: number
+  latestFinishedAt?: string
+  practicedQuestionCount: number
+}
+
+export interface StudySnippet {
+  id: string
+  kind: 'norm' | 'quote'
+  title: string
+  content: string
+  sourceDocId?: string
+  tags: string[]
+  createdAt: string
+}
+
 export interface KnowledgeDocument {
   id: string
   subject: Subject | 'common'
@@ -300,6 +333,8 @@ export interface BatchReviewResult {
 export interface QuestionFilter {
   subject?: Subject
   category?: string
+  /** 多模块别名/组合筛选（如国省考配比抽题兼容「言语理解」与「言语理解与表达」） */
+  categories?: string[]
   type?: QuestionType
   difficulty?: Difficulty
   year?: number
@@ -374,6 +409,9 @@ export interface AttemptResult {
   explanation: string
   nextReviewAt?: string
   mastered: boolean
+  intervalDays?: number
+  /** 供提交看解析后二次记忆评级幂等重算使用的作答前基线 */
+  reviewBaseline?: { streak: number; stage: number; wrongCount: number }
 }
 
 export interface ReviewItem {
@@ -381,6 +419,7 @@ export interface ReviewItem {
   dueAt: string
   wrongCount: number
   correctStreak: number
+  reviewStage?: number
   lastWrongCause?: string
 }
 
@@ -402,6 +441,8 @@ export interface ExamConfig {
   durationMinutes: number
   questionCount: number
   filter?: QuestionFilter
+  /** 分模块抽题配比（国省考仿真组卷与专项冲刺预设使用） */
+  categoryQuotas?: Array<{ category: string; count: number }>
 }
 
 export interface ExamAnswer {
@@ -421,6 +462,8 @@ export interface ExamSession {
   questionIds: string[]
   questionSnapshots: Record<string, Question>
   answers: Record<string, ExamAnswer>
+  /** 交卷时持久化保存的「不确定/蒙题」题号列表，供复盘页一键转入间隔复习 */
+  uncertainIds?: string[]
   status: 'active' | 'finished' | 'abandoned'
   score?: number
   correctCount?: number
@@ -459,11 +502,17 @@ export type PlanItemType = 'read_knowledge' | 'official_practice' | 'official_re
 /** 根据计划项类型推导默认跳转路由（route 字段优先） */
 export function planItemRoute(item: LearningPlanItem): string {
   if (item.route) return item.route
+  const catQuery =
+    item.category && item.category !== '综合能力'
+      ? `&category=${encodeURIComponent(item.category)}`
+      : ''
   switch (item.type) {
     case 'read_knowledge':
-      return '/knowledge/xingce'
+      return item.category && /申论|公文|写作|概括|对策|贯彻/.test(item.category)
+        ? '/thinking/shenlun'
+        : '/thinking/xingce'
     case 'official_practice':
-      return `/practice?mode=adaptive&count=${item.target || 10}`
+      return `/practice?mode=adaptive&count=${item.target || 10}${catQuery}`
     case 'official_review':
       return '/review'
     case 'ai_variant':
@@ -494,6 +543,7 @@ export interface LearningPlanItem {
   day: number
   type: PlanItemType
   title: string
+  category?: string
   target: number
   completed: number
   done: boolean
@@ -939,6 +989,7 @@ export interface WorkbenchMethodMap {
       category?: string
       wrongCause?: string
       query?: string
+      minWrongCount?: number
       limit?: number
     }
     result: QuestionLibraryItem[]
@@ -975,14 +1026,54 @@ export interface WorkbenchMethodMap {
   'note.save': { params: { questionId: string; content: string }; result: void }
   'note.get': { params: { questionId: string }; result: string }
   'review.due': { params?: { limit?: number }; result: ReviewItem[] }
+  'review.rate': {
+    params: {
+      questionId: string
+      feedback: 'forgot' | 'hard' | 'normal' | 'easy'
+      baselineStreak?: number
+      baselineStage?: number
+    }
+    result: {
+      nextReviewAt?: string
+      mastered: boolean
+      intervalDays?: number
+      reviewStage: number
+    }
+  }
+  'review.enqueue': {
+    params: { questionIds: string[]; reason?: string }
+    result: { added: number; skipped: number }
+  }
   'exam.create': { params: ExamConfig; result: ExamSession }
   'exam.active': { params?: undefined; result: ExamSession | undefined }
   'exam.save': { params: { examId: string; answer: ExamAnswer }; result: ExamSession }
-  'exam.finish': { params: { examId: string }; result: ExamSession }
+  'exam.finish': { params: { examId: string; uncertainIds?: string[] }; result: ExamSession }
   'exam.history': { params?: undefined; result: ExamSession[] }
   'exam.get': { params: { examId: string }; result: ExamSession | null }
   'exam.papers': { params?: undefined; result: PaperSummary[] }
   'exam.createPaper': { params: { paper: string }; result: ExamSession }
+  'exam.shenlunPapers': { params?: undefined; result: ShenlunPaperSummary[] }
+  'exam.createShenlunPaper': {
+    params: { paper: string; durationMinutes?: number }
+    result: ExamSession
+  }
+  'exam.paperMatrix': { params?: { subject?: Subject }; result: PaperProgressItem[] }
+  'snippets.list': {
+    params?: { kind?: 'norm' | 'quote'; query?: string }
+    result: StudySnippet[]
+  }
+  'snippets.save': {
+    params: {
+      id?: string
+      kind: 'norm' | 'quote'
+      title: string
+      content: string
+      sourceDocId?: string
+      tags?: string[]
+    }
+    result: StudySnippet
+  }
+  'snippets.delete': { params: { id: string }; result: boolean }
   'migration.export': { params: { targetPath: string }; result: { message: string } }
   'migration.import': {
     params: { sourcePath: string; vaultTargetPath: string }
@@ -994,6 +1085,17 @@ export interface WorkbenchMethodMap {
   'constructed.evaluate': {
     params: { promptId: string; title: string; content: string; requestId?: string }
     result: ConstructedEvaluation
+  }
+  'constructed.saveSelfCheck': {
+    params: {
+      promptId: string
+      title: string
+      content: string
+      hitPoints: string[]
+      totalPoints: number
+      score: number
+    }
+    result: ConstructedAttemptRecord
   }
   'constructed.history': {
     params?: { promptId?: string; limit?: number; range?: ReportData['range'] }
@@ -1012,6 +1114,10 @@ export interface WorkbenchMethodMap {
   'plan.item.complete': {
     params: { planId: string; itemId: string; completed: number }
     result: LearningPlan
+  }
+  'plan.recordRead': {
+    params: { category?: string; minutes?: number }
+    result: LearningPlan | undefined
   }
   'plan.cancel': { params: { planId: string }; result: void }
   'ai.config.get': { params?: undefined; result: AiConfigView }

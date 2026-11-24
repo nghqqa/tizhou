@@ -13,14 +13,11 @@ import type {
   PracticeSession,
   Question,
   ReportData,
-  ReviewItem
+  ReviewItem,
+  StudySnippet
 } from '../../../shared/contracts'
-import {
-  REVIEW_CORRECT_DELAY_DAYS,
-  REVIEW_MASTERED_STREAK,
-  REVIEW_WRONG_DELAY_DAYS
-} from '../../../shared/defaults'
-import { isAnswerCorrect } from '../../../shared/study-constants'
+import { REVIEW_WRONG_DELAY_DAYS } from '../../../shared/defaults'
+import { computeReviewSchedule, isAnswerCorrect } from '../../../shared/study-constants'
 import { now } from '../../utils/common'
 import {
   type Row,
@@ -215,15 +212,18 @@ export function recordAttempt(
   const wrong = db
     .prepare('SELECT * FROM wrong_questions WHERE question_id = ?')
     .get(question.id) as Row | undefined
+  let reviewBaseline: AttemptResult['reviewBaseline']
+  let intervalDays: number | undefined
   if (!correct) {
     const firstWrongAt = wrong ? String(wrong.first_wrong_at) : now()
     db.prepare(
       `INSERT INTO wrong_questions(
-        question_id, wrong_count, correct_streak, mastered, last_wrong_cause, first_wrong_at, last_attempt_at
-      ) VALUES (?, ?, 0, 0, ?, ?, ?)
+        question_id, wrong_count, correct_streak, review_stage, mastered, last_wrong_cause, first_wrong_at, last_attempt_at
+      ) VALUES (?, ?, 0, 0, 0, ?, ?, ?)
       ON CONFLICT(question_id) DO UPDATE SET
         wrong_count = wrong_questions.wrong_count + 1,
         correct_streak = 0,
+        review_stage = 0,
         mastered = 0,
         last_wrong_cause = COALESCE(NULLIF(trim(excluded.last_wrong_cause), ''), wrong_questions.last_wrong_cause),
         last_attempt_at = excluded.last_attempt_at`
@@ -234,19 +234,26 @@ export function recordAttempt(
       firstWrongAt,
       now()
     )
+    intervalDays = REVIEW_WRONG_DELAY_DAYS
     nextReviewAt = addDays(REVIEW_WRONG_DELAY_DAYS)
   } else if (wrong) {
     const feedback = input.reviewFeedback ?? 'normal'
     const previousStreak = numberValue(wrong.correct_streak)
-    const streak =
-      feedback === 'forgot' ? 0 : feedback === 'hard' ? previousStreak : previousStreak + 1
-    mastered = streak >= REVIEW_MASTERED_STREAK && (feedback === 'normal' || feedback === 'easy')
+    const previousStage = numberValue(wrong.review_stage)
+    const wrongCount = numberValue(wrong.wrong_count)
+    reviewBaseline = { streak: previousStreak, stage: previousStage, wrongCount }
+    const schedule = computeReviewSchedule({
+      previousStreak,
+      previousStage,
+      wrongCount,
+      feedback
+    })
+    mastered = schedule.mastered
+    intervalDays = schedule.delayDays
     db.prepare(
-      'UPDATE wrong_questions SET correct_streak = ?, mastered = ?, last_attempt_at = ? WHERE question_id = ?'
-    ).run(streak, mastered ? 1 : 0, now(), question.id)
-    const delayDays =
-      feedback === 'easy' ? 5 : feedback === 'normal' ? REVIEW_CORRECT_DELAY_DAYS : 1
-    nextReviewAt = mastered ? undefined : addDays(delayDays)
+      'UPDATE wrong_questions SET correct_streak = ?, review_stage = ?, mastered = ?, last_attempt_at = ? WHERE question_id = ?'
+    ).run(schedule.streak, schedule.stage, mastered ? 1 : 0, now(), question.id)
+    nextReviewAt = mastered || !schedule.delayDays ? undefined : addDays(schedule.delayDays)
   }
   if (nextReviewAt) {
     db.prepare(
@@ -265,12 +272,114 @@ export function recordAttempt(
     expected: question.answer,
     explanation: question.explanation,
     nextReviewAt,
-    mastered
+    mastered,
+    ...(intervalDays !== undefined ? { intervalDays } : {}),
+    ...(reviewBaseline ? { reviewBaseline } : {})
   }
 }
 
 export function submitAttempt(db: DatabaseSync, input: AttemptInput): AttemptResult {
   return runInTransaction(db, () => recordAttempt(db, input))
+}
+
+/** 复习模式提交查看解析后，按作答前基线幂等调整艾宾浩斯记忆评级与下次间隔 */
+export function rateReviewAttempt(
+  db: DatabaseSync,
+  params: {
+    questionId: string
+    feedback: 'forgot' | 'hard' | 'normal' | 'easy'
+    baselineStreak?: number
+    baselineStage?: number
+  }
+): {
+  nextReviewAt?: string
+  mastered: boolean
+  intervalDays?: number
+  reviewStage: number
+} {
+  return runInTransaction(db, () => {
+    const wrong = db
+      .prepare('SELECT * FROM wrong_questions WHERE question_id = ?')
+      .get(params.questionId) as Row | undefined
+    if (!wrong) throw new Error('当前题目未在错题复习队列中')
+    const wrongCount = numberValue(wrong.wrong_count)
+    const schedule = computeReviewSchedule({
+      previousStreak: params.baselineStreak ?? numberValue(wrong.correct_streak),
+      previousStage: params.baselineStage ?? numberValue(wrong.review_stage),
+      wrongCount,
+      feedback: params.feedback
+    })
+    const nextReviewAt =
+      schedule.mastered || !schedule.delayDays ? undefined : addDays(schedule.delayDays)
+    db.prepare(
+      'UPDATE wrong_questions SET correct_streak = ?, review_stage = ?, mastered = ?, last_attempt_at = ? WHERE question_id = ?'
+    ).run(schedule.streak, schedule.stage, schedule.mastered ? 1 : 0, now(), params.questionId)
+    if (nextReviewAt) {
+      db.prepare(
+        `INSERT INTO review_tasks(question_id, due_at, completed_at) VALUES (?, ?, NULL)
+          ON CONFLICT(question_id) DO UPDATE SET due_at = excluded.due_at, completed_at = NULL`
+      ).run(params.questionId, nextReviewAt)
+    } else if (schedule.mastered) {
+      db.prepare('UPDATE review_tasks SET completed_at = ? WHERE question_id = ?').run(
+        now(),
+        params.questionId
+      )
+    }
+    return {
+      nextReviewAt,
+      mastered: schedule.mastered,
+      intervalDays: schedule.delayDays,
+      reviewStage: schedule.stage
+    }
+  })
+}
+
+/** 将「蒙对 / 标记不确定」等题目批量加入次日到期复习队列 */
+export function enqueueReviewQuestions(
+  db: DatabaseSync,
+  questionIds: string[],
+  reason = '蒙对/不确定'
+): { added: number; skipped: number } {
+  const uniqueIds = [...new Set(questionIds.map((id) => id.trim()).filter(Boolean))].slice(0, 200)
+  if (!uniqueIds.length) return { added: 0, skipped: 0 }
+  return runInTransaction(db, () => {
+    const dueAt = addDays(REVIEW_WRONG_DELAY_DAYS)
+    const timestamp = now()
+    let added = 0
+    let skipped = 0
+    const existsQuestion = db.prepare('SELECT 1 FROM questions WHERE id = ?')
+    const getWrong = db.prepare('SELECT mastered FROM wrong_questions WHERE question_id = ?')
+    const getTask = db.prepare('SELECT completed_at FROM review_tasks WHERE question_id = ?')
+    for (const id of uniqueIds) {
+      if (!existsQuestion.get(id)) {
+        skipped += 1
+        continue
+      }
+      const wrong = getWrong.get(id) as Row | undefined
+      const task = getTask.get(id) as Row | undefined
+      if (wrong && !numberValue(wrong.mastered) && task && task.completed_at === null) {
+        skipped += 1
+        continue
+      }
+      db.prepare(
+        `INSERT INTO wrong_questions(
+          question_id, wrong_count, correct_streak, review_stage, mastered, last_wrong_cause, first_wrong_at, last_attempt_at
+        ) VALUES (?, 1, 0, 0, 0, ?, ?, ?)
+        ON CONFLICT(question_id) DO UPDATE SET
+          correct_streak = 0,
+          review_stage = 0,
+          mastered = 0,
+          last_wrong_cause = COALESCE(NULLIF(trim(wrong_questions.last_wrong_cause), ''), excluded.last_wrong_cause),
+          last_attempt_at = excluded.last_attempt_at`
+      ).run(id, reason.trim().slice(0, 40) || null, timestamp, timestamp)
+      db.prepare(
+        `INSERT INTO review_tasks(question_id, due_at, completed_at) VALUES (?, ?, NULL)
+          ON CONFLICT(question_id) DO UPDATE SET due_at = excluded.due_at, completed_at = NULL`
+      ).run(id, dueAt)
+      added += 1
+    }
+    return { added, skipped }
+  })
 }
 
 export function setFavorite(db: DatabaseSync, questionId: string, favorite: boolean): void {
@@ -303,7 +412,7 @@ export function getNote(db: DatabaseSync, questionId: string): string {
 export function getDueReviews(db: DatabaseSync, limit = 100): ReviewItem[] {
   const rows = db
     .prepare(
-      `SELECT q.*, r.due_at, w.wrong_count, w.correct_streak, w.last_wrong_cause
+      `SELECT q.*, r.due_at, w.wrong_count, w.correct_streak, w.review_stage, w.last_wrong_cause
       FROM review_tasks r
       JOIN questions q ON q.id = r.question_id
       JOIN vault_registry v ON v.id = q.vault_id AND v.active = 1
@@ -317,6 +426,7 @@ export function getDueReviews(db: DatabaseSync, limit = 100): ReviewItem[] {
     dueAt: String(row.due_at),
     wrongCount: numberValue(row.wrong_count),
     correctStreak: numberValue(row.correct_streak),
+    reviewStage: numberValue(row.review_stage),
     lastWrongCause: row.last_wrong_cause === null ? undefined : String(row.last_wrong_cause)
   }))
 }
@@ -384,11 +494,53 @@ export function saveExamAnswer(db: DatabaseSync, examId: string, answer: ExamAns
   return exam
 }
 
-export function finishExam(db: DatabaseSync, examId: string): ExamSession {
+export function finishExam(db: DatabaseSync, examId: string, uncertainIds?: string[]): ExamSession {
   const exam = getExamById(db, examId)
   if (!exam) throw new Error('模考不存在')
   if (exam.status === 'finished') return exam
+  const cleanUncertain = [
+    ...new Set(
+      (uncertainIds ?? exam.uncertainIds ?? []).filter((id) => exam.questionIds.includes(id))
+    )
+  ]
   runInTransaction(db, () => {
+    const finishedAt = now()
+    if (exam.subject === 'shenlun') {
+      // 申论整卷连作交卷：非空作答落入草稿箱并在 attempts 记入训练耗时，绝不按客观题判 0 分污染错题本
+      for (const questionId of exam.questionIds) {
+        const answer = exam.answers[questionId] ?? { questionId, answer: [], durationSeconds: 0 }
+        const snapshot = exam.questionSnapshots[questionId]
+        if (!snapshot) throw new Error(`模考快照缺少题目 ${questionId}`)
+        const text = (answer.answer[0] ?? '').trim()
+        if (text) {
+          saveDraft(db, {
+            id: `draft-${snapshot.id}`,
+            promptId: snapshot.id,
+            title: snapshot.stem.slice(0, 60),
+            content: answer.answer[0] ?? ''
+          })
+          db.prepare(
+            `INSERT INTO attempts(
+              id, question_id, answer_json, correct, duration_seconds, mode, session_id,
+              wrong_cause, question_snapshot_json, content_hash, created_at
+            ) VALUES (?, ?, ?, 1, ?, 'exam', ?, NULL, ?, ?, ?)`
+          ).run(
+            randomUUID(),
+            snapshot.id,
+            JSON.stringify(answer.answer),
+            Math.max(0, Math.round(answer.durationSeconds)),
+            exam.id,
+            JSON.stringify(snapshot),
+            snapshot.contentHash,
+            finishedAt
+          )
+        }
+      }
+      db.prepare(
+        "UPDATE exam_sessions SET status = 'finished', finished_at = ?, updated_at = ?, uncertain_ids_json = ? WHERE id = ?"
+      ).run(finishedAt, finishedAt, JSON.stringify(cleanUncertain), examId)
+      return
+    }
     let correctCount = 0
     for (const questionId of exam.questionIds) {
       const answer = exam.answers[questionId] ?? { questionId, answer: [], durationSeconds: 0 }
@@ -397,11 +549,10 @@ export function finishExam(db: DatabaseSync, examId: string): ExamSession {
       const result = recordAttempt(db, { ...answer, mode: 'exam', sessionId: exam.id }, snapshot)
       if (result.correct) correctCount += 1
     }
-    const finishedAt = now()
     const score = Math.round((correctCount / exam.questionIds.length) * 1000) / 10
     db.prepare(
-      "UPDATE exam_sessions SET status = 'finished', finished_at = ?, updated_at = ?, score = ?, correct_count = ? WHERE id = ?"
-    ).run(finishedAt, finishedAt, score, correctCount, examId)
+      "UPDATE exam_sessions SET status = 'finished', finished_at = ?, updated_at = ?, score = ?, correct_count = ?, uncertain_ids_json = ? WHERE id = ?"
+    ).run(finishedAt, finishedAt, score, correctCount, JSON.stringify(cleanUncertain), examId)
   })
   return getExamById(db, examId)!
 }
@@ -536,5 +687,135 @@ export function getConstructedAttemptSummary(
     uniquePrompts: prompts.size,
     average: count ? Math.round(sum / count) : 0,
     best
+  }
+}
+
+export function listStudySnippets(
+  db: DatabaseSync,
+  params?: { kind?: 'norm' | 'quote'; query?: string }
+): StudySnippet[] {
+  const where: string[] = []
+  const values: string[] = []
+  if (params?.kind) {
+    where.push('kind = ?')
+    values.push(params.kind)
+  }
+  if (params?.query?.trim()) {
+    const pattern = `%${params.query.trim().replace(/[%_\\]/g, '\\$&')}%`
+    where.push(
+      "(title LIKE ? ESCAPE '\\' OR content LIKE ? ESCAPE '\\' OR tags_json LIKE ? ESCAPE '\\')"
+    )
+    values.push(pattern, pattern, pattern)
+  }
+  const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : ''
+  const rows = db
+    .prepare(`SELECT * FROM study_snippets ${whereSql} ORDER BY created_at DESC LIMIT 300`)
+    .all(...values) as Row[]
+  return rows.map((row) => ({
+    id: String(row.id),
+    kind: (String(row.kind) === 'norm' ? 'norm' : 'quote') as 'norm' | 'quote',
+    title: String(row.title),
+    content: String(row.content),
+    sourceDocId: row.source_doc_id ? String(row.source_doc_id) : undefined,
+    tags: parseJson<string[]>(row.tags_json, []),
+    createdAt: String(row.created_at)
+  }))
+}
+
+export function saveStudySnippet(
+  db: DatabaseSync,
+  input: {
+    id?: string
+    kind: 'norm' | 'quote'
+    title: string
+    content: string
+    sourceDocId?: string
+    tags?: string[]
+  }
+): StudySnippet {
+  const title = input.title.trim().slice(0, 80)
+  const content = input.content.trim().slice(0, 4000)
+  if (!title || !content) throw new Error('标题和正文内容不能为空')
+  const id = input.id?.trim() || randomUUID()
+  const createdAt = now()
+  const tags = (input.tags ?? [])
+    .map((t) => t.trim())
+    .filter(Boolean)
+    .slice(0, 8)
+  db.prepare(
+    `INSERT INTO study_snippets(id, kind, title, content, source_doc_id, tags_json, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       kind = excluded.kind,
+       title = excluded.title,
+       content = excluded.content,
+       source_doc_id = COALESCE(excluded.source_doc_id, study_snippets.source_doc_id),
+       tags_json = excluded.tags_json`
+  ).run(id, input.kind, title, content, input.sourceDocId ?? null, JSON.stringify(tags), createdAt)
+  return {
+    id,
+    kind: input.kind,
+    title,
+    content,
+    sourceDocId: input.sourceDocId,
+    tags,
+    createdAt
+  }
+}
+
+export function deleteStudySnippet(db: DatabaseSync, id: string): boolean {
+  const info = db.prepare('DELETE FROM study_snippets WHERE id = ?').run(id)
+  return Number(info.changes ?? 0) > 0
+}
+
+export function saveSelfCheckConstructed(
+  db: DatabaseSync,
+  input: {
+    promptId: string
+    title: string
+    content: string
+    hitPoints: string[]
+    totalPoints: number
+    score: number
+  }
+): ConstructedAttemptRecord {
+  const createdAt = now()
+  const total = Math.max(1, Math.round(input.totalPoints))
+  const hits = input.hitPoints.map((p) => p.trim()).filter(Boolean)
+  const score = Math.max(0, Math.min(100, Math.round(input.score)))
+  const evaluation: ConstructedEvaluation = {
+    id: randomUUID(),
+    promptId: input.promptId,
+    score,
+    dimensions: [
+      {
+        name: '采分点自查命中',
+        score,
+        comment: `已勾选命中 ${hits.length} / ${total} 个参考要点${hits.length ? `（${hits.slice(0, 4).join('、')}${hits.length > 4 ? ' 等' : ''}）` : ''}。`
+      }
+    ],
+    summary: `自主对标参考要点自查：命中 ${hits.length}/${total} 个采分点，自评估分 ${score} 分。`,
+    suggestions:
+      hits.length < total
+        ? ['优先回看未勾选的参考采分点，核对材料对应段落并重写二稿补全。']
+        : ['已覆盖全部参考要点，可进一步精简表述或使用 AI 批改复核论证表达。'],
+    createdAt,
+    provider: 'self-check'
+  }
+  saveConstructedAttempt(db, {
+    id: evaluation.id,
+    promptId: input.promptId,
+    title: input.title,
+    content: input.content,
+    evaluation,
+    createdAt
+  })
+  return {
+    id: evaluation.id,
+    promptId: input.promptId,
+    title: input.title,
+    content: input.content,
+    evaluation,
+    createdAt
   }
 }

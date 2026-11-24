@@ -955,3 +955,109 @@
   max-height: 150px;
   overflow-y: auto;
 }
+
+/* ── 申论参考解析：无 AI 采分点自查清单 ── */
+.point-checklist-card {
+  margin-top: 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--tz-border);
+  border-radius: var(--tz-radius);
+  background: var(--tz-surface-2);
+}
+.point-checklist-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--tz-border);
+}
+.point-checklist-head > div {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+}
+.point-checklist-items {
+  display: grid;
+  gap: 6px;
+}
+.point-checklist-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: var(--tz-radius-sm);
+  background: var(--tz-surface);
+  color: var(--tz-ink-2);
+  font-size: var(--tz-text-sm);
+  line-height: 1.55;
+  cursor: pointer;
+}
+.point-checklist-row.is-checked {
+  border-color: color-mix(in srgb, var(--tz-pine) 35%, transparent);
+  background: var(--tz-pine-bg);
+  color: var(--tz-ink);
+}
+
+/* ── 申论历史记录：一稿 vs 二稿文本 Diff 对比 ── */
+.diff-toolbar {
+  margin-bottom: 10px;
+}
+.diff-panel {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--tz-border-strong);
+  border-radius: var(--tz-radius);
+  background: var(--tz-surface-2);
+}
+.diff-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.diff-select-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--tz-text-xs);
+}
+.diff-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.diff-body {
+  max-height: 280px;
+  overflow-y: auto;
+  padding: 12px 14px;
+  border: 1px solid var(--tz-border);
+  border-radius: var(--tz-radius-sm);
+  background: var(--tz-surface);
+  color: var(--tz-ink-2);
+  font-size: var(--tz-text-sm);
+  line-height: 1.8;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.diff-del {
+  background: var(--tz-vermillion-bg);
+  color: var(--tz-vermillion);
+  text-decoration: line-through;
+  border-radius: 3px;
+  padding: 0 2px;
+}
+.diff-add {
+  background: var(--tz-pine-bg);
+  color: var(--tz-pine);
+  text-decoration: none;
+  border-bottom: 1px solid color-mix(in srgb, var(--tz-pine) 60%, transparent);
+  border-radius: 3px;
+  padding: 0 2px;
+}

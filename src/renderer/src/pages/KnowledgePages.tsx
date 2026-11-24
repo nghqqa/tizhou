@@ -3,6 +3,9 @@ import { Button, Field, Input } from '@fluentui/react-components'
 import {
   ArrowLeftIcon,
   ArrowRightIcon,
+  BookBookmarkIcon,
+  CardsIcon,
+  CheckCircleIcon,
   CheckIcon,
   CopyIcon,
   MagnifyingGlassIcon,
@@ -12,6 +15,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import type { KnowledgeDocument, Subject } from '@shared/contracts'
 import { matchesSearchTerms } from '@shared/search'
 import { invoke } from '../api'
+import { KnowledgeFlashcardDialog } from '../components/KnowledgeFlashcardDialog'
 import { MarkdownContent } from '../components/MarkdownContent'
 import { ReadingTypographyBar, useReadingTypography } from '../components/ReadingTypographyControl'
 import { EmptyState, ErrorState, LoadingState, PageHeader, Section } from '../components/ui'
@@ -32,6 +36,7 @@ interface KnowledgePageProps {
 export function KnowledgePage({ subject, kind }: KnowledgePageProps): React.JSX.Element {
   const navigate = useNavigate()
   const showToast = useAppStore((state) => state.showToast)
+  const refreshDashboard = useAppStore((state) => state.refreshDashboard)
   const [searchParams] = useSearchParams()
   const requestedDocId = searchParams.get('docId') ?? ''
   const [documents, setDocuments] = useState<KnowledgeDocument[]>()
@@ -40,6 +45,10 @@ export function KnowledgePage({ subject, kind }: KnowledgePageProps): React.JSX.
   const [copiedId, setCopiedId] = useState('')
   const search = useImeSearchInput({ delayMs: 0 })
   const [error, setError] = useState('')
+  const [flashcardOpen, setFlashcardOpen] = useState(false)
+  const [recordingRead, setRecordingRead] = useState(false)
+  const [selectedQuote, setSelectedQuote] = useState('')
+  const [savingQuote, setSavingQuote] = useState(false)
   const reading = useReadingTypography()
 
   useEffect(() => {
@@ -112,7 +121,61 @@ export function KnowledgePage({ subject, kind }: KnowledgePageProps): React.JSX.
       })
     }
     setHeadings(collected)
+    setSelectedQuote('')
   }, [selected?.id, selected?.content])
+
+  async function recordReadingCheckin(): Promise<void> {
+    if (recordingRead) return
+    setRecordingRead(true)
+    try {
+      await invoke({
+        method: 'plan.recordRead',
+        params: {
+          category: selected?.tags[0] || (subject === 'shenlun' ? '申论' : '行测'),
+          minutes: 10
+        }
+      })
+      await refreshDashboard()
+      showToast('已完成今日知识阅读打卡（已同步学习计划进度）')
+    } catch (cause) {
+      showToast(cause instanceof Error ? cause.message : '打卡失败')
+    } finally {
+      setRecordingRead(false)
+    }
+  }
+
+  function handleReadingMouseUp(): void {
+    const text = (window.getSelection()?.toString() ?? '').replace(/\s+/g, ' ').trim()
+    if (text.length >= 4 && text.length <= 400) {
+      setSelectedQuote(text)
+    } else {
+      setSelectedQuote('')
+    }
+  }
+
+  async function saveSelectedQuote(): Promise<void> {
+    if (!selected || !selectedQuote || savingQuote) return
+    setSavingQuote(true)
+    try {
+      await invoke({
+        method: 'snippets.save',
+        params: {
+          kind: 'quote',
+          title: selected.title.slice(0, 40),
+          content: selectedQuote,
+          sourceDocId: selected.id,
+          tags: selected.tags.slice(0, 4)
+        }
+      })
+      showToast('已收藏至申论金句/素材抽屉')
+      setSelectedQuote('')
+      window.getSelection()?.removeAllRanges()
+    } catch (cause) {
+      showToast(cause instanceof Error ? cause.message : '收藏失败')
+    } finally {
+      setSavingQuote(false)
+    }
+  }
 
   function scrollToHeading(element: HTMLElement): void {
     element.scrollIntoView({ behavior: 'smooth', block: 'start' })
@@ -149,6 +212,26 @@ export function KnowledgePage({ subject, kind }: KnowledgePageProps): React.JSX.
         eyebrow="知识 · 知识与方法"
         title={title}
         description="直接读取当前 Markdown 知识库，保留标题、列表、表格与公式结构。"
+        actions={
+          <>
+            <Button
+              appearance="secondary"
+              icon={<CardsIcon />}
+              disabled={!filtered.length}
+              onClick={() => setFlashcardOpen(true)}
+            >
+              闪卡自测
+            </Button>
+            <Button
+              appearance="subtle"
+              icon={<CheckCircleIcon />}
+              disabled={recordingRead}
+              onClick={() => void recordReadingCheckin()}
+            >
+              {recordingRead ? '打卡中…' : '打卡今日阅读'}
+            </Button>
+          </>
+        }
       />
       {!documents ? (
         <LoadingState label="正在读取知识文档" />
@@ -317,11 +400,38 @@ export function KnowledgePage({ subject, kind }: KnowledgePageProps): React.JSX.
                     </div>
                   </nav>
                 )}
+                {selected && selectedQuote && (
+                  <div className="doc-selection-popover" role="region" aria-label="划词收藏">
+                    <span className="doc-selection-preview" title={selectedQuote}>
+                      已选中：{selectedQuote}
+                    </span>
+                    <div className="button-row">
+                      <Button
+                        size="small"
+                        appearance="primary"
+                        icon={<BookBookmarkIcon />}
+                        disabled={savingQuote}
+                        onClick={() => void saveSelectedQuote()}
+                      >
+                        {savingQuote ? '收藏中…' : '+ 收藏为金句/素材卡'}
+                      </Button>
+                      <button
+                        type="button"
+                        className="search-clear-btn"
+                        aria-label="关闭划词收藏提示"
+                        onClick={() => setSelectedQuote('')}
+                      >
+                        <XIcon size={13} />
+                      </button>
+                    </div>
+                  </div>
+                )}
                 <div
                   ref={reading.surfaceRef}
                   className="question-reading-surface doc-reading-body"
                   data-reading-font={reading.typography.font}
                   style={reading.surfaceStyle}
+                  onMouseUp={handleReadingMouseUp}
                 >
                   <MarkdownContent content={selected.content} sourceFilePath={selected.filePath} />
                 </div>
@@ -335,6 +445,13 @@ export function KnowledgePage({ subject, kind }: KnowledgePageProps): React.JSX.
           </article>
         </Section>
       )}
+      <KnowledgeFlashcardDialog
+        open={flashcardOpen}
+        title={title}
+        documents={filtered}
+        selectedDocument={selected}
+        onClose={() => setFlashcardOpen(false)}
+      />
     </div>
   )
 }
@@ -342,6 +459,7 @@ export function KnowledgePage({ subject, kind }: KnowledgePageProps): React.JSX.
 export function PatternsPage(): React.JSX.Element {
   const [documents, setDocuments] = useState<KnowledgeDocument[]>()
   const [selectedId, setSelectedId] = useState('')
+  const [flashcardOpen, setFlashcardOpen] = useState(false)
   useEffect(() => {
     void invoke<KnowledgeDocument[]>({
       method: 'documents.list',
@@ -357,6 +475,16 @@ export function PatternsPage(): React.JSX.Element {
         eyebrow="知识 · 规律中心"
         title="规律中心"
         description="把跨模块可复用的错因、检查步骤和思维模式集中起来。"
+        actions={
+          <Button
+            appearance="secondary"
+            icon={<CardsIcon />}
+            disabled={!documents?.length}
+            onClick={() => setFlashcardOpen(true)}
+          >
+            闪卡自测
+          </Button>
+        }
       />
       {!documents ? (
         <LoadingState />
@@ -402,6 +530,13 @@ export function PatternsPage(): React.JSX.Element {
           })}
         </div>
       )}
+      <KnowledgeFlashcardDialog
+        open={flashcardOpen}
+        title="规律中心"
+        documents={documents ?? []}
+        selectedDocument={documents?.find((item) => item.id === selectedId)}
+        onClose={() => setFlashcardOpen(false)}
+      />
     </div>
   )
 }

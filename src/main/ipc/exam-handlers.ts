@@ -9,6 +9,9 @@ type ExamHandlerKeys =
   | 'exam.get'
   | 'exam.papers'
   | 'exam.createPaper'
+  | 'exam.shenlunPapers'
+  | 'exam.createShenlunPaper'
+  | 'exam.paperMatrix'
 
 export function createExamHandlers(ctx: IpcContext): Pick<IpcHandlerMap, ExamHandlerKeys> {
   const { database, study, isE2EMode } = ctx
@@ -17,11 +20,16 @@ export function createExamHandlers(ctx: IpcContext): Pick<IpcHandlerMap, ExamHan
 
   return {
     'exam.create': (params) => {
-      const questions = study.selectPractice({
-        mode: 'random',
-        count: params.questionCount,
-        filter: { ...params.filter, subject: params.subject }
-      })
+      const questions = params.categoryQuotas?.length
+        ? study.selectExamByQuotas(params.categoryQuotas, {
+            ...params.filter,
+            subject: params.subject
+          })
+        : study.selectPractice({
+            mode: 'random',
+            count: params.questionCount,
+            filter: { ...params.filter, subject: params.subject }
+          })
       return database.createExam(params, questions)
     },
     'exam.active': () => database.getActiveExam(),
@@ -34,7 +42,7 @@ export function createExamHandlers(ctx: IpcContext): Pick<IpcHandlerMap, ExamHan
       }
       return database.saveExamAnswer(params.examId, params.answer)
     },
-    'exam.finish': (params) => database.finishExam(params.examId),
+    'exam.finish': (params) => database.finishExam(params.examId, params.uncertainIds),
     'exam.history': () => database.listExams(),
     'exam.get': (params) => database.getExamById(params.examId) ?? null,
     'exam.papers': () => database.listPapers(),
@@ -53,6 +61,24 @@ export function createExamHandlers(ctx: IpcContext): Pick<IpcHandlerMap, ExamHan
         },
         ordered
       )
-    }
+    },
+    'exam.shenlunPapers': () => database.listShenlunPapers(),
+    'exam.createShenlunPaper': (params) => {
+      const ordered = database.listShenlunQuestionsByPaper(params.paper)
+      if (ordered.length < 2) {
+        throw new Error('该申论试卷可用大题不足 2 题，无法整卷连作')
+      }
+      const duration = Math.max(60, Math.min(240, Math.round(params.durationMinutes ?? 150)))
+      return database.createExam(
+        {
+          title: params.paper,
+          subject: 'shenlun',
+          durationMinutes: duration,
+          questionCount: ordered.length
+        },
+        ordered
+      )
+    },
+    'exam.paperMatrix': (params) => database.listPaperProgressMatrix(params?.subject)
   }
 }

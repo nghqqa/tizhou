@@ -26,9 +26,15 @@ type StudyHandlerKeys =
   | 'note.save'
   | 'note.get'
   | 'review.due'
+  | 'review.rate'
+  | 'review.enqueue'
+  | 'snippets.list'
+  | 'snippets.save'
+  | 'snippets.delete'
   | 'draft.save'
   | 'draft.get'
   | 'constructed.evaluate'
+  | 'constructed.saveSelfCheck'
   | 'constructed.history'
 
 export function createStudyHandlers(ctx: IpcContext): Pick<IpcHandlerMap, StudyHandlerKeys> {
@@ -82,6 +88,12 @@ export function createStudyHandlers(ctx: IpcContext): Pick<IpcHandlerMap, StudyH
     'note.save': (params) => database.saveNote(params.questionId, params.content),
     'note.get': (params) => database.getNote(params.questionId),
     'review.due': (params) => database.getDueReviews(params?.limit),
+    'review.rate': (params) => database.rateReviewAttempt(params),
+    'review.enqueue': (params) =>
+      database.enqueueReviewQuestions(params.questionIds, params.reason),
+    'snippets.list': (params) => database.listStudySnippets(params),
+    'snippets.save': (params) => database.saveStudySnippet(params),
+    'snippets.delete': (params) => database.deleteStudySnippet(params.id),
     'draft.save': (params) => database.saveDraft(params),
     'draft.get': (params) => database.getDraft(params.id),
     'constructed.evaluate': (params) =>
@@ -111,6 +123,7 @@ export function createStudyHandlers(ctx: IpcContext): Pick<IpcHandlerMap, StudyH
             }
           : undefined
       ),
+    'constructed.saveSelfCheck': (params) => database.saveSelfCheckConstructed(params),
     'constructed.history': (params) => database.listConstructedAttempts(params)
   }
 }

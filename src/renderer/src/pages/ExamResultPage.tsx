@@ -20,6 +20,7 @@ import { OptionContent } from '../components/OptionContent'
 import { ReadingTypographyBar, useReadingTypography } from '../components/ReadingTypographyControl'
 import { EmptyState, ErrorState, LoadingState, PageHeader, Section } from '../components/ui'
 import { useAppStore } from '../store'
+import { ShenlunPointChecklist } from './shenlun/ShenlunPointChecklist'
 
 type ReviewFilter = 'all' | 'wrong-unanswered'
 
@@ -38,6 +39,8 @@ export function ExamResultPage(): React.JSX.Element {
   const [openNoteIds, setOpenNoteIds] = useState<Record<string, boolean>>({})
   const [savingNoteId, setSavingNoteId] = useState('')
   const [redoBusy, setRedoBusy] = useState(false)
+  const [enqueueBusy, setEnqueueBusy] = useState(false)
+  const [enqueuedDone, setEnqueuedDone] = useState(false)
   const [reviewPage, setReviewPage] = useState(1)
   const [pendingScrollId, setPendingScrollId] = useState<string | null>(null)
   const REVIEW_PAGE_SIZE = 20
@@ -140,9 +143,19 @@ export function ExamResultPage(): React.JSX.Element {
   }, [reviewItems])
 
   const wrongIds = useMemo(
-    () => reviewItems.filter((item) => !item.correct).map((item) => item.question.id),
-    [reviewItems]
+    () =>
+      exam?.subject === 'shenlun'
+        ? []
+        : reviewItems.filter((item) => !item.correct).map((item) => item.question.id),
+    [reviewItems, exam?.subject]
   )
+  const uncertainCorrectIds = useMemo(() => {
+    const uIds = exam?.uncertainIds ?? []
+    if (!uIds.length || exam?.subject === 'shenlun') return []
+    return reviewItems
+      .filter((item) => item.correct && uIds.includes(item.question.id))
+      .map((item) => item.question.id)
+  }, [reviewItems, exam?.uncertainIds, exam?.subject])
 
   const filteredItems =
     filter === 'wrong-unanswered' ? reviewItems.filter((item) => !item.correct) : reviewItems
@@ -224,6 +237,27 @@ export function ExamResultPage(): React.JSX.Element {
     }
   }
 
+  async function enqueueUncertainCorrect(): Promise<void> {
+    if (!uncertainCorrectIds.length || enqueueBusy || enqueuedDone) return
+    setEnqueueBusy(true)
+    try {
+      const res = await invoke<{ added: number; skipped: number }>({
+        method: 'review.enqueue',
+        params: { questionIds: uncertainCorrectIds, reason: '蒙对/不确定' }
+      })
+      setEnqueuedDone(true)
+      showToast(
+        res.added > 0
+          ? `已将 ${res.added} 道蒙对/不确定题加入明日间隔复习`
+          : '这些题目已在待复习队列中'
+      )
+    } catch (cause) {
+      showToast(cause instanceof Error ? cause.message : '加入复习队列失败')
+    } finally {
+      setEnqueueBusy(false)
+    }
+  }
+
   const totalReviewPages = Math.max(1, Math.ceil(filteredItems.length / REVIEW_PAGE_SIZE))
   const safeReviewPage = Math.min(reviewPage, totalReviewPages)
   const pagedItems = filteredItems.slice(
@@ -279,6 +313,7 @@ export function ExamResultPage(): React.JSX.Element {
   const totalQuestions = exam.questionIds.length
   const answeredCount = reviewItems.filter((item) => item.answered).length
   const unanswered = totalQuestions - answeredCount
+  const isShenlunExam = exam.subject === 'shenlun'
   const correct = exam.correctCount ?? 0
   const accuracy = totalQuestions > 0 ? Math.round((correct / totalQuestions) * 100) : 0
   const score = exam.score ?? 0
@@ -294,14 +329,21 @@ export function ExamResultPage(): React.JSX.Element {
   const actualMin = Math.floor(actualSeconds / 60)
   const actualSec = actualSeconds % 60
 
-  const stats = [
-    { label: '得分', value: score, suffix: '分' },
-    { label: '正确率', value: accuracy, suffix: '%' },
-    { label: '正确题数', value: correct, suffix: ` / ${totalQuestions}` },
-    { label: '已答', value: answeredCount, suffix: ` / ${totalQuestions}` },
-    { label: '未答', value: unanswered, suffix: ' 题' },
-    { label: '实际用时', value: actualMin, suffix: ` 分 ${actualSec} 秒` }
-  ]
+  const stats = isShenlunExam
+    ? [
+        { label: '模式', value: '申论整卷', suffix: '' },
+        { label: '完成大题', value: answeredCount, suffix: ` / ${totalQuestions}` },
+        { label: '未答大题', value: unanswered, suffix: ' 题' },
+        { label: '实际用时', value: actualMin, suffix: ` 分 ${actualSec} 秒` }
+      ]
+    : [
+        { label: '得分', value: score, suffix: '分' },
+        { label: '正确率', value: accuracy, suffix: '%' },
+        { label: '正确题数', value: correct, suffix: ` / ${totalQuestions}` },
+        { label: '已答', value: answeredCount, suffix: ` / ${totalQuestions}` },
+        { label: '未答', value: unanswered, suffix: ' 题' },
+        { label: '实际用时', value: actualMin, suffix: ` 分 ${actualSec} 秒` }
+      ]
 
   return (
     <div className="page page-wide">
@@ -321,6 +363,17 @@ export function ExamResultPage(): React.JSX.Element {
                 {redoBusy ? '正在组卷…' : `重刷本场错题 (${wrongIds.length})`}
               </Button>
             )}
+            {uncertainCorrectIds.length > 0 && (
+              <Button
+                appearance="secondary"
+                disabled={enqueueBusy || enqueuedDone}
+                onClick={() => void enqueueUncertainCorrect()}
+              >
+                {enqueuedDone
+                  ? `已加入 ${uncertainCorrectIds.length} 道蒙对题`
+                  : `将 ${uncertainCorrectIds.length} 道蒙对/不确定题加入复习`}
+              </Button>
+            )}
             <Button icon={<ArrowLeftIcon />} onClick={() => navigate('/exam')}>
               返回模考
             </Button>
@@ -328,7 +381,7 @@ export function ExamResultPage(): React.JSX.Element {
         }
       />
 
-      <div className="stat-strip three">
+      <div className={`stat-strip ${isShenlunExam ? '' : 'three'}`}>
         {stats.map((stat) => (
           <div className="stat-strip-item" key={stat.label}>
             <span className="stat-strip-label">{stat.label}</span>
@@ -343,29 +396,57 @@ export function ExamResultPage(): React.JSX.Element {
       <div className="grid two">
         <Section title="本次作答摘要">
           <ul className="data-list">
-            <li className="data-row">
-              <div>
-                <strong>正确 {correct} 题</strong>
-                <span>已计入学习报告和错题系统</span>
-              </div>
-              <CheckCircleIcon className="positive" />
-            </li>
-            {unanswered > 0 && (
+            {isShenlunExam ? (
               <li className="data-row">
                 <div>
-                  <strong>未答 {unanswered} 题</strong>
-                  <span>未作答的题目按错误计入</span>
+                  <strong>已完成 {answeredCount} 道大题作答</strong>
+                  <span>各题作答文本已保存至草稿箱，可在下方逐题自查采分点或进入单题 AI 批改</span>
                 </div>
-                <CalendarCheckIcon className="warning" />
+                <CheckCircleIcon className="positive" />
               </li>
+            ) : (
+              <>
+                <li className="data-row">
+                  <div>
+                    <strong>正确 {correct} 题</strong>
+                    <span>已计入学习报告和错题系统</span>
+                  </div>
+                  <CheckCircleIcon className="positive" />
+                </li>
+                {unanswered > 0 && (
+                  <li className="data-row">
+                    <div>
+                      <strong>未答 {unanswered} 题</strong>
+                      <span>未作答的题目按错误计入</span>
+                    </div>
+                    <CalendarCheckIcon className="warning" />
+                  </li>
+                )}
+                <li className="data-row">
+                  <div>
+                    <strong>错题已加入复习</strong>
+                    <span>可在下方就地标注错因、记笔记，或一键重刷本场错题</span>
+                  </div>
+                  <CalendarCheckIcon className="positive" />
+                </li>
+                {uncertainCorrectIds.length > 0 && (
+                  <li className="data-row">
+                    <div>
+                      <strong>标旗「不确定」但答对 {uncertainCorrectIds.length} 题</strong>
+                      <span>建议一并收入错题复习队列，避免蒙对掩盖薄弱点</span>
+                    </div>
+                    <Button
+                      size="small"
+                      appearance="secondary"
+                      disabled={enqueueBusy || enqueuedDone}
+                      onClick={() => void enqueueUncertainCorrect()}
+                    >
+                      {enqueuedDone ? '已加入' : '一键加入复习'}
+                    </Button>
+                  </li>
+                )}
+              </>
             )}
-            <li className="data-row">
-              <div>
-                <strong>错题已加入复习</strong>
-                <span>可在下方就地标注错因、记笔记，或一键重刷本场错题</span>
-              </div>
-              <CalendarCheckIcon className="positive" />
-            </li>
           </ul>
         </Section>
         <Section
@@ -588,6 +669,30 @@ export function ExamResultPage(): React.JSX.Element {
                       content={item.question.explanation}
                       sourceFilePath={item.question.filePath}
                     />
+                    {isShenlunExam && (
+                      <>
+                        <div className="button-row" style={{ marginTop: 10 }}>
+                          <Button
+                            size="small"
+                            appearance="primary"
+                            onClick={() =>
+                              navigate(
+                                `/shenlun-solution?promptId=${encodeURIComponent(item.question.id)}`
+                              )
+                            }
+                          >
+                            去单题二稿精修 / AI 批改
+                          </Button>
+                        </div>
+                        <ShenlunPointChecklist
+                          promptId={item.question.id}
+                          title={item.question.stem.slice(0, 60)}
+                          answer={item.question.answer}
+                          explanation={item.question.explanation}
+                          draftContent={item.userAnswer[0] ?? ''}
+                        />
+                      </>
+                    )}
                     {noteOpen && (
                       <div className="library-note-box">
                         <Field label="本题复盘笔记">

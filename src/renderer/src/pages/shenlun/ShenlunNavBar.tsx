@@ -4,6 +4,7 @@ import {
   ArrowRightIcon,
   ArrowsInSimpleIcon,
   ArrowsOutSimpleIcon,
+  BookBookmarkIcon,
   ClockIcon,
   PencilSimpleIcon
 } from '@phosphor-icons/react'
@@ -37,10 +38,12 @@ interface ShenlunNavBarProps {
   totalVisible: number
   zenMode: boolean
   canEdit: boolean
+  snippetOpen?: boolean
   onToggleTimer: () => void
   onToggleOfficialTypography: () => void
   onToggleOnlyUnattempted: () => void
   onToggleZenMode: () => void
+  onToggleSnippets?: () => void
   onOpenEdit: () => void
   onGoAdjacent: (delta: -1 | 1) => void
 }
@@ -63,10 +66,12 @@ export function ShenlunNavBar({
   totalVisible,
   zenMode,
   canEdit,
+  snippetOpen = false,
   onToggleTimer,
   onToggleOfficialTypography,
   onToggleOnlyUnattempted,
   onToggleZenMode,
+  onToggleSnippets,
   onOpenEdit,
   onGoAdjacent
 }: ShenlunNavBarProps): React.JSX.Element {
@@ -164,6 +169,17 @@ export function ShenlunNavBar({
         >
           {onlyUnattempted ? '显示全部题目' : '只看未做'}
         </Button>
+        {onToggleSnippets && (
+          <Button
+            size="small"
+            appearance={snippetOpen ? 'primary' : 'outline'}
+            icon={<BookBookmarkIcon />}
+            title="打开申论规范词与个人金句素材抽屉"
+            onClick={onToggleSnippets}
+          >
+            规范词/金句
+          </Button>
+        )}
         <Button
           size="small"
           appearance="subtle"

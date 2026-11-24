@@ -18,6 +18,7 @@ export type Row = Record<string, SqlValue>
 export interface QuestionListFilter {
   subject?: string
   category?: string
+  categories?: string[]
   type?: string
   difficulty?: number
   year?: number
@@ -129,6 +130,13 @@ export function buildQuestionFilter(filter: QuestionListFilter): {
     where.push('q.category = ?')
     values.push(filter.category)
   }
+  if (filter.categories?.length) {
+    const clean = filter.categories.map((c) => c.trim()).filter(Boolean)
+    if (clean.length) {
+      where.push(`q.category IN (${clean.map(() => '?').join(', ')})`)
+      values.push(...clean)
+    }
+  }
   if (filter.type) {
     where.push('q.type = ?')
     values.push(filter.type)
@@ -233,6 +241,7 @@ export function mapExam(row: Row): ExamSession {
     questionIds: parseJson(row.question_ids_json, []),
     questionSnapshots: parseJson(row.question_snapshots_json, {}),
     answers: parseJson(row.answers_json, {}),
+    uncertainIds: row.uncertain_ids_json ? parseJson<string[]>(row.uncertain_ids_json, []) : [],
     status: String(row.status) as ExamSession['status'],
     score: row.score === null ? undefined : numberValue(row.score),
     correctCount: row.correct_count === null ? undefined : numberValue(row.correct_count)

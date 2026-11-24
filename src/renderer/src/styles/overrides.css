@@ -1,8 +1,12 @@
 /* ── Batch 2.2–2.3：专项练习 / 错题复习 / 模考与复盘增强 ── */
-.field-gap-top {
+.field-gap-top,
+.fui-Button.field-gap-top,
+.fui-Field.field-gap-top {
   margin-top: 12px;
 }
-.field-gap-top-sm {
+.field-gap-top-sm,
+.fui-Button.field-gap-top-sm,
+.fui-Field.field-gap-top-sm {
   margin-top: 8px;
 }
 .shortcut-hint {

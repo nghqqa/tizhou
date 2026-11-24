@@ -16,6 +16,7 @@ import type {
   ExamSession,
   KnowledgeDocument,
   LearningPlan,
+  PaperProgressItem,
   PracticeSelection,
   PracticeSession,
   Question,
@@ -25,6 +26,9 @@ import type {
   QuestionUserMeta,
   ReportData,
   ReviewItem,
+  ShenlunPaperSummary,
+  StudySnippet,
+  Subject,
   VaultIndexResult,
   VaultInfo,
   VaultSnapshotInfo
@@ -165,12 +169,13 @@ export class DatabaseService {
     questionRepo.upsertSingleQuestion(this.db, this.caches, vaultId, question)
   }
 
-  /** 错题本 / 收藏夹 / 笔记库全景查询：限定当前活动知识库，支持按模块、错因与关键词过滤 */
+  /** 错题本 / 收藏夹 / 笔记库全景查询：限定当前活动知识库，支持按模块、顽固次数、错因与关键词过滤 */
   listQuestionLibrary(params: {
     tab: 'wrong' | 'favorite' | 'notes'
     category?: string
     wrongCause?: string
     query?: string
+    minWrongCount?: number
     limit?: number
   }): QuestionLibraryItem[] {
     return questionRepo.listQuestionLibrary(this.db, params)
@@ -217,6 +222,18 @@ export class DatabaseService {
    *  题量不足 30 的卷不返回：与 exam.createPaper 的组卷校验及模考页描述保持同一口径 */
   listPapers(): Array<{ paper: string; count: number; year?: number }> {
     return questionRepo.listPapers(this.db)
+  }
+
+  listShenlunPapers(): ShenlunPaperSummary[] {
+    return questionRepo.listShenlunPapers(this.db)
+  }
+
+  listShenlunQuestionsByPaper(paper: string): Question[] {
+    return questionRepo.listShenlunQuestionsByPaper(this.db, paper)
+  }
+
+  listPaperProgressMatrix(subject?: Subject): PaperProgressItem[] {
+    return questionRepo.listPaperProgressMatrix(this.db, subject)
   }
 
   /** 轻量去重签名：只取题干/材料/选项列，供题库导入前比对（8k+ 题秒级） */
@@ -288,7 +305,33 @@ export class DatabaseService {
   }
 
   submitAttempt(input: AttemptInput): AttemptResult {
-    return studyRepo.submitAttempt(this.db, input)
+    const result = studyRepo.submitAttempt(this.db, input)
+    if (input.mode === 'practice' || input.mode === 'review') {
+      const question = this.getQuestion(input.questionId)
+      try {
+        analyticsRepo.syncActivePlanProgress(this.db, {
+          type: input.mode === 'review' ? 'official_review' : 'official_practice',
+          category: question?.category,
+          delta: 1
+        })
+      } catch {
+        /* 计划联动异常不阻断作答提交主链路 */
+      }
+    }
+    return result
+  }
+
+  rateReviewAttempt(params: {
+    questionId: string
+    feedback: 'forgot' | 'hard' | 'normal' | 'easy'
+    baselineStreak?: number
+    baselineStage?: number
+  }) {
+    return studyRepo.rateReviewAttempt(this.db, params)
+  }
+
+  enqueueReviewQuestions(questionIds: string[], reason?: string) {
+    return studyRepo.enqueueReviewQuestions(this.db, questionIds, reason)
   }
 
   setFavorite(questionId: string, favorite: boolean): void {
@@ -323,8 +366,8 @@ export class DatabaseService {
     return studyRepo.saveExamAnswer(this.db, examId, answer)
   }
 
-  finishExam(examId: string): ExamSession {
-    return studyRepo.finishExam(this.db, examId)
+  finishExam(examId: string, uncertainIds?: string[]): ExamSession {
+    return studyRepo.finishExam(this.db, examId, uncertainIds)
   }
 
   getExamById(id: string): ExamSession | undefined {
@@ -354,6 +397,17 @@ export class DatabaseService {
     studyRepo.saveConstructedAttempt(this.db, payload)
   }
 
+  saveSelfCheckConstructed(input: {
+    promptId: string
+    title: string
+    content: string
+    hitPoints: string[]
+    totalPoints: number
+    score: number
+  }): ConstructedAttemptRecord {
+    return studyRepo.saveSelfCheckConstructed(this.db, input)
+  }
+
   listConstructedAttempts(params?: {
     promptId?: string
     limit?: number
@@ -366,6 +420,25 @@ export class DatabaseService {
     range: ReportData['range'] = 'all'
   ): NonNullable<ReportData['essaySummary']> {
     return studyRepo.getConstructedAttemptSummary(this.db, range)
+  }
+
+  listStudySnippets(params?: { kind?: 'norm' | 'quote'; query?: string }): StudySnippet[] {
+    return studyRepo.listStudySnippets(this.db, params)
+  }
+
+  saveStudySnippet(input: {
+    id?: string
+    kind: 'norm' | 'quote'
+    title: string
+    content: string
+    sourceDocId?: string
+    tags?: string[]
+  }): StudySnippet {
+    return studyRepo.saveStudySnippet(this.db, input)
+  }
+
+  deleteStudySnippet(id: string): boolean {
+    return studyRepo.deleteStudySnippet(this.db, id)
   }
 
   getDashboard(): DashboardData {
@@ -386,6 +459,14 @@ export class DatabaseService {
 
   completePlanItem(planId: string, itemId: string, completed: number): LearningPlan {
     return analyticsRepo.completePlanItem(this.db, planId, itemId, completed)
+  }
+
+  recordPlanRead(category?: string, minutes = 10): LearningPlan | undefined {
+    return analyticsRepo.syncActivePlanProgress(this.db, {
+      type: 'read_knowledge',
+      category,
+      delta: Math.max(1, Math.round(minutes))
+    })
   }
 
   cancelPlan(planId: string): void {
@@ -431,7 +512,13 @@ export class DatabaseService {
   saveAiTrainingRecord(
     input: Omit<AiTrainingRecord, 'id' | 'correct' | 'createdAt'>
   ): AiTrainingRecord {
-    return systemRepo.saveAiTrainingRecord(this.db, input)
+    const record = systemRepo.saveAiTrainingRecord(this.db, input)
+    try {
+      analyticsRepo.syncActivePlanProgress(this.db, { type: 'ai_variant', delta: 1 })
+    } catch {
+      /* 计划联动异常不阻断变式训练记录 */
+    }
+    return record
   }
 
   listAiTrainingRecords(): AiTrainingRecord[] {

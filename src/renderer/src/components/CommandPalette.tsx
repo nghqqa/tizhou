@@ -13,6 +13,7 @@ interface CommandPaletteProps {
   onToggleTheme: () => void
   onToggleZen?: () => void
   onOpenShortcuts?: () => void
+  onOpenWarmup?: () => void
 }
 
 interface PaletteEntry {
@@ -183,7 +184,8 @@ export function CommandPalette({
   onClose,
   onToggleTheme,
   onToggleZen,
-  onOpenShortcuts
+  onOpenShortcuts,
+  onOpenWarmup
 }: CommandPaletteProps): React.JSX.Element | null {
   const navigate = useNavigate()
   const search = useImeSearchInput({ delayMs: 180 })
@@ -311,6 +313,22 @@ export function CommandPalette({
       })
     }
 
+    if (
+      onOpenWarmup &&
+      (!trimmed || matchesSearchTerms('速算 热身 百化分 截位直除 资料分析 warmup calc', trimmed))
+    ) {
+      list.push({
+        id: 'action-warmup',
+        group: '页面与快捷操作',
+        title: '打开资料分析 2 分钟速算热身',
+        subtitle: '快捷操作 · 百化分 / 截位直除 / 增长量 / 平方每日手感热身',
+        run: () => {
+          onClose()
+          onOpenWarmup()
+        }
+      })
+    }
+
     if (trimmed) {
       const matchedDocs = docs
         .filter((doc) =>
@@ -362,7 +380,8 @@ export function CommandPalette({
     onClose,
     onToggleTheme,
     onToggleZen,
-    onOpenShortcuts
+    onOpenShortcuts,
+    onOpenWarmup
   ])
 
   useEffect(() => {

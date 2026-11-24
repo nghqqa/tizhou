@@ -217,12 +217,29 @@ export function migrateDatabase(db: DatabaseSync): void {
       updated_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_ai_conversations_updated ON ai_conversations(updated_at DESC);
+    CREATE TABLE IF NOT EXISTS study_snippets (
+      id TEXT PRIMARY KEY,
+      kind TEXT NOT NULL,
+      title TEXT NOT NULL,
+      content TEXT NOT NULL,
+      source_doc_id TEXT,
+      tags_json TEXT NOT NULL DEFAULT '[]',
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_study_snippets_kind_time ON study_snippets(kind, created_at DESC);
   `)
   const examColumns = db.prepare('PRAGMA table_info(exam_sessions)').all() as Row[]
   if (!examColumns.some((column) => String(column.name) === 'question_snapshots_json')) {
     db.exec(
       "ALTER TABLE exam_sessions ADD COLUMN question_snapshots_json TEXT NOT NULL DEFAULT '{}'"
     )
+  }
+  if (!examColumns.some((column) => String(column.name) === 'uncertain_ids_json')) {
+    db.exec("ALTER TABLE exam_sessions ADD COLUMN uncertain_ids_json TEXT NOT NULL DEFAULT '[]'")
+  }
+  const wrongColumns = db.prepare('PRAGMA table_info(wrong_questions)').all() as Row[]
+  if (!wrongColumns.some((column) => String(column.name) === 'review_stage')) {
+    db.exec('ALTER TABLE wrong_questions ADD COLUMN review_stage INTEGER NOT NULL DEFAULT 0')
   }
   const questionColumns = db.prepare('PRAGMA table_info(questions)').all() as Row[]
   for (const [name, type] of [

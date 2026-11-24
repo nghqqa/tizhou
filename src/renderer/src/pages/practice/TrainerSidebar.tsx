@@ -1,9 +1,9 @@
-import { Button, Field, Select, Textarea } from '@fluentui/react-components'
+import { Button, Field, Select, Spinner, Textarea } from '@fluentui/react-components'
 import { NotePencilIcon, RobotIcon, StopIcon } from '@phosphor-icons/react'
-import { Spinner } from '@fluentui/react-components'
 import type { AttemptResult, PracticeSession, Question } from '@shared/contracts'
 import { WRONG_CAUSE_OPTIONS } from '@shared/study-constants'
 import { MarkdownContent } from '../../components/MarkdownContent'
+import { QuestionNavigatorGrid } from '../../components/QuestionNavigatorGrid'
 import { Section } from '../../components/ui'
 import type { SessionResult } from './constants'
 import { SimilarQuestionsCard } from './SimilarQuestionsCard'
@@ -22,8 +22,6 @@ interface TrainerSidebarProps {
   review: boolean
   wrongCause: string
   onWrongCauseChange: (nextCause: string, isWrongSubmitted: boolean) => void
-  reviewFeedback: 'forgot' | 'hard' | 'normal' | 'easy'
-  onReviewFeedbackChange: (next: 'forgot' | 'hard' | 'normal' | 'easy') => void
   note: string
   onNoteChange: (next: string) => void
   onSaveNote: () => void
@@ -49,11 +47,8 @@ export function TrainerSidebar({
   loading,
   result,
   currentRecord,
-  review,
   wrongCause,
   onWrongCauseChange,
-  reviewFeedback,
-  onReviewFeedbackChange,
   note,
   onNoteChange,
   onSaveNote,
@@ -78,30 +73,22 @@ export function TrainerSidebar({
         title="本组答题卡"
         description={`已答 ${sessionResults.length} / ${questions.length} 题${session?.uncertainIds.length ? ` · ${session.uncertainIds.length} 题待查` : ''}`}
       >
-        <div className="question-grid">
-          {questions.map((question, questionIndex) => {
+        <QuestionNavigatorGrid
+          questions={questions}
+          currentIndex={index}
+          mode="flat"
+          feedbackMode={feedbackMode}
+          disabled={loading}
+          getStatus={(question) => {
             const rec = answeredMap.get(question.id)
-            const isUncertain = session?.uncertainIds.includes(question.id) ?? false
-            const statusClass =
-              rec && feedbackMode === 'immediate'
-                ? rec.result.correct
-                  ? ' is-correct'
-                  : ' is-wrong'
-                : ''
-            return (
-              <Button
-                key={question.id}
-                className={`question-number${statusClass}${isUncertain ? ' is-uncertain' : ''}`}
-                size="small"
-                appearance={questionIndex === index ? 'primary' : rec ? 'secondary' : 'subtle'}
-                disabled={loading}
-                onClick={() => onJumpTo(questionIndex)}
-              >
-                {questionIndex + 1}
-              </Button>
-            )
-          })}
-        </div>
+            return {
+              answered: Boolean(rec),
+              correct: rec?.result.correct,
+              uncertain: session?.uncertainIds.includes(question.id) ?? false
+            }
+          }}
+          onSelect={onJumpTo}
+        />
       </Section>
       <Section
         title="错因标注"
@@ -121,22 +108,6 @@ export function TrainerSidebar({
             ))}
           </Select>
         </Field>
-        {review && (
-          <Field label="本次记忆反馈" className="field-gap-top">
-            <Select
-              value={reviewFeedback}
-              onChange={(_, data) =>
-                onReviewFeedbackChange(data.value as 'forgot' | 'hard' | 'normal' | 'easy')
-              }
-              disabled={Boolean(result)}
-            >
-              <option value="forgot">忘记</option>
-              <option value="hard">困难</option>
-              <option value="normal">一般</option>
-              <option value="easy">熟练</option>
-            </Select>
-          </Field>
-        )}
       </Section>
       <Section title="本题笔记">
         <Textarea

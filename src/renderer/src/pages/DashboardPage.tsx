@@ -6,15 +6,17 @@ import {
   CalendarCheckIcon,
   ChartLineUpIcon,
   ExamIcon,
+  LightningIcon,
   PlayIcon,
   TargetIcon
 } from '@phosphor-icons/react'
 import { useNavigate } from 'react-router-dom'
 import { formatDate } from '../api'
+import { SpeedCalcWarmupDialog } from '../components/SpeedCalcWarmupDialog'
 import { Section } from '../components/ui'
 import { computeExamCountdown } from '../services/study-helpers'
 import { useAppStore } from '../store'
-import type { DashboardData } from '@shared/contracts'
+import { planItemActionLabel, planItemRoute, type DashboardData } from '@shared/contracts'
 
 const DAILY_QUOTES = [
   '不积跬步，无以至千里',
@@ -48,6 +50,19 @@ function findWeakest(
   const mastered = dashboard.subjectMastery.filter((item) => item.attempts > 0)
   if (!mastered.length) return undefined
   return mastered.reduce((weakest, item) => (item.accuracy < weakest.accuracy ? item : weakest))
+}
+
+function currentPlanDay(startDate: string, durationDays: number): number {
+  const matched = /^(\d{4})-(\d{2})-(\d{2})$/.exec(startDate.trim())
+  const parsed = matched
+    ? new Date(Number(matched[1]), Number(matched[2]) - 1, Number(matched[3]))
+    : new Date(startDate)
+  if (Number.isNaN(parsed.getTime())) return 1
+  const startMs = new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate()).getTime()
+  const nowDate = new Date()
+  const todayMs = new Date(nowDate.getFullYear(), nowDate.getMonth(), nowDate.getDate()).getTime()
+  const offset = Math.floor((todayMs - startMs) / 86_400_000) + 1
+  return Math.max(1, Math.min(durationDays, offset))
 }
 
 function buildCalendar(
@@ -275,6 +290,7 @@ export function DashboardPage(): React.JSX.Element {
   const dashboard = data.dashboard
   const countdown = computeExamCountdown(data.settings.examGoalDate)
   const [editingGoal, setEditingGoal] = useState(false)
+  const [warmupOpen, setWarmupOpen] = useState(false)
   const [goalNameDraft, setGoalNameDraft] = useState(data.settings.examGoalName ?? '')
   const [goalDateDraft, setGoalDateDraft] = useState(data.settings.examGoalDate ?? '')
   // E2E 专用（窗口 query 携带 e2e=1 时出现）：触发一次渲染期异常，验证错误边界
@@ -445,6 +461,9 @@ export function DashboardPage(): React.JSX.Element {
               复习 {dashboard.dueReviews} 题
             </Button>
           )}
+          <Button appearance="subtle" icon={<LightningIcon />} onClick={() => setWarmupOpen(true)}>
+            2 分钟速算热身
+          </Button>
         </div>
       </div>
 
@@ -489,30 +508,52 @@ export function DashboardPage(): React.JSX.Element {
               </button>
             </div>
           ) : dashboard.activePlan ? (
-            <div>
-              <div className="data-row">
+            (() => {
+              const plan = dashboard.activePlan!
+              const todayDay = currentPlanDay(plan.startDate, plan.durationDays)
+              const undone = plan.items.filter((item) => !item.done)
+              const nextItem = undone.find((item) => item.day === todayDay) ?? undone[0]
+              return (
                 <div>
-                  <strong>{dashboard.activePlan.title}</strong>
-                  <span>{dashboard.activePlan.focus.join(' · ')}</span>
+                  <div className="data-row">
+                    <div>
+                      <strong>{plan.title}</strong>
+                      <span>
+                        {nextItem
+                          ? `下一步：第 ${nextItem.day} 天 · ${nextItem.title}（${nextItem.completed}/${nextItem.target}）`
+                          : plan.focus.join(' · ')}
+                      </span>
+                    </div>
+                    <BrainIcon size={20} className="accent" />
+                  </div>
+                  <ProgressBar
+                    value={plan.items.filter((i) => i.done).length / Math.max(1, plan.items.length)}
+                    style={{ marginTop: 10 }}
+                  />
+                  <div className="button-row" style={{ marginTop: 10 }}>
+                    {nextItem && (
+                      <Button
+                        size="small"
+                        appearance="primary"
+                        onClick={() => navigate(planItemRoute(nextItem))}
+                      >
+                        {planItemActionLabel(nextItem)}
+                      </Button>
+                    )}
+                    <button
+                      type="button"
+                      className="mastery-action"
+                      onClick={() => navigate('/diagnosis')}
+                    >
+                      查看计划 <ArrowRightIcon size={12} />
+                    </button>
+                  </div>
+                  <span className="muted" style={{ display: 'block', marginTop: 6, fontSize: 12 }}>
+                    刷题 / 复习 / 变式 / 阅读打卡将自动同步进度
+                  </span>
                 </div>
-                <BrainIcon size={20} className="accent" />
-              </div>
-              <ProgressBar
-                value={
-                  dashboard.activePlan.items.filter((i) => i.done).length /
-                  dashboard.activePlan.items.length
-                }
-                style={{ marginTop: 10 }}
-              />
-              <button
-                type="button"
-                className="mastery-action"
-                style={{ marginTop: 10 }}
-                onClick={() => navigate('/diagnosis')}
-              >
-                查看计划 <ArrowRightIcon size={12} />
-              </button>
-            </div>
+              )
+            })()
           ) : (
             <div className="empty-compact">
               <span>今天还没有训练记录</span>
@@ -562,6 +603,7 @@ export function DashboardPage(): React.JSX.Element {
           )}
         </Section>
       </div>
+      <SpeedCalcWarmupDialog open={warmupOpen} onClose={() => setWarmupOpen(false)} />
     </div>
   )
 }

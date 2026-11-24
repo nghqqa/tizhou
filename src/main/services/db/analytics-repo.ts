@@ -1,5 +1,11 @@
 import type { DatabaseSync } from 'node:sqlite'
-import type { DashboardData, LearningPlan, ReportData } from '../../../shared/contracts'
+import type {
+  DashboardData,
+  LearningPlan,
+  PlanItemType,
+  ReportData
+} from '../../../shared/contracts'
+import { normalizeXingceModule } from '../../../shared/study-constants'
 import { now } from '../../utils/common'
 import {
   LOCAL_DATE,
@@ -80,6 +86,60 @@ export function cancelPlan(db: DatabaseSync, planId: string): void {
     now(),
     planId
   )
+}
+
+function localDayStart(value: string | Date): number {
+  const date = value instanceof Date ? value : new Date(value)
+  if (Number.isNaN(date.getTime())) return 0
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime()
+}
+
+function extractPlanItemCategory(title: string, explicit?: string): string {
+  if (explicit?.trim()) return explicit.trim()
+  const idx = title.indexOf('：')
+  if (idx < 0) return ''
+  return title
+    .slice(idx + 1)
+    .replace(/核心方法$/, '')
+    .trim()
+}
+
+function planCategoryMatches(itemCategory: string, eventCategory?: string): boolean {
+  if (!itemCategory || itemCategory === '综合能力' || itemCategory === '全部') return true
+  if (!eventCategory?.trim()) return true
+  const left = normalizeXingceModule(itemCategory)
+  const right = normalizeXingceModule(eventCategory)
+  return (
+    left === right ||
+    itemCategory === eventCategory ||
+    itemCategory.includes(eventCategory) ||
+    eventCategory.includes(itemCategory)
+  )
+}
+
+/** 联动日常刷题/复习/变式/阅读行为与当前活跃学习计划，满足目标题量时自动推进或勾选完成 */
+export function syncActivePlanProgress(
+  db: DatabaseSync,
+  event: { type: PlanItemType; category?: string; delta: number }
+): LearningPlan | undefined {
+  const plan = getActivePlan(db)
+  if (!plan || plan.status !== 'active' || !plan.items.length) return undefined
+  const startMs = localDayStart(plan.startDate)
+  const todayMs = localDayStart(new Date())
+  const dayOffset = startMs ? Math.floor((todayMs - startMs) / 86_400_000) + 1 : 1
+  const currentDay = Math.max(1, Math.min(plan.durationDays, dayOffset))
+  const candidates = plan.items.filter(
+    (item) =>
+      !item.done &&
+      item.type === event.type &&
+      planCategoryMatches(extractPlanItemCategory(item.title, item.category), event.category)
+  )
+  const target =
+    candidates.find((item) => item.day === currentDay) ??
+    candidates.sort((a, b) => a.day - b.day)[0]
+  if (!target) return undefined
+  const step = Math.max(1, Math.round(event.delta))
+  return completePlanItem(db, plan.id, target.id, target.completed + step)
 }
 
 export function getDashboard(db: DatabaseSync): DashboardData {

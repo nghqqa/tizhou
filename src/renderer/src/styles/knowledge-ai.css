@@ -478,3 +478,30 @@
   display: grid;
   gap: 4px;
 }
+
+/* ── 知识文档划词收藏金句提示条 ── */
+.doc-selection-popover {
+  position: sticky;
+  top: 8px;
+  z-index: 12;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--tz-vermillion-border);
+  border-radius: var(--tz-radius);
+  background: var(--tz-surface-2);
+  box-shadow: var(--tz-shadow-md);
+}
+.doc-selection-preview {
+  flex: 1;
+  min-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--tz-ink);
+  font-size: var(--tz-text-xs);
+}

@@ -3,11 +3,14 @@ import type { DatabaseSync } from 'node:sqlite'
 import { gunzipSync, gzipSync } from 'node:zlib'
 import type {
   KnowledgeDocument,
+  PaperProgressItem,
   Question,
   QuestionFacets,
   QuestionLibraryItem,
   QuestionSummary,
   QuestionUserMeta,
+  ShenlunPaperSummary,
+  Subject,
   VaultIndexResult,
   VaultInfo,
   VaultSnapshotInfo
@@ -492,6 +495,7 @@ export function listQuestionLibrary(
     category?: string
     wrongCause?: string
     query?: string
+    minWrongCount?: number
     limit?: number
   }
 ): QuestionLibraryItem[] {
@@ -516,6 +520,10 @@ export function listQuestionLibrary(
         where.push('w.last_wrong_cause = ?')
         values.push(params.wrongCause.trim())
       }
+    }
+    if (params.minWrongCount && params.minWrongCount > 0) {
+      where.push('w.wrong_count >= ?')
+      values.push(Math.round(params.minWrongCount))
     }
   } else if (params.tab === 'favorite') {
     joinSql = `
@@ -643,7 +651,7 @@ export function listPapers(
     .prepare(
       `SELECT q.papers_json, q.year FROM questions q
       JOIN vault_registry v ON v.id = q.vault_id
-      WHERE v.active = 1 AND q.papers_json IS NOT NULL`
+      WHERE v.active = 1 AND q.papers_json IS NOT NULL AND q.subject = 'xingce'`
     )
     .all() as Row[]
   const papers = new Map<string, { count: number; year?: number }>()
@@ -663,6 +671,218 @@ export function listPapers(
     .map(([paper, info]) => ({ paper, count: info.count, year: info.year }))
     .filter((entry) => entry.count >= 30)
     .sort((a, b) => (b.year ?? 0) - (a.year ?? 0) || b.count - a.count)
+}
+
+export function listShenlunPapers(db: DatabaseSync): ShenlunPaperSummary[] {
+  const rows = db
+    .prepare(
+      `SELECT q.id, q.paper, q.papers_json, q.year, q.region FROM questions q
+      JOIN vault_registry v ON v.id = q.vault_id
+      WHERE v.active = 1 AND q.subject = 'shenlun'`
+    )
+    .all() as Row[]
+  const byPaper = new Map<string, { ids: Set<string>; year?: number; region?: string }>()
+  for (const row of rows) {
+    const qId = String(row.id)
+    const refs = parseJson<Array<{ paper?: string }>>(row.papers_json, [])
+    const paperNames = new Set<string>()
+    if (row.paper && String(row.paper).trim()) paperNames.add(String(row.paper).trim())
+    for (const ref of refs) {
+      if (ref?.paper?.trim()) paperNames.add(ref.paper.trim())
+    }
+    const year = row.year === null ? undefined : numberValue(row.year)
+    const region = row.region
+      ? normalizeRegionName(String(row.region)) || String(row.region)
+      : undefined
+    for (const paper of paperNames) {
+      let bucket = byPaper.get(paper)
+      if (!bucket) {
+        bucket = { ids: new Set(), year, region }
+        byPaper.set(paper, bucket)
+      }
+      bucket.ids.add(qId)
+      if (!bucket.year && year) bucket.year = year
+      if (!bucket.region && region) bucket.region = region
+    }
+  }
+  return [...byPaper.entries()]
+    .map(([paper, info]) => ({
+      paper,
+      count: info.ids.size,
+      year: info.year,
+      region: info.region || extractRegionFromText(paper) || undefined
+    }))
+    .filter((item) => item.count >= 2)
+    .sort(
+      (a, b) =>
+        (b.year ?? 0) - (a.year ?? 0) ||
+        b.count - a.count ||
+        a.paper.localeCompare(b.paper, 'zh-CN')
+    )
+}
+
+export function listShenlunQuestionsByPaper(db: DatabaseSync, paper: string): Question[] {
+  const target = paper.trim()
+  if (!target) return []
+  const rows = db
+    .prepare(
+      `SELECT q.* FROM questions q
+      JOIN vault_registry v ON v.id = q.vault_id AND v.active = 1
+      WHERE q.subject = 'shenlun'
+        AND (q.paper = ? OR EXISTS (
+          SELECT 1 FROM json_each(CASE WHEN q.papers_json IS NULL THEN '[]' ELSE q.papers_json END) ref
+          WHERE json_extract(ref.value, '$.paper') = ?
+        ))
+      ORDER BY COALESCE(q.group_order, 999), q.id`
+    )
+    .all(target, target) as Row[]
+  const mapped = rows.map((row) => mapQuestion(row))
+  const orderOf = (question: Question): number => {
+    const matched = question.papers?.find((entry) => entry.paper === target)
+    if (matched && Number.isFinite(matched.order)) return matched.order
+    if (typeof question.groupOrder === 'number' && Number.isFinite(question.groupOrder)) {
+      return question.groupOrder
+    }
+    return Number.MAX_SAFE_INTEGER
+  }
+  return mapped.sort((a, b) => orderOf(a) - orderOf(b) || a.id.localeCompare(b.id))
+}
+
+export function listPaperProgressMatrix(db: DatabaseSync, subject?: Subject): PaperProgressItem[] {
+  const attemptedSet = new Set(
+    (db.prepare('SELECT DISTINCT question_id FROM attempts').all() as Row[]).map((r) =>
+      String(r.question_id)
+    )
+  )
+  const regionMap = new Map<string, string>()
+  const questionRows = db
+    .prepare(
+      `SELECT q.id, q.subject, q.paper, q.papers_json, q.region FROM questions q
+      JOIN vault_registry v ON v.id = q.vault_id AND v.active = 1
+      WHERE (q.paper IS NOT NULL OR q.papers_json IS NOT NULL)`
+    )
+    .all() as Row[]
+  const practicedByPaperSubject = new Map<string, Set<string>>()
+  for (const row of questionRows) {
+    const qId = String(row.id)
+    const qSub = String(row.subject)
+    const reg = row.region ? normalizeRegionName(String(row.region)) || String(row.region) : ''
+    const names = new Set<string>()
+    if (row.paper && String(row.paper).trim()) names.add(String(row.paper).trim())
+    for (const ref of parseJson<Array<{ paper?: string }>>(row.papers_json, [])) {
+      if (ref?.paper?.trim()) names.add(ref.paper.trim())
+    }
+    for (const name of names) {
+      if (reg && !regionMap.has(name)) regionMap.set(name, reg)
+      if (attemptedSet.has(qId)) {
+        const key = `${qSub}\u0000${name}`
+        let set = practicedByPaperSubject.get(key)
+        if (!set) {
+          set = new Set()
+          practicedByPaperSubject.set(key, set)
+        }
+        set.add(qId)
+      }
+    }
+  }
+  const examRows = db
+    .prepare('SELECT * FROM exam_sessions ORDER BY updated_at DESC LIMIT 500')
+    .all() as Row[]
+  const examsByKey = new Map<
+    string,
+    {
+      finishedCount: number
+      hasActiveExam: boolean
+      latestExamId?: string
+      latestScore?: number
+      bestScore?: number
+      latestDurationMinutes?: number
+      latestFinishedAt?: string
+    }
+  >()
+  for (const row of examRows) {
+    const key = `${String(row.subject)}\u0000${String(row.title).trim()}`
+    let stats = examsByKey.get(key)
+    if (!stats) {
+      stats = { finishedCount: 0, hasActiveExam: false }
+      examsByKey.set(key, stats)
+    }
+    const status = String(row.status)
+    if (status === 'active') {
+      stats.hasActiveExam = true
+      if (!stats.latestExamId) stats.latestExamId = String(row.id)
+    } else if (status === 'finished') {
+      stats.finishedCount += 1
+      const score = row.score === null ? undefined : numberValue(row.score)
+      const finishedAt = row.finished_at ? String(row.finished_at) : String(row.updated_at)
+      const startedMs = new Date(String(row.started_at)).getTime()
+      const finishedMs = new Date(finishedAt).getTime()
+      const spentMinutes =
+        Number.isFinite(startedMs) && Number.isFinite(finishedMs) && finishedMs >= startedMs
+          ? Math.max(1, Math.round((finishedMs - startedMs) / 60_000))
+          : numberValue(row.duration_minutes)
+      if (!stats.latestFinishedAt) {
+        stats.latestExamId = String(row.id)
+        stats.latestScore = score
+        stats.latestDurationMinutes = spentMinutes
+        stats.latestFinishedAt = finishedAt
+      }
+      if (score !== undefined && (stats.bestScore === undefined || score > stats.bestScore)) {
+        stats.bestScore = score
+      }
+    }
+  }
+
+  const items: PaperProgressItem[] = []
+  if (!subject || subject === 'xingce') {
+    for (const paperItem of listPapers(db)) {
+      const key = `xingce\u0000${paperItem.paper}`
+      const ex = examsByKey.get(key)
+      items.push({
+        paper: paperItem.paper,
+        subject: 'xingce',
+        year: paperItem.year,
+        region:
+          regionMap.get(paperItem.paper) || extractRegionFromText(paperItem.paper) || undefined,
+        questionCount: paperItem.count,
+        examCount: ex?.finishedCount ?? 0,
+        hasActiveExam: ex?.hasActiveExam ?? false,
+        latestExamId: ex?.latestExamId,
+        latestScore: ex?.latestScore,
+        bestScore: ex?.bestScore,
+        latestDurationMinutes: ex?.latestDurationMinutes,
+        latestFinishedAt: ex?.latestFinishedAt,
+        practicedQuestionCount: practicedByPaperSubject.get(key)?.size ?? 0
+      })
+    }
+  }
+  if (!subject || subject === 'shenlun') {
+    for (const paperItem of listShenlunPapers(db)) {
+      const key = `shenlun\u0000${paperItem.paper}`
+      const ex = examsByKey.get(key)
+      items.push({
+        paper: paperItem.paper,
+        subject: 'shenlun',
+        year: paperItem.year,
+        region: paperItem.region,
+        questionCount: paperItem.count,
+        examCount: ex?.finishedCount ?? 0,
+        hasActiveExam: ex?.hasActiveExam ?? false,
+        latestExamId: ex?.latestExamId,
+        latestScore: ex?.latestScore,
+        bestScore: ex?.bestScore,
+        latestDurationMinutes: ex?.latestDurationMinutes,
+        latestFinishedAt: ex?.latestFinishedAt,
+        practicedQuestionCount: practicedByPaperSubject.get(key)?.size ?? 0
+      })
+    }
+  }
+  return items.sort(
+    (a, b) =>
+      (b.year ?? 0) - (a.year ?? 0) ||
+      b.questionCount - a.questionCount ||
+      a.paper.localeCompare(b.paper, 'zh-CN')
+  )
 }
 
 export function listQuestionSignatures(db: DatabaseSync, vaultId: string): string[] {

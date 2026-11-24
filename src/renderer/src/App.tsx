@@ -47,6 +47,7 @@ import { CommandPalette } from './components/CommandPalette'
 import { MarkdownContent } from './components/MarkdownContent'
 import { RouteErrorBoundary } from './components/RouteErrorBoundary'
 import { ShortcutHelpDialog } from './components/ShortcutHelpDialog'
+import { SpeedCalcWarmupDialog } from './components/SpeedCalcWarmupDialog'
 
 const DashboardPage = lazy(() =>
   import('./pages/DashboardPage').then((module) => ({ default: module.DashboardPage }))
@@ -178,6 +179,7 @@ function AppShell(): React.JSX.Element {
   const navigate = useNavigate()
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [shortcutHelpOpen, setShortcutHelpOpen] = useState(false)
+  const [warmupOpen, setWarmupOpen] = useState(false)
   const [updateDialog, setUpdateDialog] = useState<AppUpdateStatus & { open: boolean }>({
     open: false,
     checking: false,
@@ -531,8 +533,10 @@ function AppShell(): React.JSX.Element {
         onToggleTheme={toggleTheme}
         onToggleZen={toggleZenMode}
         onOpenShortcuts={() => setShortcutHelpOpen(true)}
+        onOpenWarmup={() => setWarmupOpen(true)}
       />
       <ShortcutHelpDialog open={shortcutHelpOpen} onClose={() => setShortcutHelpOpen(false)} />
+      <SpeedCalcWarmupDialog open={warmupOpen} onClose={() => setWarmupOpen(false)} />
       {updateDialog.open && (
         <div
           className="update-modal-backdrop"
