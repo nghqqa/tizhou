@@ -740,4 +740,106 @@ describe('DatabaseService local-date statistics and exam edge cases', () => {
 
     expect(database.saveAppSettings({ defaultRegion: '浙江' }).defaultRegion).toBe('浙江')
   })
+
+  it('supports multi-term AND search across shenlun material/paper/year/region and escapes LIKE wildcards', () => {
+    const vaultId = database.getActiveVault()!.id
+    const db = (
+      database as unknown as {
+        db: { prepare: (sql: string) => { run: (...args: unknown[]) => void } }
+      }
+    ).db
+
+    db.prepare(
+      `INSERT INTO questions (
+        id, vault_id, subject, category, type, stem, options_json, answer_json, explanation,
+        difficulty, source, year, region, paper, material, tags_json, content_hash, indexed_at
+      ) VALUES (?, ?, 'shenlun', '归纳概括', 'essay', ?, '[]', '[]', ?,
+        3, ?, ?, ?, ?, ?, ?, ?, '2024-01-01')`
+    ).run(
+      'sl-search-1',
+      vaultId,
+      '根据给定资料2，概括L市优化营商环境的主要做法。',
+      '要点：审批提速与法治保障。',
+      '本地资料/2024国考申论真题集.pdf',
+      2024,
+      '国考',
+      '2024年国考副省级申论',
+      '给定资料2：L市推进法治政府建设，打造市场化、法治化营商环境，政务服务实现一网通办。',
+      JSON.stringify(['营商环境', '法治']),
+      'hash-sl-search-1'
+    )
+
+    db.prepare(
+      `INSERT INTO questions (
+        id, vault_id, subject, category, type, stem, options_json, answer_json, explanation,
+        difficulty, source, year, region, paper, material, tags_json, content_hash, indexed_at
+      ) VALUES (?, ?, 'shenlun', '应用文', 'essay', ?, '[]', '[]', ?,
+        3, ?, ?, ?, ?, ?, ?, ?, '2024-01-01')`
+    ).run(
+      'sl-search-2',
+      vaultId,
+      '起草一份关于青年人才返乡创业的倡议书，达成率提升 100%_指标。',
+      '格式规范，号召力强。',
+      '本地资料/2023浙江申论精讲.pdf',
+      2023,
+      '浙江',
+      '2023年浙江省考申论A卷',
+      '给定资料1：乡村数字经济与生态旅游融合发展。',
+      JSON.stringify(['乡村振兴']),
+      'hash-sl-search-2'
+    )
+
+    // 检索申论给定资料内容（题干未出现“一网通办”）
+    expect(
+      database
+        .listQuestionSummaries({ subject: 'shenlun', type: 'essay', query: '一网通办' })
+        .map((item) => item.id)
+    ).toEqual(['sl-search-1'])
+
+    // 空格分隔多词 AND 匹配（跨年份 + 地区 + 材料关键词，支持全角空格）
+    expect(
+      database
+        .listQuestionSummaries({
+          subject: 'shenlun',
+          type: 'essay',
+          query: '2024\u3000副省级 法治政府'
+        })
+        .map((item) => item.id)
+    ).toEqual(['sl-search-1'])
+
+    // 多词中有任一词不命中时不返回
+    expect(
+      database.listQuestionSummaries({
+        subject: 'shenlun',
+        type: 'essay',
+        query: '2024 乡村振兴'
+      })
+    ).toEqual([])
+
+    // LIKE 通配符 % 和 _ 按字面量转义，不误匹配其他题目
+    expect(
+      database
+        .listQuestionSummaries({ subject: 'shenlun', type: 'essay', query: '100%_' })
+        .map((item) => item.id)
+    ).toEqual(['sl-search-2'])
+    expect(
+      database.listQuestionSummaries({ subject: 'shenlun', type: 'essay', query: '%' })
+    ).toHaveLength(1)
+
+    // 题单（收藏/笔记）同样支持多词 + 笔记内容 + 卷名联合检索
+    database.setFavorite('sl-search-1', true)
+    database.saveNote('sl-search-1', '重点复习一网通办案例')
+    expect(
+      database
+        .listQuestionLibrary({ tab: 'favorite', query: '2024 重点复习' })
+        .map((item) => item.question.id)
+    ).toEqual(['sl-search-1'])
+
+    // 知识文档检索支持跨标签与正文多词 AND 及 LIKE 通配符转义
+    expect(database.listDocuments({ query: '作答方法 观点在前' }).map((doc) => doc.id)).toEqual([
+      'builtin-doc-shenlun'
+    ])
+    expect(database.listDocuments({ query: '%' })).toEqual([])
+    expect(database.listDocuments({ query: '___not_match_wildcard___' })).toEqual([])
+  })
 })

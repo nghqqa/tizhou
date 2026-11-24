@@ -2,7 +2,9 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { MagnifyingGlassIcon } from '@phosphor-icons/react'
 import { useNavigate } from 'react-router-dom'
 import type { KnowledgeDocument, Question } from '@shared/contracts'
+import { matchesSearchTerms } from '@shared/search'
 import { invoke } from '../api'
+import { useImeSearchInput } from '../services/search-input'
 import { extractSearchSnippet } from '../services/study-helpers'
 
 interface CommandPaletteProps {
@@ -180,7 +182,7 @@ export function CommandPalette({
   onToggleTheme
 }: CommandPaletteProps): React.JSX.Element | null {
   const navigate = useNavigate()
-  const [query, setQuery] = useState('')
+  const search = useImeSearchInput({ delayMs: 180 })
   const [docs, setDocs] = useState<KnowledgeDocument[]>([])
   const [questions, setQuestions] = useState<Question[]>([])
   const [searchingQuestions, setSearchingQuestions] = useState(false)
@@ -189,7 +191,7 @@ export function CommandPalette({
 
   useEffect(() => {
     if (!open) return
-    setQuery('')
+    search.clear()
     setQuestions([])
     setActiveIndex(0)
     const focusTimer = window.setTimeout(() => inputRef.current?.focus(), 20)
@@ -197,11 +199,11 @@ export function CommandPalette({
       .then(setDocs)
       .catch(() => setDocs([]))
     return () => window.clearTimeout(focusTimer)
-  }, [open])
+  }, [open, search.clear])
 
   useEffect(() => {
     if (!open) return
-    const trimmed = query.trim()
+    const trimmed = search.debouncedValue.trim()
     if (trimmed.length < 2) {
       setQuestions([])
       setSearchingQuestions(false)
@@ -209,34 +211,31 @@ export function CommandPalette({
     }
     let cancelled = false
     setSearchingQuestions(true)
-    const timer = window.setTimeout(() => {
-      void invoke<Question[]>({
-        method: 'vault.search',
-        params: { query: trimmed, limit: 8 }
+    void invoke<Question[]>({
+      method: 'vault.search',
+      params: { query: trimmed, limit: 8 }
+    })
+      .then((rows) => {
+        if (!cancelled) setQuestions(rows)
       })
-        .then((rows) => {
-          if (!cancelled) setQuestions(rows)
-        })
-        .catch(() => {
-          if (!cancelled) setQuestions([])
-        })
-        .finally(() => {
-          if (!cancelled) setSearchingQuestions(false)
-        })
-    }, 180)
+      .catch(() => {
+        if (!cancelled) setQuestions([])
+      })
+      .finally(() => {
+        if (!cancelled) setSearchingQuestions(false)
+      })
     return () => {
       cancelled = true
-      window.clearTimeout(timer)
     }
-  }, [open, query])
+  }, [open, search.debouncedValue])
 
   const entries = useMemo<PaletteEntry[]>(() => {
-    const trimmed = query.trim().toLowerCase()
+    const trimmed = search.committedValue.trim()
     const list: PaletteEntry[] = []
 
     const pageMatches = STATIC_PAGES.filter((item) => {
       if (!trimmed) return true
-      return `${item.title} ${item.subtitle} ${item.keywords}`.toLowerCase().includes(trimmed)
+      return matchesSearchTerms(`${item.title} ${item.subtitle} ${item.keywords}`, trimmed)
     }).slice(0, trimmed ? 8 : 6)
 
     for (const item of pageMatches) {
@@ -252,7 +251,7 @@ export function CommandPalette({
       })
     }
 
-    if (!trimmed || '切换主题 深色 浅色 夜间 白天 theme dark light'.includes(trimmed)) {
+    if (!trimmed || matchesSearchTerms('切换主题 深色 浅色 夜间 白天 theme dark light', trimmed)) {
       list.push({
         id: 'action-theme',
         group: '页面与快捷操作',
@@ -268,9 +267,10 @@ export function CommandPalette({
     if (trimmed) {
       const matchedDocs = docs
         .filter((doc) =>
-          `${doc.title}\n${doc.summary}\n${doc.tags.join(' ')}\n${doc.content}`
-            .toLowerCase()
-            .includes(trimmed)
+          matchesSearchTerms(
+            `${doc.title}\n${doc.summary}\n${doc.tags.join(' ')}\n${doc.content}`,
+            trimmed
+          )
         )
         .slice(0, 6)
       for (const doc of matchedDocs) {
@@ -295,7 +295,11 @@ export function CommandPalette({
           title: cleanStem.length > 56 ? `${cleanStem.slice(0, 56)}…` : cleanStem,
           subtitle: `${q.category}${q.year ? ` · ${q.year}` : ''} · 难度 ${q.difficulty}`,
           run: () => {
-            navigate(`/practice?questionId=${encodeURIComponent(q.id)}`)
+            navigate(
+              q.subject === 'shenlun' && q.type === 'essay'
+                ? `/shenlun-solution?promptId=${encodeURIComponent(q.id)}`
+                : `/practice?questionId=${encodeURIComponent(q.id)}`
+            )
             onClose()
           }
         })
@@ -303,11 +307,11 @@ export function CommandPalette({
     }
 
     return list
-  }, [query, docs, questions, navigate, onClose, onToggleTheme])
+  }, [search.committedValue, docs, questions, navigate, onClose, onToggleTheme])
 
   useEffect(() => {
     setActiveIndex(0)
-  }, [entries.length, query])
+  }, [entries.length, search.committedValue])
 
   if (!open) return null
 
@@ -357,8 +361,10 @@ export function CommandPalette({
           <input
             ref={inputRef}
             className="command-palette-input"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
+            value={search.value}
+            onChange={(event) => search.handleChange(event.target.value, event.nativeEvent)}
+            onCompositionStart={search.handleCompositionStart}
+            onCompositionEnd={search.handleCompositionEnd}
             placeholder="搜索页面、知识文档正文或题库原题（输入 2 字以上搜题目）…"
           />
           <kbd className="command-kbd">Esc</kbd>

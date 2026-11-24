@@ -20,11 +20,13 @@ import {
   ColumnsIcon,
   ExportIcon,
   FlagIcon,
+  MagnifyingGlassIcon,
   NotePencilIcon,
   PaintBrushIcon,
   PrinterIcon,
   RobotIcon,
-  SkipForwardIcon
+  SkipForwardIcon,
+  XIcon
 } from '@phosphor-icons/react'
 import type {
   AiAskResult,
@@ -45,6 +47,7 @@ import { ReadingTypographyBar, useReadingTypography } from '../components/Readin
 import { RegionCascadePicker } from '../components/RegionCascadePicker'
 import { ScratchpadDrawer } from '../components/ScratchpadDrawer'
 import { EmptyState, ErrorState, LoadingState, PageHeader, Section } from '../components/ui'
+import { useImeSearchInput } from '../services/search-input'
 import {
   formatMaterialSource,
   readStoredRegion,
@@ -903,8 +906,22 @@ function Trainer({
           <Field label="关键词" className="grow">
             <Input
               value={keyword}
+              contentBefore={<MagnifyingGlassIcon />}
+              contentAfter={
+                keyword ? (
+                  <button
+                    type="button"
+                    className="search-clear-btn"
+                    aria-label="清除搜索关键词"
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => setKeyword('')}
+                  >
+                    <XIcon size={13} />
+                  </button>
+                ) : undefined
+              }
               onChange={(_, data) => setKeyword(data.value)}
-              placeholder="按题干、解析或标签搜索"
+              placeholder="按题干、材料、解析、标签或卷名搜索（空格分隔多词）"
             />
           </Field>
           <Field label="年份">
@@ -1478,7 +1495,8 @@ function QuestionLibraryView({ tab }: { tab: 'wrong' | 'favorite' | 'notes' }): 
   const [categories, setCategories] = useState<Category[]>([])
   const [category, setCategory] = useState('')
   const [wrongCause, setWrongCause] = useState('')
-  const [query, setQuery] = useState('')
+  const search = useImeSearchInput({ delayMs: 200 })
+  const activeQuery = search.debouncedValue.trim()
   const [expandedId, setExpandedId] = useState('')
   const [noteDrafts, setNoteDrafts] = useState<Record<string, string>>({})
   const [savingNoteId, setSavingNoteId] = useState('')
@@ -1494,38 +1512,35 @@ function QuestionLibraryView({ tab }: { tab: 'wrong' | 'favorite' | 'notes' }): 
 
   useEffect(() => {
     let cancelled = false
-    const timer = window.setTimeout(() => {
-      setError('')
-      void invoke<QuestionLibraryItem[]>({
-        method: 'questions.library',
-        params: {
-          tab,
-          category: category || undefined,
-          wrongCause: tab === 'wrong' && wrongCause ? wrongCause : undefined,
-          query: query.trim() || undefined,
-          limit: 200
-        }
+    setError('')
+    void invoke<QuestionLibraryItem[]>({
+      method: 'questions.library',
+      params: {
+        tab,
+        category: category || undefined,
+        wrongCause: tab === 'wrong' && wrongCause ? wrongCause : undefined,
+        query: activeQuery || undefined,
+        limit: 200
+      }
+    })
+      .then((rows) => {
+        if (cancelled) return
+        setItems(rows)
+        setNoteDrafts((prev) => {
+          const next = { ...prev }
+          for (const row of rows) {
+            if (!(row.question.id in next)) next[row.question.id] = row.note
+          }
+          return next
+        })
       })
-        .then((rows) => {
-          if (cancelled) return
-          setItems(rows)
-          setNoteDrafts((prev) => {
-            const next = { ...prev }
-            for (const row of rows) {
-              if (!(row.question.id in next)) next[row.question.id] = row.note
-            }
-            return next
-          })
-        })
-        .catch((cause) => {
-          if (!cancelled) setError(cause instanceof Error ? cause.message : '题单读取失败')
-        })
-    }, 200)
+      .catch((cause) => {
+        if (!cancelled) setError(cause instanceof Error ? cause.message : '题单读取失败')
+      })
     return () => {
       cancelled = true
-      window.clearTimeout(timer)
     }
-  }, [tab, category, wrongCause, query])
+  }, [tab, category, wrongCause, activeQuery])
 
   async function toggleFavoriteItem(item: QuestionLibraryItem): Promise<void> {
     const nextFav = !item.favorite
@@ -1592,7 +1607,7 @@ function QuestionLibraryView({ tab }: { tab: 'wrong' | 'favorite' | 'notes' }): 
           tab,
           category: category || undefined,
           wrongCause: tab === 'wrong' && wrongCause ? wrongCause : undefined,
-          query: query.trim() || undefined,
+          query: activeQuery || undefined,
           includeAnswers: exportIncludeAnswers,
           includeNotes: true,
           format
@@ -1661,9 +1676,26 @@ function QuestionLibraryView({ tab }: { tab: 'wrong' | 'favorite' | 'notes' }): 
       <div className="toolbar">
         <Field label="关键词" className="grow">
           <Input
-            value={query}
-            onChange={(_, data) => setQuery(data.value)}
-            placeholder="搜索题干、解析、标签或笔记内容"
+            value={search.value}
+            contentBefore={<MagnifyingGlassIcon />}
+            contentAfter={
+              search.value ? (
+                <button
+                  type="button"
+                  className="search-clear-btn"
+                  aria-label="清除搜索关键词"
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => search.clear()}
+                >
+                  <XIcon size={13} />
+                </button>
+              ) : undefined
+            }
+            onChange={(event, data) => search.handleChange(data.value, event.nativeEvent)}
+            onCompositionStart={search.handleCompositionStart}
+            onCompositionEnd={search.handleCompositionEnd}
+            onKeyDown={search.handleKeyDown}
+            placeholder="按题干、材料、解析、标签、卷名或笔记搜索（空格分隔多词）"
           />
         </Field>
         <Field label="专项模块">

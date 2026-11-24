@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Field, Input } from '@fluentui/react-components'
-import { MagnifyingGlassIcon } from '@phosphor-icons/react'
+import { MagnifyingGlassIcon, XIcon } from '@phosphor-icons/react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import type { KnowledgeDocument, Subject } from '@shared/contracts'
+import { matchesSearchTerms } from '@shared/search'
 import { invoke } from '../api'
 import { MarkdownContent } from '../components/MarkdownContent'
 import { ReadingTypographyBar, useReadingTypography } from '../components/ReadingTypographyControl'
 import { EmptyState, ErrorState, LoadingState, PageHeader, Section } from '../components/ui'
+import { useImeSearchInput } from '../services/search-input'
 import { extractSearchSnippet } from '../services/study-helpers'
 
 interface KnowledgePageProps {
@@ -20,7 +22,7 @@ export function KnowledgePage({ subject, kind }: KnowledgePageProps): React.JSX.
   const requestedDocId = searchParams.get('docId') ?? ''
   const [documents, setDocuments] = useState<KnowledgeDocument[]>()
   const [selectedId, setSelectedId] = useState(requestedDocId)
-  const [query, setQuery] = useState('')
+  const search = useImeSearchInput({ delayMs: 0 })
   const [error, setError] = useState('')
   const reading = useReadingTypography()
   useEffect(() => {
@@ -39,15 +41,16 @@ export function KnowledgePage({ subject, kind }: KnowledgePageProps): React.JSX.
       .catch((cause) => setError(cause instanceof Error ? cause.message : '文档读取失败'))
   }, [subject, kind])
   const filtered = useMemo(() => {
-    const trimmed = query.trim().toLowerCase()
     if (!documents) return []
-    if (!trimmed) return documents
+    const committed = search.committedValue.trim()
+    if (!committed) return documents
     return documents.filter((document) =>
-      `${document.title}\n${document.summary}\n${document.tags.join(' ')}\n${document.content}`
-        .toLowerCase()
-        .includes(trimmed)
+      matchesSearchTerms(
+        `${document.title}\n${document.summary}\n${document.tags.join(' ')}\n${document.content}`,
+        committed
+      )
     )
-  }, [documents, query])
+  }, [documents, search.committedValue])
   const selected = filtered.find((item) => item.id === selectedId) ?? filtered[0]
   const contentRef = useRef<HTMLElement>(null)
   const [headings, setHeadings] = useState<
@@ -108,15 +111,33 @@ export function KnowledgePage({ subject, kind }: KnowledgePageProps): React.JSX.
           <div className="document-list">
             <Field label="搜索文档（含正文）">
               <Input
-                value={query}
+                value={search.value}
                 contentBefore={<MagnifyingGlassIcon />}
-                onChange={(_, data) => setQuery(data.value)}
-                placeholder="标题、摘要、标签或正文关键词"
+                contentAfter={
+                  search.value ? (
+                    <button
+                      type="button"
+                      className="search-clear-btn"
+                      aria-label="清除搜索关键词"
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => search.clear()}
+                    >
+                      <XIcon size={13} />
+                    </button>
+                  ) : undefined
+                }
+                onChange={(event, data) => search.handleChange(data.value, event.nativeEvent)}
+                onCompositionStart={search.handleCompositionStart}
+                onCompositionEnd={search.handleCompositionEnd}
+                onKeyDown={search.handleKeyDown}
+                placeholder="标题、摘要、标签或正文关键词（空格分隔多词）"
               />
             </Field>
             <div style={{ marginTop: 12 }}>
               {filtered.map((document) => {
-                const snippet = query.trim() ? extractSearchSnippet(document.content, query) : null
+                const snippet = search.committedValue.trim()
+                  ? extractSearchSnippet(document.content, search.committedValue)
+                  : null
                 return (
                   <button
                     type="button"

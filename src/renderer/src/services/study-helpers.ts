@@ -1,3 +1,5 @@
+import { splitSearchTerms } from '../../../shared/search'
+
 export interface EssayWordLimit {
   min?: number
   max?: number
@@ -41,14 +43,14 @@ export function extractWordLimit(stem: string): EssayWordLimit | null {
   return null
 }
 
-/** 在正文中查找关键词匹配片段（用于知识中心与全局检索预览） */
+/** 在正文中查找关键词匹配片段（支持空格分隔多词，用于知识中心与全局检索预览） */
 export function extractSearchSnippet(
   content: string,
   query: string,
   maxLength = 72
 ): string | null {
-  const needle = query.trim().toLowerCase()
-  if (!needle || !content) return null
+  const fullNeedle = query.trim().toLowerCase()
+  if (!fullNeedle || !content) return null
   const plain = content
     .replace(/```[\s\S]*?```/g, ' ')
     .replace(/!\[[^\]]*\]\([^)]+\)/g, '')
@@ -56,7 +58,15 @@ export function extractSearchSnippet(
     .replace(/[#>*_`]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
-  const idx = plain.toLowerCase().indexOf(needle)
+  const lower = plain.toLowerCase()
+  let idx = lower.indexOf(fullNeedle)
+  if (idx < 0) {
+    const terms = splitSearchTerms(query).sort((a, b) => b.length - a.length)
+    for (const term of terms) {
+      idx = lower.indexOf(term.toLowerCase())
+      if (idx >= 0) break
+    }
+  }
   if (idx < 0) return null
   const start = Math.max(0, idx - 18)
   const end = Math.min(plain.length, start + maxLength)

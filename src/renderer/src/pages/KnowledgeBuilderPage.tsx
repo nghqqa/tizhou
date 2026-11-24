@@ -19,6 +19,7 @@ import {
 } from '@fluentui/react-components'
 import {
   ArrowClockwiseIcon,
+  MagnifyingGlassIcon,
   MagnifyingGlassPlusIcon,
   MagnifyingGlassMinusIcon,
   CheckCircleIcon,
@@ -30,9 +31,11 @@ import {
   TrashIcon,
   WrenchIcon,
   LightningIcon,
-  SparkleIcon
+  SparkleIcon,
+  XIcon
 } from '@phosphor-icons/react'
 import { PIP_MIRROR_OPTIONS, pipMirrorLabel } from '@shared/pip-mirrors'
+import { matchesSearchTerms } from '@shared/search'
 import type {
   BatchReviewResult,
   KnowledgeArtifactDetail,
@@ -52,6 +55,7 @@ import type {
 import { formatBytes, invoke } from '../api'
 import { MarkdownContent } from '../components/MarkdownContent'
 import { EmptyState, ErrorState, LoadingState, PageHeader, Section } from '../components/ui'
+import { useImeSearchInput } from '../services/search-input'
 import { useAppStore } from '../store'
 
 const RUNNING_STATES = new Set(['queued', 'running', 'cancelling'])
@@ -194,7 +198,7 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
   const [engine, setEngine] = useState<KnowledgeEngineStatus>()
   const [scan, setScan] = useState<KnowledgeSourceScan>()
   const [sourcePath, setSourcePath] = useState('')
-  const [query, setQuery] = useState('')
+  const search = useImeSearchInput({ delayMs: 0 })
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [mode, setMode] = useState<KnowledgeBuildMode>('direct')
   const [quality, setQuality] = useState<KnowledgeBuildQuality>('high')
@@ -247,11 +251,9 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
 
   const visibleFiles = useMemo(() => {
     if (!scan) return []
-    const keyword = query.trim().toLowerCase()
-    return scan.files.filter(
-      (file) => !keyword || file.relativePath.toLowerCase().includes(keyword)
-    )
-  }, [query, scan])
+    const keyword = search.committedValue.trim()
+    return scan.files.filter((file) => !keyword || matchesSearchTerms(file.relativePath, keyword))
+  }, [search.committedValue, scan])
 
   const visibleEligible = visibleFiles.filter((file) => file.eligible)
   const selectedSize = scan?.files
@@ -1035,8 +1037,25 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
 
             <div className="builder-file-toolbar">
               <Input
-                value={query}
-                onChange={(_, data) => setQuery(data.value)}
+                value={search.value}
+                contentBefore={<MagnifyingGlassIcon />}
+                contentAfter={
+                  search.value ? (
+                    <button
+                      type="button"
+                      className="search-clear-btn"
+                      aria-label="清除筛选路径"
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => search.clear()}
+                    >
+                      <XIcon size={13} />
+                    </button>
+                  ) : undefined
+                }
+                onChange={(event, data) => search.handleChange(data.value, event.nativeEvent)}
+                onCompositionStart={search.handleCompositionStart}
+                onCompositionEnd={search.handleCompositionEnd}
+                onKeyDown={search.handleKeyDown}
                 placeholder="按路径筛选文件"
               />
               <Button

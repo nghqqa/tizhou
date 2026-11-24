@@ -9,6 +9,7 @@ import {
   extractRegionFromText,
   normalizeRegionName
 } from '../../shared/region'
+import { escapeSqlLike, splitSearchTerms } from '../../shared/search'
 import type {
   AiConversation,
   AiMessage,
@@ -86,6 +87,38 @@ interface QuestionListFilter {
   onlyFavorite?: boolean
   onlyUnattempted?: boolean
   limit?: number
+}
+
+const QUESTION_SEARCH_COLUMNS = [
+  'q.stem',
+  'q.explanation',
+  'q.tags_json',
+  "COALESCE(q.material, '')",
+  "COALESCE(q.paper, '')",
+  "COALESCE(q.region, '')",
+  'q.source',
+  'q.category',
+  "COALESCE(CAST(q.year AS TEXT), '')"
+] as const
+
+const LIBRARY_SEARCH_COLUMNS = [...QUESTION_SEARCH_COLUMNS, "COALESCE(n.content, '')"] as const
+
+const DOCUMENT_SEARCH_COLUMNS = ['d.title', 'd.summary', 'd.content', 'd.tags_json'] as const
+
+function appendKeywordFilter(
+  where: string[],
+  values: SqlValue[],
+  query: string | undefined,
+  columns: readonly string[]
+): void {
+  const terms = splitSearchTerms(query ?? '')
+  for (const term of terms) {
+    const pattern = `%${escapeSqlLike(term)}%`
+    where.push(`(${columns.map((column) => `${column} LIKE ? ESCAPE '\\'`).join(' OR ')})`)
+    for (let index = 0; index < columns.length; index += 1) {
+      values.push(pattern)
+    }
+  }
 }
 
 function now(): string {
@@ -820,11 +853,7 @@ export class DatabaseService {
       where.push('q.paper = ?')
       values.push(filter.paper.trim())
     }
-    if (filter.query?.trim()) {
-      where.push('(q.stem LIKE ? OR q.explanation LIKE ? OR q.tags_json LIKE ?)')
-      const keyword = `%${filter.query.trim()}%`
-      values.push(keyword, keyword, keyword)
-    }
+    appendKeywordFilter(where, values, filter.query, QUESTION_SEARCH_COLUMNS)
     if (filter.onlyWrong)
       where.push(
         'EXISTS (SELECT 1 FROM wrong_questions w WHERE w.question_id = q.id AND w.mastered = 0)'
@@ -890,14 +919,7 @@ export class DatabaseService {
       where.push('q.category = ?')
       values.push(params.category.trim())
     }
-    if (params.query?.trim()) {
-      const escaped = params.query.trim().replace(/[\\%_]/g, '\\$&')
-      const keyword = `%${escaped}%`
-      where.push(
-        "(q.stem LIKE ? ESCAPE '\\' OR q.explanation LIKE ? ESCAPE '\\' OR q.tags_json LIKE ? ESCAPE '\\' OR COALESCE(n.content, '') LIKE ? ESCAPE '\\')"
-      )
-      values.push(keyword, keyword, keyword, keyword)
-    }
+    appendKeywordFilter(where, values, params.query, LIBRARY_SEARCH_COLUMNS)
     const rawLimit = Number.isFinite(params.limit) ? Number(params.limit) : 200
     const limit = Math.max(1, Math.min(500, Math.round(rawLimit)))
     const rows = this.db
@@ -1150,11 +1172,7 @@ export class DatabaseService {
       where.push('d.kind = ?')
       values.push(filter.kind)
     }
-    if (filter.query?.trim()) {
-      where.push('(d.title LIKE ? OR d.summary LIKE ? OR d.content LIKE ?)')
-      const keyword = `%${filter.query.trim()}%`
-      values.push(keyword, keyword, keyword)
-    }
+    appendKeywordFilter(where, values, filter.query, DOCUMENT_SEARCH_COLUMNS)
     const rows = this.db
       .prepare(
         `SELECT d.* FROM documents d JOIN vault_registry v ON v.id = d.vault_id

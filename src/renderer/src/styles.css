@@ -4375,3 +4375,28 @@ mark.tz-hl-red {
   gap: 6px;
   margin-top: 12px;
 }
+
+.search-clear-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--tz-ink-3);
+  cursor: pointer;
+  transition:
+    background-color 120ms ease,
+    color 120ms ease;
+}
+.search-clear-btn:hover:not(:disabled) {
+  background: var(--tz-surface-2);
+  color: var(--tz-ink);
+}
+.search-clear-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}

@@ -5,7 +5,9 @@ import {
   ArrowRightIcon,
   ClockIcon,
   FloppyDiskIcon,
-  SparkleIcon
+  MagnifyingGlassIcon,
+  SparkleIcon,
+  XIcon
 } from '@phosphor-icons/react'
 import { useSearchParams } from 'react-router-dom'
 import type {
@@ -31,6 +33,7 @@ import { RegionCascadePicker } from '../components/RegionCascadePicker'
 import { ShenlunAnswerSheet } from '../components/ShenlunAnswerSheet'
 import { ShenlunPromptPicker } from '../components/ShenlunPromptPicker'
 import { EmptyState, ErrorState, LoadingState, PageHeader, Section } from '../components/ui'
+import { useImeSearchInput } from '../services/search-input'
 import {
   extractWordLimit,
   formatMaterialSource,
@@ -67,7 +70,14 @@ export function ShenlunSolutionPage(): React.JSX.Element {
   const [regions, setRegions] = useState<string[]>([])
   const [regionCounts, setRegionCounts] = useState<Array<{ region: string; count: number }>>([])
   const [shenlunType, setShenlunType] = useState<'' | ShenlunQuestionType>('')
-  const [keyword, setKeyword] = useState('')
+  const search = useImeSearchInput({ delayMs: 250 })
+  const activeQuery = search.debouncedValue.trim()
+  const [loadingPrompts, setLoadingPrompts] = useState(true)
+  const [appliedFilter, setAppliedFilter] = useState<{ region: string; query: string }>({
+    region: '',
+    query: ''
+  })
+  const [hasAnyPrompts, setHasAnyPrompts] = useState<boolean | null>(null)
   const [onlyUnattempted, setOnlyUnattempted] = useState(false)
   const [officialTypography, setOfficialTypography] = useState<boolean>(() => {
     try {
@@ -159,13 +169,12 @@ export function ShenlunSolutionPage(): React.JSX.Element {
     () => (visiblePrompts ? visiblePrompts.findIndex((prompt) => prompt.id === promptId) : -1),
     [visiblePrompts, promptId]
   )
+  const totalVisible = visiblePrompts?.length ?? 0
   const currentSummary = useMemo(
-    () =>
-      (visiblePrompts && currentIndex >= 0 ? visiblePrompts[currentIndex] : undefined) ??
-      prompts?.find((prompt) => prompt.id === promptId),
-    [visiblePrompts, currentIndex, prompts, promptId]
+    () => (visiblePrompts && currentIndex >= 0 ? visiblePrompts[currentIndex] : undefined),
+    [visiblePrompts, currentIndex]
   )
-  const current = currentDetail?.id === promptId ? currentDetail : undefined
+  const current = totalVisible > 0 && currentDetail?.id === promptId ? currentDetail : undefined
 
   // 加载全局申论评估记录（用于标注每题状态与「只看未做」筛选）
   async function refreshAllHistory(): Promise<void> {
@@ -213,14 +222,15 @@ export function ShenlunSolutionPage(): React.JSX.Element {
     : '单一题'
   const currentLimit = current ? extractWordLimit(current.stem) : null
 
+  const hasActivePrompt = Boolean(promptId) && totalVisible > 0
   useEffect(() => {
     setElapsedSeconds(0)
-    if (!promptId) return
+    if (!hasActivePrompt) return
     const timer = window.setInterval(() => {
       setElapsedSeconds((sec) => sec + 1)
     }, 1000)
     return () => window.clearInterval(timer)
-  }, [promptId])
+  }, [promptId, hasActivePrompt])
 
   function toggleTimerVisibility(): void {
     setShowTimer((prev) => {
@@ -264,51 +274,61 @@ export function ShenlunSolutionPage(): React.JSX.Element {
     if (!requestedPromptId || evaluating) return
     void flushPendingDraft(false).then(() => {
       setRegion('')
+      search.clear()
       setShenlunType('')
       setOnlyUnattempted(false)
       setPromptId(requestedPromptId)
     })
-  }, [requestedPromptId, evaluating])
+  }, [requestedPromptId, evaluating, search.clear])
 
-  // 关键词搜索（防抖）：仅拉取轻量摘要，不一次性传递几百篇长材料
+  // 地区/关键词查询（输入防抖与中文 IME 合成态由 useImeSearchInput 统一处理，首次加载与切地区立即执行）
   useEffect(() => {
     let cancelled = false
-    const timer = window.setTimeout(() => {
-      void invoke<QuestionSummary[]>({
-        method: 'vault.listSummary',
-        params: {
-          subject: 'shenlun',
-          type: 'essay',
-          limit: 5000,
-          region: region || undefined,
-          query: keyword.trim() || undefined
+    setLoadingPrompts(true)
+    setError('')
+    void invoke<QuestionSummary[]>({
+      method: 'vault.listSummary',
+      params: {
+        subject: 'shenlun',
+        type: 'essay',
+        limit: 5000,
+        region: region || undefined,
+        query: activeQuery || undefined
+      }
+    })
+      .then(async (items) => {
+        if (cancelled) return
+        const previous = activePromptIdRef.current
+        const nextId =
+          requestedPromptId && items.some((item) => item.id === requestedPromptId)
+            ? requestedPromptId
+            : previous && items.some((item) => item.id === previous)
+              ? previous
+              : (items[0]?.id ?? '')
+        if (nextId !== previous) {
+          await flushPendingDraft(false)
+          if (cancelled) return
+        }
+        setPrompts(items)
+        setAppliedFilter({ region, query: activeQuery })
+        if (items.length > 0) {
+          setHasAnyPrompts(true)
+        } else if (!region && !activeQuery) {
+          setHasAnyPrompts(false)
+        }
+        setPromptId(nextId)
+        setLoadingPrompts(false)
+      })
+      .catch((cause) => {
+        if (!cancelled) {
+          setError(cause instanceof Error ? cause.message : '申论题目读取失败')
+          setLoadingPrompts(false)
         }
       })
-        .then(async (items) => {
-          if (cancelled) return
-          const previous = activePromptIdRef.current
-          const nextId =
-            requestedPromptId && items.some((item) => item.id === requestedPromptId)
-              ? requestedPromptId
-              : previous && items.some((item) => item.id === previous)
-                ? previous
-                : (items[0]?.id ?? '')
-          if (nextId !== previous) {
-            await flushPendingDraft(false)
-            if (cancelled) return
-          }
-          setPrompts(items)
-          setPromptId(nextId)
-        })
-        .catch((cause) => {
-          if (!cancelled) setError(cause instanceof Error ? cause.message : '申论题目读取失败')
-        })
-    }, 300)
     return () => {
       cancelled = true
-      window.clearTimeout(timer)
     }
-  }, [keyword, region, requestedPromptId])
+  }, [activeQuery, region, requestedPromptId])
 
   // 开启「只看未做」导致当前题不在可见列表中时，先落盘草稿再自动切到第一道未做题
   useEffect(() => {
@@ -327,6 +347,11 @@ export function ShenlunSolutionPage(): React.JSX.Element {
   useEffect(() => {
     if (!promptId) {
       setCurrentDetail(undefined)
+      setContent('')
+      setEvaluation(undefined)
+      setSelectedHistoryId('')
+      setPromptHistory([])
+      setExpandedHistoryIds({})
       return
     }
     let cancelled = false
@@ -520,14 +545,29 @@ export function ShenlunSolutionPage(): React.JSX.Element {
     setView('write')
   }
 
-  if (!prompts)
+  function resetAllFilters(): void {
+    setRegion('')
+    writeStoredRegion('tizhou:shenlun-region', '')
+    search.clear()
+    setShenlunType('')
+    setOnlyUnattempted(false)
+  }
+
+  if (prompts === undefined)
     return (
       <div className="page">
         <PageHeader title="申论作答" />
         <LoadingState />
       </div>
     )
-  if (!prompts.length && !region && !keyword.trim())
+  if (
+    hasAnyPrompts === false &&
+    !loadingPrompts &&
+    !region &&
+    !activeQuery &&
+    !appliedFilter.region &&
+    !appliedFilter.query
+  )
     return (
       <div className="page">
         <PageHeader title="申论作答" />
@@ -537,31 +577,14 @@ export function ShenlunSolutionPage(): React.JSX.Element {
         />
       </div>
     )
-  if (!prompts.length)
-    return (
-      <div className="page page-solution">
-        <PageHeader
-          eyebrow="提升 · 申论作答"
-          title="申论作答"
-          description="草稿在本机自动保存。未配置 AI 时使用透明的本地规则评分，配置后自动尝试语义评估。"
-        />
-        <EmptyState
-          title="当前筛选下没有匹配的申论题目"
-          description={`当前条件（${region ? `地区：${region}` : ''}${region && keyword.trim() ? '，' : ''}${keyword.trim() ? `关键词：${keyword.trim()}` : ''}）暂无题目，可清除筛选查看全部申论真题。`}
-          actionLabel="查看全部题目"
-          onAction={() => {
-            setRegion('')
-            writeStoredRegion('tizhou:shenlun-region', '')
-            setKeyword('')
-          }}
-        />
-      </div>
-    )
 
-  const totalVisible = visiblePrompts?.length ?? 0
   const hasPrev = currentIndex > 0
   const hasNext = currentIndex >= 0 && currentIndex < totalVisible - 1
   const currentStatus = current ? statusByPrompt.get(current.id) : undefined
+  const appliedConditionParts = [
+    appliedFilter.region ? `地区：${appliedFilter.region}` : '',
+    appliedFilter.query ? `关键词：${appliedFilter.query}` : ''
+  ].filter(Boolean)
 
   return (
     <div className="page page-solution">
@@ -571,7 +594,11 @@ export function ShenlunSolutionPage(): React.JSX.Element {
         description="草稿在本机自动保存。未配置 AI 时使用透明的本地规则评分，配置后自动尝试语义评估。"
         actions={
           <>
-            <Button icon={<FloppyDiskIcon />} disabled={saving} onClick={() => void saveDraft()}>
+            <Button
+              icon={<FloppyDiskIcon />}
+              disabled={saving || !current}
+              onClick={() => void saveDraft()}
+            >
               {saving ? '保存中' : '保存草稿'}
             </Button>
             <Button
@@ -621,10 +648,28 @@ export function ShenlunSolutionPage(): React.JSX.Element {
           </Field>
           <Field className="grow" label="搜索题目">
             <Input
-              value={keyword}
+              value={search.value}
               disabled={evaluating}
-              onChange={(_, data) => setKeyword(data.value)}
-              placeholder="按题干关键词过滤"
+              contentBefore={<MagnifyingGlassIcon />}
+              contentAfter={
+                search.value ? (
+                  <button
+                    type="button"
+                    className="search-clear-btn"
+                    aria-label="清除搜索关键词"
+                    disabled={evaluating}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => search.clear()}
+                  >
+                    <XIcon size={13} />
+                  </button>
+                ) : undefined
+              }
+              onChange={(event, data) => search.handleChange(data.value, event.nativeEvent)}
+              onCompositionStart={search.handleCompositionStart}
+              onCompositionEnd={search.handleCompositionEnd}
+              onKeyDown={search.handleKeyDown}
+              placeholder="按题干、材料、卷名或年份搜索（空格分隔多词）"
             />
           </Field>
           <Field className="grow" label="选择题目">
@@ -646,7 +691,7 @@ export function ShenlunSolutionPage(): React.JSX.Element {
             disabled={evaluating}
             onClick={() => setShenlunType('')}
           >
-            全部题型 ({prompts?.length ?? 0})
+            全部题型 ({prompts.length})
           </button>
           {SHENLUN_QUESTION_TYPES.map((kind) => (
             <button
@@ -662,351 +707,382 @@ export function ShenlunSolutionPage(): React.JSX.Element {
             </button>
           ))}
         </div>
-        <div className="solution-nav-bar">
-          <div className="question-meta">
-            {(current?.region ?? currentSummary?.region) && (
-              <span className="pill">{current?.region ?? currentSummary?.region}</span>
-            )}
-            {(() => {
-              const summaryOrDetail = current ?? currentSummary
-              if (!summaryOrDetail) return null
-              const kind = classifyShenlunType(
-                summaryOrDetail.category,
-                current?.stem ?? currentSummary?.stemPreview
-              )
-              return (
-                <>
-                  <span className="pill">{kind}</span>
-                  {(current?.year ?? currentSummary?.year) && (
-                    <span className="pill">{current?.year ?? currentSummary?.year}</span>
-                  )}
-                  {(current?.paper ?? currentSummary?.paper) && (
-                    <span className="pill">{current?.paper ?? currentSummary?.paper}</span>
-                  )}
-                  {(current?.source ?? currentSummary?.source) && (
-                    <span className="pill" title={current?.source ?? currentSummary?.source}>
-                      教材来源：{formatMaterialSource(current?.source ?? currentSummary?.source)}
-                    </span>
-                  )}
-                  {summaryOrDetail.category && summaryOrDetail.category !== kind && (
-                    <span className="pill">{summaryOrDetail.category}</span>
-                  )}
-                </>
-              )
-            })()}
-            {(current ?? currentSummary) && (
-              <span className="pill">难度 {(current ?? currentSummary)!.difficulty}</span>
-            )}
-            {currentStatus && (
-              <span className="pill is-evaluated">
-                已评 {currentStatus.count} 次 · 最新 {currentStatus.latestScore} 分
-              </span>
-            )}
-          </div>
-          <div className="solution-nav-actions">
-            {(() => {
-              const overtimeThreshold = activeQuestionType === '作文题' ? 3600 : 1200
-              const timerText = `${String(Math.floor(elapsedSeconds / 60)).padStart(2, '0')}:${String(elapsedSeconds % 60).padStart(2, '0')}`
-              return (
-                <button
-                  type="button"
-                  className={`practice-timer${showTimer && elapsedSeconds >= overtimeThreshold ? ' is-overtime' : ''}`}
-                  title={
-                    showTimer
-                      ? `单题建议用时 ${activeQuestionType === '作文题' ? '60' : '20'} 分钟（点击隐藏计时）`
-                      : '点击显示单题计时'
-                  }
-                  onClick={toggleTimerVisibility}
-                >
-                  <ClockIcon size={12} />
-                  {showTimer ? timerText : '计时已隐藏'}
-                </button>
-              )
-            })()}
-            <Button
-              size="small"
-              appearance={officialTypography ? 'primary' : 'outline'}
-              aria-pressed={officialTypography}
-              title="按党政机关公文排版习惯（仿宋正文、黑体/楷体标题、首行缩进）呈现材料与作答"
-              onClick={() => setOfficialTypography((value) => !value)}
-            >
-              公文体
-            </Button>
-            <Button
-              size="small"
-              appearance={onlyUnattempted ? 'primary' : 'outline'}
-              disabled={evaluating}
-              onClick={() => void toggleOnlyUnattempted()}
-            >
-              {onlyUnattempted ? '显示全部题目' : '只看未做'}
-            </Button>
-            <div className="solution-pager">
-              <Button
-                size="small"
-                icon={<ArrowLeftIcon />}
-                disabled={evaluating || !hasPrev}
-                onClick={() => void goAdjacent(-1)}
-              >
-                上一题
-              </Button>
-              {totalVisible > 0 && currentIndex >= 0 && (
-                <span className="solution-pager-count">
-                  {currentIndex + 1} / {totalVisible}
-                </span>
-              )}
-              <Button
-                size="small"
-                icon={<ArrowRightIcon />}
-                iconPosition="after"
-                disabled={evaluating || !hasNext}
-                onClick={() => void goAdjacent(1)}
-              >
-                下一题
-              </Button>
-            </div>
-          </div>
-        </div>
-        {onlyUnattempted && totalVisible === 0 ? (
-          <EmptyState
-            title="当前筛选下已全部做完"
-            description="所有匹配题目均已有评估记录，可切换「显示全部题目」继续二刷精进。"
-          />
+        {prompts.length === 0 ? (
+          loadingPrompts ? (
+            <LoadingState label="正在检索申论题目" />
+          ) : (
+            <EmptyState
+              title="当前筛选下没有匹配的申论题目"
+              description={
+                appliedConditionParts.length > 0
+                  ? `当前条件（${appliedConditionParts.join('，')}）暂无题目，可直接修改上方关键词或清除筛选查看全部申论真题。`
+                  : '当前筛选下暂无题目，可清除筛选查看全部申论真题。'
+              }
+              actionLabel="查看全部题目"
+              onAction={resetAllFilters}
+            />
+          )
+        ) : totalVisible === 0 ? (
+          shenlunType && typeCounts[shenlunType] === 0 ? (
+            <EmptyState
+              title={`当前筛选下暂无「${shenlunType}」`}
+              description="可切换其他题型标签，或查看全部题型。"
+              actionLabel="查看全部题型"
+              onAction={() => setShenlunType('')}
+            />
+          ) : (
+            <EmptyState
+              title="当前筛选下已全部做完"
+              description="所有匹配题目均已有评估记录，可切换「显示全部题目」继续二刷精进。"
+              actionLabel="显示全部题目"
+              onAction={() => void toggleOnlyUnattempted()}
+            />
+          )
         ) : (
-          <div className={`essay-columns${officialTypography ? ' is-official-doc' : ''}`}>
-            <div className="essay-col">
-              {current?.material &&
-                (() => {
-                  const blocks = splitShenlunMaterialBlocks(current.material)
-                  const recSet =
-                    blocks.length >= 2
-                      ? new Set(
-                          recommendShenlunMaterialIndices(
-                            blocks,
-                            current.stem,
-                            current.explanation,
-                            classifyShenlunType(current.category, current.stem)
-                          )
-                        )
-                      : new Set<number>()
-                  const activeBlock =
-                    typeof materialTab === 'number' && blocks[materialTab]
-                      ? blocks[materialTab]!
-                      : null
-                  const displayedMaterial = formatShenlunMaterialParagraphs(
-                    activeBlock ? activeBlock.raw : current.material
+          <>
+            <div className="solution-nav-bar">
+              <div className="question-meta">
+                {(current?.region ?? currentSummary?.region) && (
+                  <span className="pill">{current?.region ?? currentSummary?.region}</span>
+                )}
+                {(() => {
+                  const summaryOrDetail = current ?? currentSummary
+                  if (!summaryOrDetail) return null
+                  const kind = classifyShenlunType(
+                    summaryOrDetail.category,
+                    current?.stem ?? currentSummary?.stemPreview
                   )
                   return (
-                    <HighlightableMaterial
-                      promptId={current.id}
-                      content={displayedMaterial}
-                      sourceFilePath={current.filePath}
-                      onExtract={handleExtractToDraft}
-                      headerLeft={
-                        blocks.length >= 2 ? (
-                          <div className="essay-material-head">
-                            <h3>给定资料</h3>
-                            <div
-                              className="essay-material-tabs"
-                              role="tablist"
-                              aria-label="材料分段"
-                            >
-                              <button
-                                type="button"
-                                role="tab"
-                                aria-selected={materialTab === 'all'}
-                                className={`essay-material-tab${materialTab === 'all' ? ' is-active' : ''}`}
-                                onClick={() => setMaterialTab('all')}
-                              >
-                                全部 ({blocks.length})
-                              </button>
-                              {blocks.map((block, idx) => (
-                                <button
-                                  key={`${block.title}-${idx}`}
-                                  type="button"
-                                  role="tab"
-                                  aria-selected={materialTab === idx}
-                                  className={`essay-material-tab${materialTab === idx ? ' is-active' : ''}`}
-                                  onClick={() => setMaterialTab(idx)}
-                                >
-                                  {block.title}
-                                  {recSet.has(idx) && (
-                                    <span className="essay-material-badge">相关</span>
-                                  )}
-                                </button>
-                              ))}
-                            </div>
-                          </div>
-                        ) : (
-                          <h3>给定资料</h3>
-                        )
-                      }
-                    />
+                    <>
+                      <span className="pill">{kind}</span>
+                      {(current?.year ?? currentSummary?.year) && (
+                        <span className="pill">{current?.year ?? currentSummary?.year}</span>
+                      )}
+                      {(current?.paper ?? currentSummary?.paper) && (
+                        <span className="pill">{current?.paper ?? currentSummary?.paper}</span>
+                      )}
+                      {(current?.source ?? currentSummary?.source) && (
+                        <span className="pill" title={current?.source ?? currentSummary?.source}>
+                          教材来源：
+                          {formatMaterialSource(current?.source ?? currentSummary?.source)}
+                        </span>
+                      )}
+                      {summaryOrDetail.category && summaryOrDetail.category !== kind && (
+                        <span className="pill">{summaryOrDetail.category}</span>
+                      )}
+                    </>
                   )
                 })()}
-              <MarkdownContent
-                className="question-stem"
-                content={current?.stem ?? ''}
-                sourceFilePath={current?.filePath}
-              />
-            </div>
-            <div className="essay-col">
-              <div className="solution-tabs-bar">
-                <TabList
-                  className="solution-tabs"
-                  selectedValue={view}
-                  onTabSelect={(_, data) =>
-                    setView(data.value as 'write' | 'reference' | 'history')
-                  }
-                >
-                  <Tab value="write">我的作答</Tab>
-                  <Tab value="reference">参考解析</Tab>
-                  <Tab value="history">历史记录 ({promptHistory.length})</Tab>
-                </TabList>
-                {view === 'write' && (
-                  <div className="sheet-mode-switch" role="group" aria-label="作答模式">
-                    <button
-                      type="button"
-                      className={`sheet-mode-btn${sheetMode === 'sheet' ? ' is-active' : ''}`}
-                      onClick={() => setSheetMode('sheet')}
-                    >
-                      答题卡
-                    </button>
-                    <button
-                      type="button"
-                      className={`sheet-mode-btn${sheetMode === 'plain' ? ' is-active' : ''}`}
-                      onClick={() => setSheetMode('plain')}
-                    >
-                      自由框
-                    </button>
-                  </div>
+                {(current ?? currentSummary) && (
+                  <span className="pill">难度 {(current ?? currentSummary)!.difficulty}</span>
+                )}
+                {currentStatus && (
+                  <span className="pill is-evaluated">
+                    已评 {currentStatus.count} 次 · 最新 {currentStatus.latestScore} 分
+                  </span>
                 )}
               </div>
-              {view === 'write' ? (
-                sheetMode === 'sheet' ? (
-                  <ShenlunAnswerSheet
-                    value={content}
-                    onChange={updateDraftContent}
-                    limit={currentLimit}
-                    headerTitle={
-                      currentIndex >= 0
-                        ? `第 ${currentIndex + 1} 题 · ${activeQuestionType}`
-                        : activeQuestionType
-                    }
-                    officialTypography={officialTypography}
-                  />
-                ) : (
-                  <div className="essay-editor-wrap">
-                    <textarea
-                      className="essay-editor"
-                      data-testid="shenlun-draft-input"
-                      aria-label="申论作答草稿"
-                      value={content}
-                      onChange={(event) => updateDraftContent(event.target.value)}
-                      placeholder="建议先列要点，再组织成完整答案。草稿会在停止输入后自动保存。"
-                    />
-                    {(() => {
-                      const wordCount = content.replace(/\s/g, '').length
-                      const limit = currentLimit
-                      const overLimit = Boolean(limit?.max && wordCount > limit.max)
-                      const underLimit = Boolean(
-                        limit?.min && wordCount > 0 && wordCount < limit.min
-                      )
-                      return (
-                        <span
-                          className={`essay-word-counter${overLimit ? ' is-over-limit' : underLimit ? ' is-under-limit' : ''}`}
-                          title={limit ? `已识别题干字数要求：${limit.label}` : undefined}
-                        >
-                          {limit ? `${wordCount} / ${limit.label}` : `${wordCount} 字`}
-                        </span>
-                      )
-                    })()}
-                  </div>
-                )
-              ) : view === 'reference' ? (
-                <div className="answer-panel">
-                  <h3>参考要点</h3>
-                  <p>{current?.answer.join('；')}</p>
-                  <MarkdownContent
-                    content={current?.explanation ?? ''}
-                    sourceFilePath={current?.filePath}
-                  />
+              <div className="solution-nav-actions">
+                {(() => {
+                  const overtimeThreshold = activeQuestionType === '作文题' ? 3600 : 1200
+                  const timerText = `${String(Math.floor(elapsedSeconds / 60)).padStart(2, '0')}:${String(elapsedSeconds % 60).padStart(2, '0')}`
+                  return (
+                    <button
+                      type="button"
+                      className={`practice-timer${showTimer && elapsedSeconds >= overtimeThreshold ? ' is-overtime' : ''}`}
+                      title={
+                        showTimer
+                          ? `单题建议用时 ${activeQuestionType === '作文题' ? '60' : '20'} 分钟（点击隐藏计时）`
+                          : '点击显示单题计时'
+                      }
+                      onClick={toggleTimerVisibility}
+                    >
+                      <ClockIcon size={12} />
+                      {showTimer ? timerText : '计时已隐藏'}
+                    </button>
+                  )
+                })()}
+                <Button
+                  size="small"
+                  appearance={officialTypography ? 'primary' : 'outline'}
+                  aria-pressed={officialTypography}
+                  title="按党政机关公文排版习惯（仿宋正文、黑体/楷体标题、首行缩进）呈现材料与作答"
+                  onClick={() => setOfficialTypography((value) => !value)}
+                >
+                  公文体
+                </Button>
+                <Button
+                  size="small"
+                  appearance={onlyUnattempted ? 'primary' : 'outline'}
+                  disabled={evaluating}
+                  onClick={() => void toggleOnlyUnattempted()}
+                >
+                  {onlyUnattempted ? '显示全部题目' : '只看未做'}
+                </Button>
+                <div className="solution-pager">
+                  <Button
+                    size="small"
+                    icon={<ArrowLeftIcon />}
+                    disabled={evaluating || !hasPrev}
+                    onClick={() => void goAdjacent(-1)}
+                  >
+                    上一题
+                  </Button>
+                  {totalVisible > 0 && currentIndex >= 0 && (
+                    <span className="solution-pager-count">
+                      {currentIndex + 1} / {totalVisible}
+                    </span>
+                  )}
+                  <Button
+                    size="small"
+                    icon={<ArrowRightIcon />}
+                    iconPosition="after"
+                    disabled={evaluating || !hasNext}
+                    onClick={() => void goAdjacent(1)}
+                  >
+                    下一题
+                  </Button>
                 </div>
-              ) : (
-                <div className="answer-panel">
-                  {promptHistory.length === 0 ? (
-                    <p className="muted">本题尚无评估记录，提交评估后会在此保留每次作答与点评。</p>
-                  ) : (
-                    <div className="solution-history-list">
-                      {promptHistory.map((record, index) => {
-                        const active = record.id === selectedHistoryId
-                        const trimmed = record.content.trim()
-                        const wordCount = record.content.replace(/\s/g, '').length
-                        const canExpand = trimmed.length > 140 || trimmed.split('\n').length > 4
-                        const expanded = Boolean(expandedHistoryIds[record.id])
-                        return (
-                          <div
-                            key={record.id}
-                            className={`solution-history-item${active ? ' is-active' : ''}`}
-                          >
-                            <div className="solution-history-head">
-                              <div>
-                                <strong>
-                                  第 {promptHistory.length - index} 次 · {record.evaluation.score}{' '}
-                                  分
-                                </strong>
-                                <span className="solution-history-meta">
-                                  {formatFullDate(record.createdAt)} · {wordCount} 字 ·{' '}
-                                  {record.evaluation.provider}
-                                </span>
-                              </div>
-                              <div className="solution-history-actions">
-                                <Button
-                                  size="small"
-                                  appearance={active ? 'primary' : 'subtle'}
-                                  onClick={() => {
-                                    setEvaluation(record.evaluation)
-                                    setSelectedHistoryId(record.id)
-                                  }}
+              </div>
+            </div>
+            <div className={`essay-columns${officialTypography ? ' is-official-doc' : ''}`}>
+              <div className="essay-col">
+                {current?.material &&
+                  (() => {
+                    const blocks = splitShenlunMaterialBlocks(current.material)
+                    const recSet =
+                      blocks.length >= 2
+                        ? new Set(
+                            recommendShenlunMaterialIndices(
+                              blocks,
+                              current.stem,
+                              current.explanation,
+                              classifyShenlunType(current.category, current.stem)
+                            )
+                          )
+                        : new Set<number>()
+                    const activeBlock =
+                      typeof materialTab === 'number' && blocks[materialTab]
+                        ? blocks[materialTab]!
+                        : null
+                    const displayedMaterial = formatShenlunMaterialParagraphs(
+                      activeBlock ? activeBlock.raw : current.material
+                    )
+                    return (
+                      <HighlightableMaterial
+                        promptId={current.id}
+                        content={displayedMaterial}
+                        sourceFilePath={current.filePath}
+                        onExtract={handleExtractToDraft}
+                        headerLeft={
+                          blocks.length >= 2 ? (
+                            <div className="essay-material-head">
+                              <h3>给定资料</h3>
+                              <div
+                                className="essay-material-tabs"
+                                role="tablist"
+                                aria-label="材料分段"
+                              >
+                                <button
+                                  type="button"
+                                  role="tab"
+                                  aria-selected={materialTab === 'all'}
+                                  className={`essay-material-tab${materialTab === 'all' ? ' is-active' : ''}`}
+                                  onClick={() => setMaterialTab('all')}
                                 >
-                                  {active ? '查看中' : '查看点评'}
-                                </Button>
-                                <Button
-                                  size="small"
-                                  disabled={evaluating}
-                                  onClick={() => loadHistoryDraft(record)}
-                                >
-                                  载入修改
-                                </Button>
+                                  全部 ({blocks.length})
+                                </button>
+                                {blocks.map((block, idx) => (
+                                  <button
+                                    key={`${block.title}-${idx}`}
+                                    type="button"
+                                    role="tab"
+                                    aria-selected={materialTab === idx}
+                                    className={`essay-material-tab${materialTab === idx ? ' is-active' : ''}`}
+                                    onClick={() => setMaterialTab(idx)}
+                                  >
+                                    {block.title}
+                                    {recSet.has(idx) && (
+                                      <span className="essay-material-badge">相关</span>
+                                    )}
+                                  </button>
+                                ))}
                               </div>
                             </div>
-                            <p
-                              className={`solution-history-preview${expanded ? ' is-expanded' : ''}`}
-                            >
-                              {trimmed || '（空作答）'}
-                            </p>
-                            {canExpand && (
-                              <button
-                                type="button"
-                                className="solution-history-expand"
-                                onClick={() =>
-                                  setExpandedHistoryIds((prev) => ({
-                                    ...prev,
-                                    [record.id]: !prev[record.id]
-                                  }))
-                                }
-                              >
-                                {expanded ? '收起全文' : '展开全文'}
-                              </button>
-                            )}
-                          </div>
-                        )
-                      })}
+                          ) : (
+                            <h3>给定资料</h3>
+                          )
+                        }
+                      />
+                    )
+                  })()}
+                <MarkdownContent
+                  className="question-stem"
+                  content={current?.stem ?? ''}
+                  sourceFilePath={current?.filePath}
+                />
+              </div>
+              <div className="essay-col">
+                <div className="solution-tabs-bar">
+                  <TabList
+                    className="solution-tabs"
+                    selectedValue={view}
+                    onTabSelect={(_, data) =>
+                      setView(data.value as 'write' | 'reference' | 'history')
+                    }
+                  >
+                    <Tab value="write">我的作答</Tab>
+                    <Tab value="reference">参考解析</Tab>
+                    <Tab value="history">历史记录 ({promptHistory.length})</Tab>
+                  </TabList>
+                  {view === 'write' && (
+                    <div className="sheet-mode-switch" role="group" aria-label="作答模式">
+                      <button
+                        type="button"
+                        className={`sheet-mode-btn${sheetMode === 'sheet' ? ' is-active' : ''}`}
+                        onClick={() => setSheetMode('sheet')}
+                      >
+                        答题卡
+                      </button>
+                      <button
+                        type="button"
+                        className={`sheet-mode-btn${sheetMode === 'plain' ? ' is-active' : ''}`}
+                        onClick={() => setSheetMode('plain')}
+                      >
+                        自由框
+                      </button>
                     </div>
                   )}
                 </div>
-              )}
+                {view === 'write' ? (
+                  sheetMode === 'sheet' ? (
+                    <ShenlunAnswerSheet
+                      value={content}
+                      onChange={updateDraftContent}
+                      limit={currentLimit}
+                      headerTitle={
+                        currentIndex >= 0
+                          ? `第 ${currentIndex + 1} 题 · ${activeQuestionType}`
+                          : activeQuestionType
+                      }
+                      officialTypography={officialTypography}
+                    />
+                  ) : (
+                    <div className="essay-editor-wrap">
+                      <textarea
+                        className="essay-editor"
+                        data-testid="shenlun-draft-input"
+                        aria-label="申论作答草稿"
+                        value={content}
+                        onChange={(event) => updateDraftContent(event.target.value)}
+                        placeholder="建议先列要点，再组织成完整答案。草稿会在停止输入后自动保存。"
+                      />
+                      {(() => {
+                        const wordCount = content.replace(/\s/g, '').length
+                        const limit = currentLimit
+                        const overLimit = Boolean(limit?.max && wordCount > limit.max)
+                        const underLimit = Boolean(
+                          limit?.min && wordCount > 0 && wordCount < limit.min
+                        )
+                        return (
+                          <span
+                            className={`essay-word-counter${overLimit ? ' is-over-limit' : underLimit ? ' is-under-limit' : ''}`}
+                            title={limit ? `已识别题干字数要求：${limit.label}` : undefined}
+                          >
+                            {limit ? `${wordCount} / ${limit.label}` : `${wordCount} 字`}
+                          </span>
+                        )
+                      })()}
+                    </div>
+                  )
+                ) : view === 'reference' ? (
+                  <div className="answer-panel">
+                    <h3>参考要点</h3>
+                    <p>{current?.answer.join('；')}</p>
+                    <MarkdownContent
+                      content={current?.explanation ?? ''}
+                      sourceFilePath={current?.filePath}
+                    />
+                  </div>
+                ) : (
+                  <div className="answer-panel">
+                    {promptHistory.length === 0 ? (
+                      <p className="muted">
+                        本题尚无评估记录，提交评估后会在此保留每次作答与点评。
+                      </p>
+                    ) : (
+                      <div className="solution-history-list">
+                        {promptHistory.map((record, index) => {
+                          const active = record.id === selectedHistoryId
+                          const trimmed = record.content.trim()
+                          const wordCount = record.content.replace(/\s/g, '').length
+                          const canExpand = trimmed.length > 140 || trimmed.split('\n').length > 4
+                          const expanded = Boolean(expandedHistoryIds[record.id])
+                          return (
+                            <div
+                              key={record.id}
+                              className={`solution-history-item${active ? ' is-active' : ''}`}
+                            >
+                              <div className="solution-history-head">
+                                <div>
+                                  <strong>
+                                    第 {promptHistory.length - index} 次 · {record.evaluation.score}{' '}
+                                    分
+                                  </strong>
+                                  <span className="solution-history-meta">
+                                    {formatFullDate(record.createdAt)} · {wordCount} 字 ·{' '}
+                                    {record.evaluation.provider}
+                                  </span>
+                                </div>
+                                <div className="solution-history-actions">
+                                  <Button
+                                    size="small"
+                                    appearance={active ? 'primary' : 'subtle'}
+                                    onClick={() => {
+                                      setEvaluation(record.evaluation)
+                                      setSelectedHistoryId(record.id)
+                                    }}
+                                  >
+                                    {active ? '查看中' : '查看点评'}
+                                  </Button>
+                                  <Button
+                                    size="small"
+                                    disabled={evaluating}
+                                    onClick={() => loadHistoryDraft(record)}
+                                  >
+                                    载入修改
+                                  </Button>
+                                </div>
+                              </div>
+                              <p
+                                className={`solution-history-preview${expanded ? ' is-expanded' : ''}`}
+                              >
+                                {trimmed || '（空作答）'}
+                              </p>
+                              {canExpand && (
+                                <button
+                                  type="button"
+                                  className="solution-history-expand"
+                                  onClick={() =>
+                                    setExpandedHistoryIds((prev) => ({
+                                      ...prev,
+                                      [record.id]: !prev[record.id]
+                                    }))
+                                  }
+                                >
+                                  {expanded ? '收起全文' : '展开全文'}
+                                </button>
+                              )}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
+          </>
         )}
       </Section>
       {evaluating && (
@@ -1014,7 +1090,7 @@ export function ShenlunSolutionPage(): React.JSX.Element {
           <Spinner label="正在评估答案" />
         </Section>
       )}
-      {evaluation && (
+      {current && evaluation && (
         <Section
           title={`评估结果：${evaluation.score} 分`}
           description={`${evaluation.provider} · ${formatFullDate(evaluation.createdAt)}`}

@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest'
+import { escapeSqlLike, matchesSearchTerms, splitSearchTerms } from '../src/shared/search'
+import { isEventComposing } from '../src/renderer/src/services/search-input'
 import {
   computeExamCountdown,
   extractSearchSnippet,
@@ -53,12 +55,31 @@ describe('study-helpers（申论字数识别、正文检索、考试倒计时）
     expect(extractWordLimit('请概括该社区治理做法的主要特点。')).toBeNull()
   })
 
-  it('extractSearchSnippet 返回正文命中上下文片段', () => {
+  it('extractSearchSnippet 返回正文命中上下文片段（含多词回退）', () => {
     const doc =
       '# 标题\n\n在资料分析中，遇到基期比重变化问题，可以先判断部分增长率与整体增长率的大小关系。'
     const snippet = extractSearchSnippet(doc, '基期比重')
     expect(snippet).toContain('基期比重')
+    const multiSnippet = extractSearchSnippet(doc, '资料分析 整体增长率')
+    expect(multiSnippet).toContain('整体增长率')
     expect(extractSearchSnippet(doc, '不存在的词')).toBeNull()
+  })
+
+  it('splitSearchTerms / escapeSqlLike / matchesSearchTerms 与 IME 组合态检测准确工作', () => {
+    expect(splitSearchTerms('  2024\u3000法治   法治  营商环境 ')).toEqual([
+      '2024',
+      '法治',
+      '营商环境'
+    ])
+    expect(splitSearchTerms('a b c d e f g h i j', 4)).toEqual(['a', 'b', 'c', 'd'])
+    expect(escapeSqlLike('100%_a\\b')).toBe('100\\%\\_a\\\\b')
+    expect(matchesSearchTerms('2024年国考副省级申论：优化营商环境', '2024 营商')).toBe(true)
+    expect(matchesSearchTerms('2024年国考副省级申论：优化营商环境', '2024 乡村振兴')).toBe(false)
+
+    expect(isEventComposing({ isComposing: true } as unknown as Event)).toBe(true)
+    expect(isEventComposing({ keyCode: 229 } as unknown as Event)).toBe(true)
+    expect(isEventComposing({ isComposing: false, keyCode: 13 } as unknown as Event)).toBe(false)
+    expect(isEventComposing(undefined)).toBe(false)
   })
 
   it('computeExamCountdown 按本地自然日精确计算倒计时并拦截非法日期', () => {
