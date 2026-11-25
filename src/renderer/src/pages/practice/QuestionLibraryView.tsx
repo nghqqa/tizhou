@@ -4,6 +4,7 @@ import { Button, Checkbox, Field, Input, Select, Textarea } from '@fluentui/reac
 import {
   BookmarkSimpleIcon,
   ExportIcon,
+  FilePdfIcon,
   MagnifyingGlassIcon,
   NotePencilIcon,
   PencilSimpleIcon,
@@ -147,7 +148,10 @@ export function QuestionLibraryView({
         ? '练习时点击「收藏」即可把好题、高频易错题收进收藏夹。'
         : '在专项练习右侧「本题笔记」记录做题心得后，会集中汇总在这里方便考前速览。'
 
-  async function exportLibrary(format: 'markdown' | 'html'): Promise<void> {
+  async function exportLibrary(
+    format: 'markdown' | 'html' | 'pdf',
+    pdfLayout?: 'exam' | 'annotated'
+  ): Promise<void> {
     if (!items?.length || exporting) return
     setExporting(true)
     setError('')
@@ -161,7 +165,8 @@ export function QuestionLibraryView({
           query: activeQuery || undefined,
           includeAnswers: exportIncludeAnswers,
           includeNotes: true,
-          format
+          format,
+          pdfLayout
         }
       })
       if (target) showToast(`已导出：${target}`)
@@ -206,6 +211,32 @@ export function QuestionLibraryView({
             >
               打印版 HTML
             </Button>
+            <Button
+              size="small"
+              appearance="subtle"
+              icon={<FilePdfIcon />}
+              disabled={exporting}
+              title={
+                exportIncludeAnswers
+                  ? '导出为 A4 试卷排版 PDF（文末附答案解析速查表）'
+                  : '导出为 A4 无答案纯题 PDF（适合打印二刷）'
+              }
+              onClick={() => void exportLibrary('pdf', 'exam')}
+            >
+              A4 试卷 PDF
+            </Button>
+            {exportIncludeAnswers && (
+              <Button
+                size="small"
+                appearance="subtle"
+                icon={<FilePdfIcon />}
+                disabled={exporting}
+                title="每题紧跟参考答案、解析与个人笔记的 A4 PDF"
+                onClick={() => void exportLibrary('pdf', 'annotated')}
+              >
+                A4 题解 PDF
+              </Button>
+            )}
             {tab !== 'notes' && (
               <Button
                 appearance="primary"

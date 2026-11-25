@@ -226,14 +226,16 @@ a {
   align-items: center;
   justify-content: space-between;
   gap: 2px;
-  padding: 8px 10px;
+  padding: 8px 8px;
   border-top: 1px solid var(--tz-border);
 }
 /* 紧凑视口下按钮文字不折行（「深色模式」「检查更新」曾在 200px 侧栏被挤成两行） */
 .sidebar-footer .fui-Button {
   flex: none;
-  padding-inline: 6px;
-  min-width: 28px;
+  gap: 4px;
+  padding-inline: 5px;
+  min-width: 26px;
+  font-size: 12px;
   white-space: nowrap;
 }
 .vault-summary {

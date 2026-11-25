@@ -1371,6 +1371,7 @@ export function Trainer({
       <ScratchpadDrawer
         open={showScratchpad}
         allowCalculator
+        contextKey={sharedMaterialKey}
         onClose={() => setShowScratchpad(false)}
       />
       <QuestionEditDialog

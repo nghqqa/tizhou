@@ -747,6 +747,92 @@
   color: var(--tz-pine);
   font-variant-numeric: tabular-nums;
 }
+.scratchpad-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 5px 24px 5px 10px;
+  border-top: 1px solid var(--tz-border);
+  background: var(--tz-surface-2);
+  flex-shrink: 0;
+}
+.scratchpad-pages {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.scratchpad-page-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  height: 22px;
+  padding: 0 6px;
+  border: 1px solid var(--tz-border);
+  border-radius: 5px;
+  background: var(--tz-surface);
+  color: var(--tz-ink-2);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.scratchpad-page-btn.is-active {
+  border-color: var(--tz-vermillion);
+  background: var(--tz-vermillion-bg);
+  color: var(--tz-vermillion);
+}
+.scratchpad-page-btn.is-add,
+.scratchpad-page-btn.is-remove {
+  min-width: 22px;
+  padding: 0;
+}
+.scratchpad-policy-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border: 1px solid var(--tz-border);
+  border-radius: 999px;
+  background: var(--tz-surface);
+  color: var(--tz-ink-2);
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.scratchpad-policy-btn.is-active {
+  border-color: var(--tz-vermillion-border);
+  background: var(--tz-vermillion-bg);
+  color: var(--tz-vermillion);
+  font-weight: 600;
+}
+.scratchpad-resize-handle {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 18px;
+  height: 18px;
+  cursor: nwse-resize;
+  touch-action: none;
+  z-index: 4;
+}
+.scratchpad-resize-handle::after {
+  content: '';
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  width: 9px;
+  height: 9px;
+  border-right: 2px solid var(--tz-ink-3);
+  border-bottom: 2px solid var(--tz-ink-3);
+  opacity: 0.7;
+}
+.scratchpad-drawer.is-resizing .scratchpad-resize-handle::after,
+.scratchpad-resize-handle:hover::after {
+  border-color: var(--tz-vermillion);
+  opacity: 1;
+}
 mark.tz-hl {
   padding: 1px 0;
   border-radius: 3px;
@@ -1371,4 +1457,131 @@ mark.tz-hl-red {
   border: 1px solid var(--tz-border);
   border-radius: var(--tz-radius-sm);
   background: var(--tz-surface-2);
+}
+
+/* ── 模考考前 5 分钟涂卡提醒 & 复盘超时黑洞榜 ── */
+.exam-card-alert {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 14px;
+  padding: 10px 14px;
+  border: 1px solid var(--tz-vermillion-border);
+  border-left: 4px solid var(--tz-vermillion);
+  border-radius: var(--tz-radius-md);
+  background: var(--tz-vermillion-bg);
+  color: var(--tz-ink);
+  font-size: var(--tz-text-sm);
+}
+.exam-card-alert-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.exam-card-alert-copy svg {
+  flex-shrink: 0;
+  color: var(--tz-vermillion);
+}
+.exam-card-alert-actions {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.sunk-cost-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.sunk-cost-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 1px solid var(--tz-border);
+  border-radius: var(--tz-radius-sm);
+  background: var(--tz-surface-2);
+  font-size: var(--tz-text-xs);
+}
+.sunk-cost-stat strong {
+  font-size: 17px;
+  font-variant-numeric: tabular-nums;
+}
+.sunk-cost-list {
+  display: grid;
+  gap: 6px;
+}
+.sunk-cost-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  border: 1px solid var(--tz-border);
+  border-radius: var(--tz-radius-sm);
+  background: var(--tz-surface);
+  color: var(--tz-ink);
+  font-family: inherit;
+  font-size: var(--tz-text-xs);
+  cursor: pointer;
+}
+.sunk-cost-row:hover {
+  border-color: var(--tz-border-strong);
+  background: var(--tz-surface-2);
+}
+.sunk-cost-row.is-sunk {
+  border-left: 3px solid var(--tz-vermillion);
+}
+.sunk-cost-no {
+  flex-shrink: 0;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.sunk-cost-stem {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--tz-ink-2);
+}
+.sunk-cost-time {
+  flex-shrink: 0;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.sunk-cost-badge {
+  flex-shrink: 0;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--tz-border);
+  background: var(--tz-surface-2);
+  color: var(--tz-ink-3);
+  font-size: 11px;
+  font-weight: 600;
+}
+.sunk-cost-badge.is-sunk {
+  border-color: var(--tz-vermillion-border);
+  background: var(--tz-vermillion-bg);
+  color: var(--tz-vermillion);
+}
+.sunk-cost-badge.is-warn {
+  border-color: color-mix(in srgb, var(--tz-amber) 38%, transparent);
+  background: var(--tz-amber-bg);
+  color: var(--tz-amber);
+}
+.sunk-cost-more {
+  margin-top: 8px;
+  display: flex;
+  justify-content: center;
+}
+@media (max-width: 720px) {
+  .sunk-cost-summary {
+    grid-template-columns: 1fr;
+  }
 }

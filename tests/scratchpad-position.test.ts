@@ -1,11 +1,19 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import {
+  SCRATCHPAD_DEFAULT_SIZE,
+  SCRATCHPAD_MAX_SIZE,
+  SCRATCHPAD_MIN_SIZE,
   SCRATCHPAD_POS_STORAGE_KEY,
   clampScratchpadPosition,
+  clampScratchpadSize,
   computeDefaultScratchpadPosition,
   computeDockPosition,
   loadSavedScratchpadPosition,
-  saveScratchpadPosition
+  loadSavedScratchpadSize,
+  loadScratchpadClearPolicy,
+  saveScratchpadClearPolicy,
+  saveScratchpadPosition,
+  saveScratchpadSize
 } from '../src/renderer/src/services/scratchpad-position'
 
 describe('scratchpad-position', () => {
@@ -89,5 +97,37 @@ describe('scratchpad-position', () => {
 
     store.set(SCRATCHPAD_POS_STORAGE_KEY, JSON.stringify({ left: 'NaN', top: 10 }))
     expect(loadSavedScratchpadPosition()).toBeNull()
+  })
+
+  it('正确钳制并持久化草稿纸尺寸与换题清屏策略', () => {
+    expect(clampScratchpadSize({ width: 100, height: 100 }, 1280, 800)).toEqual(SCRATCHPAD_MIN_SIZE)
+    expect(clampScratchpadSize({ width: 1200, height: 1000 }, 1280, 800)).toEqual(
+      SCRATCHPAD_MAX_SIZE
+    )
+    expect(clampScratchpadSize({ width: 520, height: 420 }, 480, 380)).toEqual({
+      width: 448,
+      height: 348
+    })
+
+    expect(loadSavedScratchpadSize()).toEqual(SCRATCHPAD_DEFAULT_SIZE)
+    expect(loadScratchpadClearPolicy()).toBe('keep')
+
+    const store = new Map<string, string>()
+    ;(globalThis as { window?: unknown }).window = {
+      innerWidth: 1440,
+      innerHeight: 900,
+      localStorage: {
+        getItem: (key: string) => store.get(key) ?? null,
+        setItem: (key: string, val: string) => {
+          store.set(key, val)
+        }
+      }
+    }
+
+    saveScratchpadSize({ width: 612.4, height: 488.6 })
+    expect(loadSavedScratchpadSize()).toEqual({ width: 612, height: 489 })
+
+    saveScratchpadClearPolicy('per-material')
+    expect(loadScratchpadClearPolicy()).toBe('per-material')
   })
 })

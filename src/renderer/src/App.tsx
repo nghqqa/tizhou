@@ -402,27 +402,27 @@ function AppShell(): React.JSX.Element {
           <Button
             appearance="subtle"
             size="small"
-            icon={isDark ? <SunIcon size={16} /> : <MoonIcon size={16} />}
+            icon={isDark ? <SunIcon size={15} /> : <MoonIcon size={15} />}
             aria-label={isDark ? '切换到浅色模式' : '切换到深色模式'}
             title={isDark ? '切换到浅色模式（白天）' : '切换到深色模式（夜间）'}
             onClick={toggleTheme}
           >
-            <span className="sidebar-footer-label">{isDark ? '浅色' : '深色'}</span>
+            <span className="sidebar-footer-label">{isDark ? '浅色模式' : '深色模式'}</span>
           </Button>
           <Button
             appearance="subtle"
             size="small"
-            icon={<ArrowClockwiseIcon size={16} />}
+            icon={<ArrowClockwiseIcon size={15} />}
             aria-label="检查更新"
             title="检查更新"
             onClick={() => void checkForUpdates()}
           >
-            <span className="sidebar-footer-label">更新</span>
+            <span className="sidebar-footer-label">检查更新</span>
           </Button>
           <Button
             appearance="subtle"
             size="small"
-            icon={<QuestionIcon size={16} />}
+            icon={<QuestionIcon size={15} />}
             aria-label="快捷键速查"
             title="快捷键与操作速查 (?)"
             onClick={() => setShortcutHelpOpen(true)}

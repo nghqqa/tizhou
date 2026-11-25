@@ -705,7 +705,9 @@ export interface QuestionLibraryExportParams {
   query?: string
   includeAnswers: boolean
   includeNotes: boolean
-  format: 'markdown' | 'html'
+  format: 'markdown' | 'html' | 'pdf'
+  /** 仅 PDF 导出使用：exam 为无答案/答案附后试卷版，annotated 为每题题解对照版 */
+  pdfLayout?: 'exam' | 'annotated'
 }
 
 export interface AiAskInput {

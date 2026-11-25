@@ -3,7 +3,8 @@ import type { QuestionLibraryItem } from '../src/shared/contracts'
 import {
   libraryExportFileName,
   renderQuestionLibraryHtml,
-  renderQuestionLibraryMarkdown
+  renderQuestionLibraryMarkdown,
+  renderQuestionLibraryPdfHtml
 } from '../src/main/services/library-export'
 
 const SAMPLE_ITEMS: QuestionLibraryItem[] = [
@@ -83,5 +84,77 @@ describe('library-export（错题本/收藏夹/笔记库导出）', () => {
     expect(html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;')
     expect(html).not.toContain('<img onerror=1>')
     expect(html).toContain('&lt;img onerror=1&gt;')
+  })
+
+  it('支持 A4 试卷级 PDF HTML 生成（试卷附后解析版 / 题解对照版）与本地安全图片嵌入', () => {
+    const fixedDate = new Date(2026, 10, 25)
+    expect(
+      libraryExportFileName(
+        {
+          tab: 'wrong',
+          category: '判断推理',
+          includeAnswers: true,
+          format: 'pdf',
+          pdfLayout: 'exam'
+        },
+        fixedDate
+      )
+    ).toBe('题舟错题本-判断推理-A4试卷版-2026-11-25.pdf')
+
+    expect(
+      libraryExportFileName(
+        {
+          tab: 'wrong',
+          includeAnswers: true,
+          format: 'pdf',
+          pdfLayout: 'annotated'
+        },
+        fixedDate
+      )
+    ).toBe('题舟错题本-A4题解对照-2026-11-25.pdf')
+
+    const imgItems = [
+      {
+        ...SAMPLE_ITEMS[0]!,
+        question: {
+          ...SAMPLE_ITEMS[0]!.question,
+          filePath: 'E:/vault/demo.md',
+          stem: '观察规律 ![图形](assets/fig1.png) <script>bad()</script>',
+          options: [
+            { key: 'A', text: '图A', image: 'assets/optA.png' },
+            { key: 'B', text: '图B', image: 'javascript:alert(1)' }
+          ]
+        }
+      }
+    ]
+
+    const examPdfHtml = renderQuestionLibraryPdfHtml(
+      imgItems,
+      { tab: 'wrong', includeAnswers: true, includeNotes: true, pdfLayout: 'exam' },
+      {
+        generatedAt: fixedDate,
+        resolveAssetDataUrl: (_file, asset) =>
+          asset.startsWith('assets/')
+            ? `data:image/png;base64,ZmFrZQ==`
+            : 'http://evil.example/x.png'
+      }
+    )
+
+    expect(examPdfHtml).toContain('@page { size: A4;')
+    expect(examPdfHtml).toContain('参考答案速查与解析')
+    expect(examPdfHtml).toContain('class="ans-grid"')
+    expect(examPdfHtml).toContain('src="data:image/png;base64,ZmFrZQ=="')
+    expect(examPdfHtml).not.toContain('javascript:alert(1)')
+    expect(examPdfHtml).not.toContain('<script>bad()</script>')
+    expect(examPdfHtml).toContain('&lt;script&gt;bad()&lt;/script&gt;')
+
+    const annotatedPdfHtml = renderQuestionLibraryPdfHtml(
+      imgItems,
+      { tab: 'wrong', includeAnswers: true, includeNotes: true, pdfLayout: 'annotated' },
+      { generatedAt: fixedDate }
+    )
+    expect(annotatedPdfHtml).not.toContain('class="ans-grid"')
+    expect(annotatedPdfHtml).toContain('A4 题解对照版')
+    expect(annotatedPdfHtml).toContain('<strong>参考答案：</strong>')
   })
 })

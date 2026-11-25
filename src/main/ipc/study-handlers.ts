@@ -3,8 +3,10 @@ import { dialog } from 'electron'
 import {
   libraryExportFileName,
   renderQuestionLibraryHtml,
-  renderQuestionLibraryMarkdown
+  renderQuestionLibraryMarkdown,
+  renderQuestionLibraryPdfHtml
 } from '../services/library-export'
+import { renderHtmlToPdfBuffer } from '../services/pdf-export'
 import type { IpcContext, IpcHandlerMap } from './types'
 
 type StudyHandlerKeys =
@@ -56,15 +58,36 @@ export function createStudyHandlers(ctx: IpcContext): Pick<IpcHandlerMap, StudyH
         limit: 500
       })
       if (!items.length) throw new Error('当前筛选下没有可导出的题目')
+      const isPdf = params.format === 'pdf'
       const isHtml = params.format === 'html'
       const selected = await dialog.showSaveDialog(ctx.getMainWindow()!, {
-        title: isHtml ? '导出可打印题单 (HTML)' : '导出题单 (Markdown)',
+        title: isPdf
+          ? '导出 A4 试卷 PDF'
+          : isHtml
+            ? '导出可打印题单 (HTML)'
+            : '导出题单 (Markdown)',
         defaultPath: libraryExportFileName(params),
-        filters: isHtml
-          ? [{ name: 'HTML 打印版', extensions: ['html'] }]
-          : [{ name: 'Markdown', extensions: ['md'] }]
+        filters: isPdf
+          ? [{ name: 'A4 试卷 PDF', extensions: ['pdf'] }]
+          : isHtml
+            ? [{ name: 'HTML 打印版', extensions: ['html'] }]
+            : [{ name: 'Markdown', extensions: ['md'] }]
       })
       if (selected.canceled || !selected.filePath) return undefined
+      if (isPdf) {
+        const html = renderQuestionLibraryPdfHtml(items, params, {
+          resolveAssetDataUrl: (sourceFilePath, assetPath) => {
+            try {
+              return sourceFilePath ? ctx.vaults.readAssetDataUrl(sourceFilePath, assetPath) : null
+            } catch {
+              return null
+            }
+          }
+        })
+        const pdfBuffer = await renderHtmlToPdfBuffer(html)
+        writeFileSync(selected.filePath, pdfBuffer)
+        return selected.filePath
+      }
       const output = isHtml
         ? renderQuestionLibraryHtml(items, params)
         : renderQuestionLibraryMarkdown(items, params)

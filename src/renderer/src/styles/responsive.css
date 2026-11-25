@@ -23,6 +23,13 @@
   .builder-options {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+  .sidebar-footer {
+    padding: 8px 5px;
+  }
+  .sidebar-footer .fui-Button {
+    padding-inline: 4px;
+    min-width: 24px;
+  }
 }
 @media (max-width: 640px) {
   .builder-options,

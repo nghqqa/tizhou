@@ -1,22 +1,33 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowCounterClockwiseIcon,
+  BroomIcon,
   DotsSixVerticalIcon,
   EraserIcon,
   NotePencilIcon,
   PaintBrushIcon,
+  PlusIcon,
   TrashIcon,
   XIcon
 } from '@phosphor-icons/react'
 import { evaluateQuickCalc, extractLastCalcExpression } from '../services/quick-calc'
 import {
+  SCRATCHPAD_DEFAULT_SIZE,
+  SCRATCHPAD_MAX_SIZE,
   clampScratchpadPosition,
+  clampScratchpadSize,
   computeDefaultScratchpadPosition,
   computeDockPosition,
   loadSavedScratchpadPosition,
+  loadSavedScratchpadSize,
+  loadScratchpadClearPolicy,
+  saveScratchpadClearPolicy,
   saveScratchpadPosition,
+  saveScratchpadSize,
+  type ScratchpadClearPolicy,
   type ScratchpadDockPreset,
-  type ScratchpadPosition
+  type ScratchpadPosition,
+  type ScratchpadSize
 } from '../services/scratchpad-position'
 import { hasOpenModal } from '../services/shortcuts'
 
@@ -24,12 +35,22 @@ interface ScratchpadDrawerProps {
   open: boolean
   onClose: () => void
   allowCalculator?: boolean
+  /** 题目或资料分析同材料组上下文标识：配合「换题清屏」策略使用 */
+  contextKey?: string
 }
 
 interface Stroke {
   tool: 'pen' | 'eraser'
   color: 'ink' | 'red'
   points: Array<{ x: number; y: number }>
+}
+
+interface ScratchpadPage {
+  id: number
+  strokes: Stroke[]
+  clearedBackup: Stroke[]
+  noteText: string
+  calcExpr: string
 }
 
 interface DragState {
@@ -45,6 +66,21 @@ interface DragState {
   lastTop: number
 }
 
+interface ResizeState {
+  pointerId: number
+  startX: number
+  startY: number
+  originWidth: number
+  originHeight: number
+  originLeft: number
+  originTop: number
+  lastWidth: number
+  lastHeight: number
+  moved: boolean
+}
+
+const MAX_SCRATCHPAD_PAGES = 5
+
 const DOCK_PRESETS: Array<{ id: ScratchpadDockPreset; label: string; announcement: string }> = [
   { id: 'top-left', label: '停靠左上', announcement: '草稿纸已停靠左上角' },
   { id: 'top-right', label: '停靠右上', announcement: '草稿纸已停靠右上角' },
@@ -52,10 +88,15 @@ const DOCK_PRESETS: Array<{ id: ScratchpadDockPreset; label: string; announcemen
   { id: 'bottom-right', label: '停靠右下', announcement: '草稿纸已停靠右下角' }
 ]
 
+function createEmptyPage(id: number): ScratchpadPage {
+  return { id, strokes: [], clearedBackup: [], noteText: '', calcExpr: '' }
+}
+
 export function ScratchpadDrawer({
   open,
   onClose,
-  allowCalculator = false
+  allowCalculator = false,
+  contextKey
 }: ScratchpadDrawerProps): React.JSX.Element | null {
   const [tab, setTab] = useState<'draw' | 'text'>('draw')
   const [tool, setTool] = useState<'pen' | 'eraser'>('pen')
@@ -64,10 +105,17 @@ export function ScratchpadDrawer({
   const [calcExpr, setCalcExpr] = useState('')
   const [strokeCount, setStrokeCount] = useState(0)
   const [clearedBackupCount, setClearedBackupCount] = useState(0)
+  const [pageIds, setPageIds] = useState<number[]>([1])
+  const [activePageId, setActivePageId] = useState(1)
+  const [clearPolicy, setClearPolicy] = useState<ScratchpadClearPolicy>(() =>
+    loadScratchpadClearPolicy()
+  )
   const [position, setPosition] = useState<ScratchpadPosition | null>(() =>
     loadSavedScratchpadPosition()
   )
+  const [size, setSize] = useState<ScratchpadSize>(() => loadSavedScratchpadSize())
   const [isDragging, setIsDragging] = useState(false)
+  const [isResizing, setIsResizing] = useState(false)
   const [dockMenuOpen, setDockMenuOpen] = useState(false)
   const [liveAnnouncement, setLiveAnnouncement] = useState('')
 
@@ -75,6 +123,7 @@ export function ScratchpadDrawer({
   const dragHandleRef = useRef<HTMLButtonElement>(null)
   const dockMenuRef = useRef<HTMLDivElement>(null)
   const dragStateRef = useRef<DragState | null>(null)
+  const resizeStateRef = useRef<ResizeState | null>(null)
   const suppressNextHandleClickRef = useRef(false)
   const announceTimerRef = useRef<number | null>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -82,6 +131,9 @@ export function ScratchpadDrawer({
   const currentStrokeRef = useRef<Stroke | null>(null)
   const strokesRef = useRef<Stroke[]>([])
   const clearedBackupRef = useRef<Stroke[]>([])
+  const pagesRef = useRef<ScratchpadPage[]>([createEmptyPage(1)])
+  const nextPageIdRef = useRef(2)
+  const prevContextKeyRef = useRef<string | undefined>(contextKey)
 
   const announce = useCallback((message: string): void => {
     setLiveAnnouncement(message)
@@ -176,6 +228,34 @@ export function ScratchpadDrawer({
     }
   }, [paintStroke])
 
+  const syncCurrentPageSnapshot = useCallback((): void => {
+    pagesRef.current = pagesRef.current.map((page) =>
+      page.id === activePageId
+        ? {
+            ...page,
+            strokes: strokesRef.current,
+            clearedBackup: clearedBackupRef.current,
+            noteText,
+            calcExpr
+          }
+        : page
+    )
+  }, [activePageId, noteText, calcExpr])
+
+  const loadPageIntoView = useCallback(
+    (page: ScratchpadPage): void => {
+      strokesRef.current = page.strokes
+      clearedBackupRef.current = page.clearedBackup
+      setStrokeCount(page.strokes.length)
+      setClearedBackupCount(page.clearedBackup.length)
+      setNoteText(page.noteText)
+      setCalcExpr(page.calcExpr)
+      setActivePageId(page.id)
+      window.requestAnimationFrame(() => redrawCanvas())
+    },
+    [redrawCanvas]
+  )
+
   const undoStroke = useCallback((): void => {
     if (tab !== 'draw') return
     if (strokesRef.current.length > 0) {
@@ -193,16 +273,34 @@ export function ScratchpadDrawer({
     }
   }, [tab, redrawCanvas])
 
+  // 换题/换材料自动清屏：同材料资料分析连题共享 contextKey 时保留草稿，切换至下一材料或其它题目时清空
+  useEffect(() => {
+    if (prevContextKeyRef.current === contextKey) return
+    prevContextKeyRef.current = contextKey
+    if (clearPolicy !== 'per-material') return
+    const backup = strokesRef.current.length > 0 ? strokesRef.current : clearedBackupRef.current
+    const blankPage = createEmptyPage(1)
+    blankPage.clearedBackup = backup
+    pagesRef.current = [blankPage]
+    nextPageIdRef.current = 2
+    strokesRef.current = []
+    clearedBackupRef.current = backup
+    setPageIds([1])
+    setActivePageId(1)
+    setStrokeCount(0)
+    setClearedBackupCount(backup.length)
+    setNoteText('')
+    setCalcExpr('')
+    redrawCanvas()
+  }, [contextKey, clearPolicy, redrawCanvas])
+
   const measurePanelSize = useCallback((): { width: number; height: number } => {
     const rect = asideRef.current?.getBoundingClientRect()
     if (rect && rect.width > 0 && rect.height > 0) {
       return { width: rect.width, height: rect.height }
     }
-    return {
-      width: Math.min(440, Math.max(240, window.innerWidth - 32)),
-      height: 340
-    }
-  }, [])
+    return clampScratchpadSize(size, window.innerWidth, window.innerHeight)
+  }, [size])
 
   const applyClampedPosition = useCallback(
     (next: ScratchpadPosition, message?: string): void => {
@@ -236,39 +334,50 @@ export function ScratchpadDrawer({
   }, [measurePanelSize, announce])
 
   useLayoutEffect(() => {
-    if (!open || !position) return
-    const { width, height } = measurePanelSize()
-    const clamped = clampScratchpadPosition(
+    if (!open) return
+    const clampedSize = clampScratchpadSize(size, window.innerWidth, window.innerHeight)
+    if (clampedSize.width !== size.width || clampedSize.height !== size.height) {
+      setSize(clampedSize)
+      saveScratchpadSize(clampedSize)
+    }
+    if (!position) return
+    const clampedPos = clampScratchpadPosition(
       position,
-      width,
-      height,
+      clampedSize.width,
+      clampedSize.height,
       window.innerWidth,
       window.innerHeight
     )
-    if (clamped.left !== position.left || clamped.top !== position.top) {
-      setPosition(clamped)
-      saveScratchpadPosition(clamped)
+    if (clampedPos.left !== position.left || clampedPos.top !== position.top) {
+      setPosition(clampedPos)
+      saveScratchpadPosition(clampedPos)
     }
-  }, [open, position, measurePanelSize])
+  }, [open, position, size])
 
   useEffect(() => {
     if (!open) {
       setDockMenuOpen(false)
       setIsDragging(false)
+      setIsResizing(false)
       dragStateRef.current = null
+      resizeStateRef.current = null
       if (asideRef.current) {
         asideRef.current.style.transform = ''
       }
       return
     }
     const handleResize = (): void => {
+      const nextSize = clampScratchpadSize(size, window.innerWidth, window.innerHeight)
+      if (nextSize.width !== size.width || nextSize.height !== size.height) {
+        setSize(nextSize)
+        saveScratchpadSize(nextSize)
+      }
       setPosition((prev) => {
         if (!prev) return prev
-        const { width, height } = measurePanelSize()
         const clamped = clampScratchpadPosition(
           prev,
-          width,
-          height,
+          nextSize.width,
+          nextSize.height,
           window.innerWidth,
           window.innerHeight
         )
@@ -279,7 +388,7 @@ export function ScratchpadDrawer({
     }
     window.addEventListener('resize', handleResize)
     return () => window.removeEventListener('resize', handleResize)
-  }, [open, measurePanelSize])
+  }, [open, size])
 
   useEffect(() => {
     if (!dockMenuOpen) return
@@ -382,6 +491,47 @@ export function ScratchpadDrawer({
     setNoteText((prev) => (prev.trim() ? `${prev.trimEnd()}\n${snippet}` : snippet))
   }
 
+  function handleSelectPage(targetId: number): void {
+    if (targetId === activePageId) return
+    syncCurrentPageSnapshot()
+    const target = pagesRef.current.find((p) => p.id === targetId)
+    if (target) loadPageIntoView(target)
+  }
+
+  function handleAddPage(): void {
+    if (pagesRef.current.length >= MAX_SCRATCHPAD_PAGES) return
+    syncCurrentPageSnapshot()
+    const newId = nextPageIdRef.current
+    nextPageIdRef.current += 1
+    const newPage = createEmptyPage(newId)
+    pagesRef.current = [...pagesRef.current, newPage]
+    setPageIds(pagesRef.current.map((p) => p.id))
+    loadPageIntoView(newPage)
+    announce(`已新增草稿第 ${pagesRef.current.length} 页`)
+  }
+
+  function handleRemoveCurrentPage(): void {
+    if (pagesRef.current.length <= 1) return
+    const idx = pagesRef.current.findIndex((p) => p.id === activePageId)
+    const remaining = pagesRef.current.filter((p) => p.id !== activePageId)
+    pagesRef.current = remaining
+    setPageIds(remaining.map((p) => p.id))
+    const fallback = remaining[Math.max(0, Math.min(idx, remaining.length - 1))]!
+    loadPageIntoView(fallback)
+    announce('已移除当前草稿页')
+  }
+
+  function toggleClearPolicy(): void {
+    const next: ScratchpadClearPolicy = clearPolicy === 'per-material' ? 'keep' : 'per-material'
+    setClearPolicy(next)
+    saveScratchpadClearPolicy(next)
+    announce(
+      next === 'per-material'
+        ? '已开启换题自动清屏，同材料资料分析连题会保留草稿'
+        : '已关闭换题自动清屏'
+    )
+  }
+
   function finishHeadDrag(event: React.PointerEvent<HTMLDivElement>): void {
     const drag = dragStateRef.current
     if (!drag || drag.pointerId !== event.pointerId) return
@@ -463,6 +613,101 @@ export function ScratchpadDrawer({
     resetToDefaultPosition()
   }
 
+  function handleResizePointerDown(event: React.PointerEvent<HTMLDivElement>): void {
+    if (event.pointerType === 'mouse' && event.button !== 0) return
+    event.stopPropagation()
+    const aside = asideRef.current
+    if (!aside) return
+    const rect = aside.getBoundingClientRect()
+    if (!position) {
+      const lockedPos = { left: Math.round(rect.left), top: Math.round(rect.top) }
+      setPosition(lockedPos)
+      saveScratchpadPosition(lockedPos)
+    }
+    resizeStateRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      originWidth: rect.width,
+      originHeight: rect.height,
+      originLeft: rect.left,
+      originTop: rect.top,
+      lastWidth: rect.width,
+      lastHeight: rect.height,
+      moved: false
+    }
+    setIsResizing(true)
+    setDockMenuOpen(false)
+    event.currentTarget.setPointerCapture(event.pointerId)
+  }
+
+  function handleResizePointerMove(event: React.PointerEvent<HTMLDivElement>): void {
+    const rs = resizeStateRef.current
+    if (!rs || rs.pointerId !== event.pointerId) return
+    if (!event.currentTarget.hasPointerCapture(event.pointerId)) return
+    const dx = event.clientX - rs.startX
+    const dy = event.clientY - rs.startY
+    if (!rs.moved && Math.hypot(dx, dy) < 2) return
+    rs.moved = true
+
+    const maxViewportW = Math.max(240, Math.round(window.innerWidth - rs.originLeft - 8))
+    const maxViewportH = Math.max(220, Math.round(window.innerHeight - rs.originTop - 8))
+    const nextSize = clampScratchpadSize(
+      {
+        width: Math.min(maxViewportW, rs.originWidth + dx),
+        height: Math.min(maxViewportH, rs.originHeight + dy)
+      },
+      Math.min(
+        window.innerWidth,
+        rs.originLeft + Math.min(SCRATCHPAD_MAX_SIZE.width, maxViewportW) + 32
+      ),
+      Math.min(
+        window.innerHeight,
+        rs.originTop + Math.min(SCRATCHPAD_MAX_SIZE.height, maxViewportH) + 32
+      )
+    )
+    const boundedW = Math.min(nextSize.width, maxViewportW)
+    const boundedH = Math.min(nextSize.height, maxViewportH)
+    rs.lastWidth = boundedW
+    rs.lastHeight = boundedH
+    if (asideRef.current) {
+      asideRef.current.style.width = `${boundedW}px`
+      asideRef.current.style.height = `${boundedH}px`
+    }
+  }
+
+  function finishResize(event: React.PointerEvent<HTMLDivElement>): void {
+    const rs = resizeStateRef.current
+    if (!rs || rs.pointerId !== event.pointerId) return
+    resizeStateRef.current = null
+    setIsResizing(false)
+    if (rs.moved) {
+      const nextSize = clampScratchpadSize(
+        { width: rs.lastWidth, height: rs.lastHeight },
+        window.innerWidth,
+        window.innerHeight
+      )
+      setSize(nextSize)
+      saveScratchpadSize(nextSize)
+      announce('草稿纸尺寸已调整')
+    }
+  }
+
+  function handleResizeDoubleClick(event: React.MouseEvent<HTMLDivElement>): void {
+    event.stopPropagation()
+    const nextSize = clampScratchpadSize(
+      SCRATCHPAD_DEFAULT_SIZE,
+      window.innerWidth,
+      window.innerHeight
+    )
+    setSize(nextSize)
+    saveScratchpadSize(nextSize)
+    if (position) {
+      applyClampedPosition(position)
+    }
+    announce('草稿纸已恢复默认尺寸')
+  }
+
   function handleHandleKeyDown(event: React.KeyboardEvent<HTMLButtonElement>): void {
     const step = event.shiftKey ? 48 : 20
     let dx = 0
@@ -493,11 +738,12 @@ export function ScratchpadDrawer({
     event.stopPropagation()
     event.nativeEvent.stopPropagation()
     const rect = asideRef.current?.getBoundingClientRect()
+    const { width, height } = measurePanelSize()
     const base =
       position ??
       (rect
         ? { left: rect.left, top: rect.top }
-        : computeDefaultScratchpadPosition(440, 340, window.innerWidth, window.innerHeight))
+        : computeDefaultScratchpadPosition(width, height, window.innerWidth, window.innerHeight))
     applyClampedPosition({ left: base.left + dx, top: base.top + dy }, dirLabel)
   }
 
@@ -510,20 +756,25 @@ export function ScratchpadDrawer({
     announce(announcement)
   }
 
+  const effectiveSize = clampScratchpadSize(size, window.innerWidth, window.innerHeight)
   const canUndo = strokeCount > 0 || clearedBackupCount > 0
-  const drawerStyle: React.CSSProperties | undefined = position
-    ? {
-        left: `${position.left}px`,
-        top: `${position.top}px`,
-        right: 'auto',
-        bottom: 'auto'
-      }
-    : undefined
+  const drawerStyle: React.CSSProperties = {
+    width: `${effectiveSize.width}px`,
+    height: `${effectiveSize.height}px`,
+    ...(position
+      ? {
+          left: `${position.left}px`,
+          top: `${position.top}px`,
+          right: 'auto',
+          bottom: 'auto'
+        }
+      : {})
+  }
 
   return (
     <aside
       ref={asideRef}
-      className={`scratchpad-drawer${isDragging ? ' is-dragging' : ''}`}
+      className={`scratchpad-drawer${isDragging ? ' is-dragging' : ''}${isResizing ? ' is-resizing' : ''}`}
       style={drawerStyle}
       aria-label="随手草稿纸"
     >
@@ -669,7 +920,7 @@ export function ScratchpadDrawer({
             ))}
           </div>
           <p className="scratchpad-dock-hint">
-            按住顶栏可任意拖动；聚焦手柄时可用方向键微调（Shift 加速），Home 复位右下角。
+            按住顶栏拖动位置、拖拽右下角缩放大小；聚焦手柄可用方向键微调，Home 复位右下角。
           </p>
         </div>
       )}
@@ -788,6 +1039,69 @@ export function ScratchpadDrawer({
           )}
         </div>
       )}
+
+      <div className="scratchpad-footer">
+        <div className="scratchpad-pages" role="group" aria-label="草稿页签">
+          {pageIds.map((pid, idx) => (
+            <button
+              key={pid}
+              type="button"
+              className={`scratchpad-page-btn${pid === activePageId ? ' is-active' : ''}`}
+              title={`切换到草稿第 ${idx + 1} 页`}
+              aria-pressed={pid === activePageId}
+              onClick={() => handleSelectPage(pid)}
+            >
+              P{idx + 1}
+            </button>
+          ))}
+          {pageIds.length < MAX_SCRATCHPAD_PAGES && (
+            <button
+              type="button"
+              className="scratchpad-page-btn is-add"
+              title="新建草稿页（最多 5 页）"
+              aria-label="新建草稿页"
+              onClick={handleAddPage}
+            >
+              <PlusIcon size={11} />
+            </button>
+          )}
+          {pageIds.length > 1 && (
+            <button
+              type="button"
+              className="scratchpad-page-btn is-remove"
+              title="关闭当前草稿页"
+              aria-label="关闭当前草稿页"
+              onClick={handleRemoveCurrentPage}
+            >
+              <XIcon size={10} />
+            </button>
+          )}
+        </div>
+        <button
+          type="button"
+          className={`scratchpad-policy-btn${clearPolicy === 'per-material' ? ' is-active' : ''}`}
+          aria-pressed={clearPolicy === 'per-material'}
+          title="开启后切换单题或更换资料分析材料时自动清屏（同材料连题保留草稿，Ctrl+Z 可撤销）"
+          onClick={toggleClearPolicy}
+        >
+          <BroomIcon size={12} />
+          <span>{clearPolicy === 'per-material' ? '换题清屏：开' : '换题清屏：关'}</span>
+        </button>
+      </div>
+
+      <div
+        className="scratchpad-resize-handle"
+        role="separator"
+        aria-orientation="horizontal"
+        aria-label="拖拽调整草稿纸尺寸，双击恢复默认大小"
+        title="拖拽调整大小 · 双击恢复默认尺寸"
+        onPointerDown={handleResizePointerDown}
+        onPointerMove={handleResizePointerMove}
+        onPointerUp={finishResize}
+        onPointerCancel={finishResize}
+        onLostPointerCapture={finishResize}
+        onDoubleClick={handleResizeDoubleClick}
+      />
     </aside>
   )
 }

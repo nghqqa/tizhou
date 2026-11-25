@@ -5,6 +5,7 @@ import {
   ArrowLeftIcon,
   ArrowsInSimpleIcon,
   ArrowsOutSimpleIcon,
+  BellRingingIcon,
   BookBookmarkIcon,
   ClockIcon,
   ColumnsIcon,
@@ -106,6 +107,12 @@ export function ExamRunPage(): React.JSX.Element {
   const [shenlunUseSheet, setShenlunUseSheet] = useState(false)
   const [shenlunMaterialTab, setShenlunMaterialTab] = useState<'all' | number>('all')
   const [snippetOpen, setSnippetOpen] = useState(false)
+  const [cardAlertEnabled, setCardAlertEnabled] = useLocalStorageState<boolean>(
+    'tizhou:exam-card-alert',
+    true,
+    BOOLEAN_FLAG_CODEC
+  )
+  const [cardAlertDismissed, setCardAlertDismissed] = useState(false)
   const reading = useReadingTypography()
   const essayTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const mountedRef = useRef(true)
@@ -499,6 +506,31 @@ export function ExamRunPage(): React.JSX.Element {
     setShenlunMaterialTab('all')
   }, [current?.id])
 
+  useEffect(() => {
+    setCardAlertDismissed(false)
+  }, [exam?.id])
+
+  const firstUnansweredIdx = useMemo(() => {
+    if (!exam) return -1
+    return (
+      orderedIndices.find((idx) => {
+        const q = questions[idx]
+        if (!q) return false
+        return !(exam.answers[q.id]?.answer ?? []).some((v) => v.trim().length > 0)
+      }) ?? -1
+    )
+  }, [exam, orderedIndices, questions])
+
+  const firstUncertainIdx = useMemo(() => {
+    if (!uncertainIds.length) return -1
+    return (
+      orderedIndices.find((idx) => {
+        const q = questions[idx]
+        return Boolean(q && uncertainIds.includes(q.id))
+      }) ?? -1
+    )
+  }, [orderedIndices, questions, uncertainIds])
+
   if (error && !exam)
     return (
       <div className="page">
@@ -614,6 +646,18 @@ export function ExamRunPage(): React.JSX.Element {
           >
             {zenMode ? '退出专注' : '专注'}
           </Button>
+          {exam.subject === 'xingce' && exam.durationMinutes >= 15 && (
+            <Button
+              size="small"
+              appearance={cardAlertEnabled ? 'secondary' : 'outline'}
+              icon={<BellRingingIcon />}
+              aria-pressed={cardAlertEnabled}
+              title="剩余 ≤5 分钟时提醒停止死磕难题并核对空白题"
+              onClick={() => setCardAlertEnabled((value) => !value)}
+            >
+              涂卡提醒
+            </Button>
+          )}
           <Button
             size="small"
             appearance={showScratchpad ? 'secondary' : 'outline'}
@@ -632,6 +676,48 @@ export function ExamRunPage(): React.JSX.Element {
           </Button>
         </div>
       </div>
+      {exam.subject === 'xingce' &&
+        exam.durationMinutes >= 15 &&
+        cardAlertEnabled &&
+        !cardAlertDismissed &&
+        seconds > 0 &&
+        seconds <= 300 && (
+          <div className="exam-card-alert" role="status" aria-live="polite">
+            <div className="exam-card-alert-copy">
+              <BellRingingIcon size={16} />
+              <span>
+                <strong>考前最后 5 分钟虚拟涂卡检查：</strong>
+                还剩 {Math.ceil(seconds / 60)} 分钟，当前仍有{' '}
+                <strong>{exam.questionIds.length - answered}</strong> 道未答题
+                {uncertainIds.length > 0 ? `、${uncertainIds.length} 道待查题` : ''}
+                ，建议立即收手填补空白选项。
+              </span>
+            </div>
+            <div className="exam-card-alert-actions">
+              {firstUnansweredIdx >= 0 && (
+                <Button
+                  size="small"
+                  appearance="primary"
+                  onClick={() => setIndex(firstUnansweredIdx)}
+                >
+                  跳到首个未答
+                </Button>
+              )}
+              {firstUncertainIdx >= 0 && (
+                <Button
+                  size="small"
+                  appearance="secondary"
+                  onClick={() => setIndex(firstUncertainIdx)}
+                >
+                  检查待查题
+                </Button>
+              )}
+              <Button size="small" appearance="subtle" onClick={() => setCardAlertDismissed(true)}>
+                知道了
+              </Button>
+            </div>
+          </div>
+        )}
       {error && <ErrorState message={error} />}
       <div className="question-shell">
         <Section className="question-card">
@@ -913,7 +999,12 @@ export function ExamRunPage(): React.JSX.Element {
         onConfirm={finish}
         onCancel={() => setConfirmOpen(false)}
       />
-      <ScratchpadDrawer open={showScratchpad} onClose={() => setShowScratchpad(false)} />
+      <ScratchpadDrawer
+        open={showScratchpad}
+        allowCalculator={exam.subject === 'xingce'}
+        contextKey={examMaterialKey}
+        onClose={() => setShowScratchpad(false)}
+      />
       {exam.subject === 'shenlun' && (
         <ShenlunSnippetDrawer
           open={snippetOpen}

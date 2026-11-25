@@ -815,3 +815,93 @@
   border-radius: 50%;
   flex-shrink: 0;
 }
+
+/* ── 行测目标分拆解与加权估分 ── */
+.score-estimator-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.score-target-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--tz-text-xs);
+  color: var(--tz-ink-2);
+}
+.score-target-field .fui-Input {
+  width: 74px;
+}
+.score-estimator-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  margin-bottom: 14px;
+  border: 1px solid var(--tz-border);
+  border-radius: var(--tz-radius-md);
+  background: var(--tz-surface-2);
+}
+.score-summary-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+.score-metric-box {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: var(--tz-text-xs);
+}
+.score-metric-box strong {
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+}
+.score-metric-box strong small {
+  font-size: var(--tz-text-xs);
+  font-weight: 500;
+  color: var(--tz-ink-3);
+}
+.score-num-main {
+  color: var(--tz-ink);
+}
+.score-recommendation {
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--tz-text-sm);
+  color: var(--tz-ink-2);
+}
+.score-recommendation svg {
+  flex-shrink: 0;
+  color: var(--tz-vermillion);
+}
+.score-mod-cell {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.score-roi-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--tz-vermillion-border);
+  background: var(--tz-vermillion-bg);
+  color: var(--tz-vermillion);
+  font-size: 11px;
+  font-weight: 600;
+}
+.score-gap-tag {
+  color: var(--tz-vermillion);
+  font-weight: 600;
+}
+@media (max-width: 720px) {
+  .score-summary-metrics {
+    grid-template-columns: 1fr;
+  }
+}

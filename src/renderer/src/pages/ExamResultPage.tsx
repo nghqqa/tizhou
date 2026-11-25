@@ -6,6 +6,7 @@ import {
   CalendarCheckIcon,
   ChartLineUpIcon,
   CheckCircleIcon,
+  ClockCountdownIcon,
   ExamIcon,
   NotePencilIcon,
   RobotIcon,
@@ -19,6 +20,7 @@ import { MarkdownContent } from '../components/MarkdownContent'
 import { OptionContent } from '../components/OptionContent'
 import { ReadingTypographyBar, useReadingTypography } from '../components/ReadingTypographyControl'
 import { EmptyState, ErrorState, LoadingState, PageHeader, Section } from '../components/ui'
+import { analyzeExamSunkCost } from '../services/exam-sunk-cost'
 import { useAppStore } from '../store'
 import { ShenlunPointChecklist } from './shenlun/ShenlunPointChecklist'
 
@@ -43,6 +45,9 @@ export function ExamResultPage(): React.JSX.Element {
   const [enqueuedDone, setEnqueuedDone] = useState(false)
   const [reviewPage, setReviewPage] = useState(1)
   const [pendingScrollId, setPendingScrollId] = useState<string | null>(null)
+  const [showAllSlow, setShowAllSlow] = useState(false)
+  const [enqueueSunkBusy, setEnqueueSunkBusy] = useState(false)
+  const [enqueuedSunkDone, setEnqueuedSunkDone] = useState(false)
   const REVIEW_PAGE_SIZE = 20
 
   useEffect(() => {
@@ -157,6 +162,21 @@ export function ExamResultPage(): React.JSX.Element {
       .map((item) => item.question.id)
   }, [reviewItems, exam?.uncertainIds, exam?.subject])
 
+  const sunkCostReport = useMemo(() => {
+    if (exam?.subject === 'shenlun') return null
+    return analyzeExamSunkCost(
+      reviewItems.map((item) => ({
+        index: item.index,
+        questionId: item.question.id,
+        category: item.question.category,
+        stem: item.question.stem,
+        correct: item.correct,
+        answered: item.answered,
+        durationSeconds: item.durationSeconds
+      }))
+    )
+  }, [exam?.subject, reviewItems])
+
   const filteredItems =
     filter === 'wrong-unanswered' ? reviewItems.filter((item) => !item.correct) : reviewItems
 
@@ -255,6 +275,28 @@ export function ExamResultPage(): React.JSX.Element {
       showToast(cause instanceof Error ? cause.message : '加入复习队列失败')
     } finally {
       setEnqueueBusy(false)
+    }
+  }
+
+  async function enqueueSunkCostQuestions(): Promise<void> {
+    const ids = sunkCostReport?.sunkCostItems.map((item) => item.questionId) ?? []
+    if (!ids.length || enqueueSunkBusy || enqueuedSunkDone) return
+    setEnqueueSunkBusy(true)
+    try {
+      const res = await invoke<{ added: number; skipped: number }>({
+        method: 'review.enqueue',
+        params: { questionIds: ids, reason: '考场超时答错' }
+      })
+      setEnqueuedSunkDone(true)
+      showToast(
+        res.added > 0
+          ? `已将 ${res.added} 道超时沉没成本题加入间隔复习`
+          : '这些题目已在待复习队列中'
+      )
+    } catch (cause) {
+      showToast(cause instanceof Error ? cause.message : '加入复习队列失败')
+    } finally {
+      setEnqueueSunkBusy(false)
     }
   }
 
@@ -494,6 +536,87 @@ export function ExamResultPage(): React.JSX.Element {
           )}
         </Section>
       </div>
+
+      {sunkCostReport && sunkCostReport.topSlowItems.length > 0 && (
+        <Section
+          title="超时黑洞榜（沉没成本分析）"
+          description="识别考场单题耗时最长与超时仍答错的题目，帮助看清“死磕丢时间”的题型分布，点击可定位逐题复盘。"
+          actions={
+            sunkCostReport.sunkCostItems.length > 0 ? (
+              <Button
+                size="small"
+                appearance="secondary"
+                icon={<ClockCountdownIcon />}
+                disabled={enqueueSunkBusy || enqueuedSunkDone}
+                onClick={() => void enqueueSunkCostQuestions()}
+              >
+                {enqueuedSunkDone
+                  ? `已将 ${sunkCostReport.sunkCostItems.length} 题加入复习`
+                  : `将 ${sunkCostReport.sunkCostItems.length} 道沉没成本题加入复习`}
+              </Button>
+            ) : undefined
+          }
+        >
+          <div className="sunk-cost-summary">
+            <div className="sunk-cost-stat">
+              <span className="muted">超时且答错（沉没成本）</span>
+              <strong className={sunkCostReport.sunkCostItems.length > 0 ? 'negative' : 'positive'}>
+                {sunkCostReport.sunkCostItems.length} 题
+              </strong>
+            </div>
+            <div className="sunk-cost-stat">
+              <span className="muted">沉没累计耗时</span>
+              <strong>
+                {sunkCostReport.sunkCostTotalSeconds > 0
+                  ? formatDurationBrief(sunkCostReport.sunkCostTotalSeconds)
+                  : '0秒'}
+              </strong>
+            </div>
+            <div className="sunk-cost-stat">
+              <span className="muted">占记录答题时长</span>
+              <strong>{sunkCostReport.sunkCostSharePercent}%</strong>
+            </div>
+          </div>
+          <div className="sunk-cost-list">
+            {(showAllSlow
+              ? sunkCostReport.topSlowItems
+              : sunkCostReport.topSlowItems.slice(0, 6)
+            ).map((entry) => (
+              <button
+                key={entry.questionId}
+                type="button"
+                className={`sunk-cost-row${entry.isSunkCost ? ' is-sunk' : ''}`}
+                onClick={() => jumpToQuestion(entry.questionId, entry.correct)}
+              >
+                <span className="sunk-cost-no">第 {entry.index} 题</span>
+                <span className="pill">{entry.moduleName}</span>
+                <span className="sunk-cost-stem">{entry.stemPreview}</span>
+                <span className="sunk-cost-time">
+                  {formatDurationBrief(entry.durationSeconds)} · {entry.overtimeRatio}×
+                </span>
+                <span
+                  className={`sunk-cost-badge${entry.isSunkCost ? ' is-sunk' : entry.isOvertime ? ' is-warn' : ''}`}
+                >
+                  {entry.isSunkCost ? '沉没成本' : entry.isOvertime ? '超时答对' : '偏慢'}
+                </span>
+              </button>
+            ))}
+          </div>
+          {sunkCostReport.topSlowItems.length > 6 && (
+            <div className="sunk-cost-more">
+              <Button
+                size="small"
+                appearance="subtle"
+                onClick={() => setShowAllSlow((prev) => !prev)}
+              >
+                {showAllSlow
+                  ? '收起部分条目'
+                  : `展开全部 ${sunkCostReport.topSlowItems.length} 道高耗时题`}
+              </Button>
+            </div>
+          )}
+        </Section>
+      )}
 
       {reviewItems.length > 0 && (
         <Section

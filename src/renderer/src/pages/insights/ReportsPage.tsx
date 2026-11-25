@@ -25,6 +25,7 @@ import {
 } from '../../components/ui'
 import { useAppStore } from '../../store'
 import { EfficiencyQuadrantChart } from './EfficiencyQuadrantChart'
+import { ScoreEstimatorSection } from './ScoreEstimatorSection'
 
 export function ReportsPage(): React.JSX.Element {
   const navigate = useNavigate()
@@ -214,6 +215,7 @@ export function ReportsPage(): React.JSX.Element {
                 </div>
               </Section>
               <EfficiencyQuadrantChart categoryStats={report.categoryStats} />
+              <ScoreEstimatorSection categoryStats={report.categoryStats} />
               <div className="grid two">
                 <Section title="模块表现">
                   <table className="report-table">
