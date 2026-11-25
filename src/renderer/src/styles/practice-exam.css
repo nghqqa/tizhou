@@ -474,6 +474,21 @@
   box-shadow: 0 16px 40px rgba(0, 0, 0, 0.2);
   overflow: hidden;
 }
+.scratchpad-drawer.is-dragging {
+  will-change: transform;
+  box-shadow: 0 22px 52px rgba(0, 0, 0, 0.28);
+}
+.scratchpad-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
 .scratchpad-head {
   display: flex;
   align-items: center;
@@ -482,6 +497,89 @@
   padding: 8px 12px;
   border-bottom: 1px solid var(--tz-border);
   background: var(--tz-surface-2);
+  cursor: grab;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.scratchpad-head-left {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.scratchpad-drag-handle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--tz-ink-3);
+  cursor: grab;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  flex-shrink: 0;
+}
+.scratchpad-drag-handle:hover,
+.scratchpad-drag-handle[aria-expanded='true'] {
+  border-color: var(--tz-border);
+  background: var(--tz-surface);
+  color: var(--tz-ink);
+}
+.scratchpad-drag-handle:focus-visible {
+  outline: 2px solid var(--tz-vermillion);
+  outline-offset: 1px;
+}
+.scratchpad-drawer.is-dragging .scratchpad-head,
+.scratchpad-drawer.is-dragging .scratchpad-drag-handle {
+  cursor: grabbing;
+}
+.scratchpad-dock-menu {
+  position: absolute;
+  top: 44px;
+  left: 10px;
+  z-index: 5;
+  width: 224px;
+  padding: 10px;
+  border: 1px solid var(--tz-border-strong);
+  border-radius: var(--tz-radius-md);
+  background: var(--tz-surface);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.18);
+}
+.scratchpad-dock-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 6px;
+}
+.scratchpad-dock-item {
+  padding: 6px 8px;
+  border: 1px solid var(--tz-border);
+  border-radius: 6px;
+  background: var(--tz-surface-2);
+  color: var(--tz-ink);
+  font-size: var(--tz-text-xs);
+  font-weight: 500;
+  cursor: pointer;
+}
+.scratchpad-dock-item:hover {
+  border-color: var(--tz-vermillion);
+  color: var(--tz-vermillion);
+  background: var(--tz-surface);
+}
+.scratchpad-dock-item:focus-visible {
+  outline: 2px solid var(--tz-vermillion);
+  outline-offset: 1px;
+}
+.scratchpad-dock-hint {
+  margin: 8px 0 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--tz-ink-3);
 }
 .scratchpad-tabs {
   display: inline-flex;
