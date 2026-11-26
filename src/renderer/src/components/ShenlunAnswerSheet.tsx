@@ -58,12 +58,15 @@ export function ShenlunAnswerSheet({
 
   const wordCount = value.replace(/\s/g, '').length
   const maxChars = limit?.max ?? null
-  const overLimit = Boolean(limit?.max && wordCount > limit.max)
-  const underLimit = Boolean(limit?.min && wordCount > 0 && wordCount < limit.min)
 
   const grid = useMemo(
     () => buildShenlunSheetGrid(displayValue, maxChars, displayCaret),
     [displayValue, maxChars, displayCaret]
+  )
+
+  const overLimit = Boolean(limit?.max && grid.lastFilledCellNumber > limit.max)
+  const underLimit = Boolean(
+    limit?.min && grid.filledCellCount > 0 && grid.lastFilledCellNumber < limit.min
   )
 
   function syncCaretFromDom(): void {
@@ -110,10 +113,12 @@ export function ShenlunAnswerSheet({
     row: ShenlunSheetRow,
     event: React.MouseEvent<HTMLDivElement>
   ): number {
-    if (cell.charIndex !== null) {
+    if (cell.charIndex !== null && cell.charEndIndex !== null) {
+      const span = Math.max(1, cell.charEndIndex - cell.charIndex)
       const rect = event.currentTarget.getBoundingClientRect()
-      const clickRightHalf = event.clientX - rect.left > rect.width / 2
-      return clickRightHalf ? cell.charIndex + 1 : cell.charIndex
+      const ratio =
+        rect.width > 0 ? Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width)) : 0
+      return cell.charIndex + Math.round(ratio * span)
     }
     return row.lineEndCharIndex
   }
@@ -160,9 +165,11 @@ export function ShenlunAnswerSheet({
           </button>
           <span
             className={`shenlun-sheet-counter${overLimit ? ' is-over-limit' : underLimit ? ' is-under-limit' : ''}`}
-            title={limit ? `已识别题干字数要求：${limit.label}` : undefined}
+            title={`末字位于第 ${grid.lastFilledCellNumber} 格 · 实际填格 ${grid.filledCellCount} 格 · 字符 ${wordCount} 字（按真考 2 位数字/字母占 1 格、小数点与百分号合占、行首标点避头点排布）${limit ? ` · 题目要求：${limit.label}` : ''}`}
           >
-            {limit ? `${wordCount} / ${limit.label}` : `${wordCount} 字`}
+            {limit
+              ? `占 ${grid.lastFilledCellNumber} 格 / ${limit.label}`
+              : `占 ${grid.lastFilledCellNumber} 格`}
           </span>
         </div>
       </div>
@@ -266,15 +273,26 @@ export function ShenlunAnswerSheet({
                   const isSelected =
                     hasRangeSelection &&
                     cell.charIndex !== null &&
-                    cell.charIndex >= selection.start &&
-                    cell.charIndex < selection.end
+                    cell.charEndIndex !== null &&
+                    cell.charIndex < selection.end &&
+                    cell.charEndIndex > selection.start
+                  const caretStyle =
+                    isCaretHere && grid.caretSubOffset > 0
+                      ? ({
+                          '--caret-x': `${Math.round(grid.caretSubOffset * 100)}%`
+                        } as React.CSSProperties)
+                      : undefined
                   return (
                     <div
                       key={cell.col}
                       role="gridcell"
                       data-caret={isCaretHere ? 'true' : undefined}
+                      style={caretStyle}
                       className={[
                         'shenlun-sheet-cell',
+                        cell.compactLevel === 2 ? 'is-compact-2' : '',
+                        cell.compactLevel === 3 ? 'is-compact-3' : '',
+                        cell.squeezedPunct ? 'is-squeezed' : '',
                         cell.isLimitBoundary ? 'is-limit-boundary' : '',
                         cell.isOverLimit ? 'is-over-limit' : '',
                         isSelected ? 'is-selected' : '',
@@ -300,6 +318,9 @@ export function ShenlunAnswerSheet({
                       }}
                     >
                       {cell.char && <span className="shenlun-sheet-char">{cell.char}</span>}
+                      {cell.squeezedPunct && (
+                        <span className="shenlun-sheet-squeeze">{cell.squeezedPunct}</span>
+                      )}
                     </div>
                   )
                 })}

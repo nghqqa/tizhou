@@ -161,6 +161,32 @@
   font-family: var(--tz-font-song, 'FangSong', 'STFangsong', serif);
   font-size: 15px;
 }
+.shenlun-sheet-cell.is-compact-2,
+.shenlun-sheet.is-official-doc .shenlun-sheet-cell.is-compact-2 {
+  font-size: 11.5px;
+  letter-spacing: -0.04em;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.shenlun-sheet-cell.is-compact-3,
+.shenlun-sheet.is-official-doc .shenlun-sheet-cell.is-compact-3 {
+  font-size: 10px;
+  letter-spacing: -0.06em;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.shenlun-sheet-cell.is-squeezed .shenlun-sheet-char {
+  transform: translate(-1.5px, -1px);
+}
+.shenlun-sheet-squeeze {
+  position: absolute;
+  right: 1px;
+  bottom: 1px;
+  font-size: 9.5px;
+  line-height: 1;
+  color: inherit;
+  pointer-events: none;
+}
 .shenlun-sheet-cell.is-limit-boundary {
   box-shadow: inset -2px 0 0 #c93b31;
 }
@@ -177,7 +203,7 @@
 .shenlun-sheet-cell.is-caret::before {
   content: '';
   position: absolute;
-  left: 2px;
+  left: var(--caret-x, 2px);
   top: 4px;
   bottom: 4px;
   width: 2px;
@@ -1060,4 +1086,38 @@
   border-bottom: 1px solid color-mix(in srgb, var(--tz-pine) 60%, transparent);
   border-radius: 3px;
   padding: 0 2px;
+}
+
+/* ── 申论批改结果：回退横幅与多行示范作答排版 ── */
+.eval-fallback-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--tz-vermillion-border);
+  border-radius: var(--tz-radius);
+  background: var(--tz-vermillion-bg);
+}
+.eval-fallback-body {
+  flex: 1;
+  min-width: 240px;
+}
+.eval-fallback-body strong {
+  display: block;
+  font-size: var(--tz-text-sm);
+  color: var(--tz-vermillion);
+}
+.eval-fallback-body p {
+  margin: 4px 0 0;
+  font-size: var(--tz-text-xs);
+  line-height: 1.6;
+  color: var(--tz-ink-2);
+}
+.eval-answer-panel p,
+.eval-answer-panel li {
+  white-space: pre-wrap;
+  line-height: 1.75;
 }

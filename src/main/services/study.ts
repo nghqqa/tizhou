@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type {
+  AiAskResult,
+  AiMessage,
   ConstructedEvaluation,
   DiagnosisResult,
   LearningPlan,
@@ -9,10 +11,19 @@ import type {
   QuestionFilter
 } from '../../shared/contracts'
 import { FEATURE_PROMPTS, taskDataEnvelope } from '../../shared/prompts'
-import { classifyShenlunType } from '../../shared/shenlun'
+import {
+  classifyShenlunType,
+  recommendShenlunMaterialIndices,
+  splitShenlunMaterialBlocks,
+  type ShenlunQuestionType
+} from '../../shared/shenlun'
 import { expandCategoryAliases } from '../../shared/study-constants'
 import { AiService } from './ai'
 import { DatabaseService } from './database'
+import {
+  parseConstructedEvaluationJson,
+  parseConstructedEvaluationMarkdown
+} from './shenlun-eval-parser'
 import { clamp, now, sha256Hex } from '../utils/common'
 
 function dateFromToday(days: number): string {
@@ -155,14 +166,64 @@ export function takeUnits(units: Question[][], count: number): Question[] {
   return picked.slice(0, count)
 }
 
-function parseJsonObject(value: string): Record<string, unknown> | undefined {
-  const codeBlock = value.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1] ?? value
-  try {
-    const parsed = JSON.parse(codeBlock.trim())
-    return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : undefined
-  } catch {
-    return undefined
+const EXPLICIT_MATERIAL_REF_IN_STEM_RE =
+  /(?:给定资料|给定材料|资料|材料)\s*[一二三四五六七八九十\d]+/
+const FULL_MATERIAL_SCOPE_RE = /(?:全部|所有|整篇|各则|上述|以上)\s*(?:给定)?(?:资料|材料)/
+
+function selectEvaluationMaterial(
+  material: string,
+  stem: string,
+  explanation: string,
+  questionType: ShenlunQuestionType,
+  compactMode: boolean
+): string {
+  const trimmed = material.trim()
+  if (!trimmed) return ''
+
+  const blocks = splitShenlunMaterialBlocks(trimmed)
+  if (!compactMode) {
+    if (trimmed.length <= 8000 || questionType === '作文题') return trimmed
+    if (
+      blocks.length >= 2 &&
+      EXPLICIT_MATERIAL_REF_IN_STEM_RE.test(stem) &&
+      !FULL_MATERIAL_SCOPE_RE.test(stem)
+    ) {
+      const indices = recommendShenlunMaterialIndices(blocks, stem, explanation, questionType)
+      if (indices.length > 0 && indices.length < blocks.length) {
+        return indices.map((idx) => blocks[idx]!.raw).join('\n\n')
+      }
+    }
+    return trimmed
   }
+
+  let selected = trimmed
+  if (blocks.length >= 2 && questionType !== '作文题') {
+    const indices = recommendShenlunMaterialIndices(blocks, stem, explanation, questionType)
+    if (indices.length > 0 && indices.length < blocks.length) {
+      selected = indices.map((idx) => blocks[idx]!.raw).join('\n\n')
+    }
+  }
+  const maxCompactChars = 5500
+  if (selected.length <= maxCompactChars) return selected
+  return `${selected.slice(0, maxCompactChars)}\n\n[注：原始给定资料过长已按精简模式截断，请仅依据上述已呈现材料要点评分]`
+}
+
+function isNonRetryableAiError(message: string): boolean {
+  return /API Key|无法解密|\b401\b|\b403\b|invalid_api_key|authentication|unauthorized|forbidden|insufficient_quota|quota|余额不足|私有或保留地址|私有网络|有效 URL|必须使用 HTTPS/i.test(
+    message
+  )
+}
+
+function isContextLimitError(message: string): boolean {
+  return /context_length|maximum context|too many tokens|token limit|input is too long|\b413\b|上下文长度|超出模型上下文/i.test(
+    message
+  )
+}
+
+function isStreamTransportError(message: string): boolean {
+  return /空内容|terminated|premature|ECONNRESET|EPIPE|ETIMEDOUT|socket|fetch failed|SSE|stream|请求超时/i.test(
+    message
+  )
 }
 
 export class StudyService {
@@ -387,70 +448,118 @@ export class StudyService {
         prompt?.explanation && !prompt.explanation.startsWith('暂无参考答案')
           ? prompt.explanation
           : ''
-      const messages = [
-        {
-          role: 'system' as const,
-          content: FEATURE_PROMPTS.constructedEvaluation
-        },
-        {
-          role: 'user' as const,
-          content: taskDataEnvelope('申论作答评估输入', {
-            title: input.title,
-            questionType,
-            actualWordCount,
-            prompt: stemText,
-            material: prompt?.material ?? '',
-            referencePoints: prompt?.answer ?? [],
-            referenceExplanation: explanationText,
-            studentAnswer: content
-          })
-        }
-      ]
+      const buildMessages = (compactMode: boolean, repairReminder: boolean): AiMessage[] => {
+        const material = selectEvaluationMaterial(
+          prompt?.material ?? '',
+          stemText,
+          explanationText,
+          questionType,
+          compactMode
+        )
+        const refExp =
+          compactMode && explanationText.length > 2000
+            ? `${explanationText.slice(0, 2000)}\n[注：参考解析过长已节选]`
+            : explanationText
+        const envelope = taskDataEnvelope('申论作答评估输入', {
+          title: input.title,
+          questionType,
+          actualWordCount,
+          prompt: stemText,
+          material,
+          referencePoints: prompt?.answer ?? [],
+          referenceExplanation: refExp,
+          studentAnswer: content
+        })
+        const userContent = repairReminder
+          ? `${envelope}\n\n【重要格式纠错提示】上一次返回内容未能解析为标准 JSON。本次请只输出一个合法 JSON 对象（以 { 开头、以 } 结尾），严禁输出 <think> 思考过程、Markdown 代码围栏或前后解释文字；字符串内引述原文请使用中文引号“”，换行请使用 \\n，并保持表述精炼以免触发输出长度截断。`
+          : envelope
+        return [
+          {
+            role: 'system',
+            content: FEATURE_PROMPTS.constructedEvaluation
+          },
+          {
+            role: 'user',
+            content: userContent
+          }
+        ]
+      }
+
+      type FailureKind = 'none' | 'parse' | 'context' | 'truncated' | 'stream' | 'other'
+      let lastFailureKind: FailureKind = 'none'
+      let lastRawResult: AiAskResult | undefined
+
       for (let attempt = 0; attempt < 2 && !evaluation && !streamAborted; attempt += 1) {
         if (attempt > 0) options?.onReset?.()
+        const compactMode =
+          attempt > 0 && (lastFailureKind === 'context' || lastFailureKind === 'truncated')
+        const repairReminder =
+          attempt > 0 && (lastFailureKind === 'parse' || lastFailureKind === 'truncated')
+        const attemptMessages = buildMessages(compactMode, repairReminder)
+        const preferNonStream =
+          attempt > 0 && lastFailureKind === 'stream' && typeof this.ai.ask === 'function'
         try {
-          const result = input.requestId
-            ? await this.ai.askStream(
-                { purpose: 'evaluate', messages, requestId: input.requestId },
-                { onChunk: options?.onChunk ?? (() => {}) },
-                90_000
-              )
-            : await this.ai.ask({ purpose: 'evaluate', messages }, 90_000)
+          const result =
+            input.requestId && !preferNonStream
+              ? await this.ai.askStream(
+                  { purpose: 'evaluate', messages: attemptMessages, requestId: input.requestId },
+                  { onChunk: options?.onChunk ?? (() => {}) },
+                  150_000
+                )
+              : await this.ai.ask({ purpose: 'evaluate', messages: attemptMessages }, 150_000)
           if ('aborted' in result && result.aborted) {
             streamAborted = true
             break
           }
-          const parsed = parseJsonObject(result.content)
+          lastRawResult = result
+          const parsed = parseConstructedEvaluationJson(result.content)
           if (!parsed) {
-            aiFailureReason = 'AI 返回结果未包含合法 JSON 结构'
+            lastFailureKind = 'parse'
+            aiFailureReason = 'AI 返回结果未能解析为有效 JSON 评分结构'
             continue
           }
-          const dimensionsRaw = Array.isArray(parsed.dimensions) ? parsed.dimensions : []
           evaluation = {
             id: randomUUID(),
             promptId: input.promptId,
-            score: clamp(Number(parsed.score) || 0, 0, 100),
-            dimensions: dimensionsRaw.flatMap((item) => {
-              if (!item || typeof item !== 'object') return []
-              const record = item as Record<string, unknown>
-              return [
-                {
-                  name: String(record.name ?? '综合'),
-                  score: clamp(Number(record.score) || 0, 0, 100),
-                  comment: String(record.comment ?? '')
-                }
-              ]
-            }),
-            summary: String(parsed.summary ?? '评估完成'),
-            suggestions: Array.isArray(parsed.suggestions)
-              ? parsed.suggestions.map(String).slice(0, 8)
-              : [],
+            score: parsed.score,
+            dimensions: parsed.dimensions,
+            summary: parsed.summary,
+            suggestions: parsed.suggestions,
             createdAt: now(),
             provider: `${result.provider}/${result.model}`
           }
         } catch (cause) {
-          aiFailureReason = cause instanceof Error ? cause.message : String(cause || '未知错误')
+          const msg = cause instanceof Error ? cause.message : String(cause || '未知错误')
+          aiFailureReason = msg
           evaluation = undefined
+          if (isNonRetryableAiError(msg)) {
+            break
+          }
+          if (isContextLimitError(msg)) {
+            lastFailureKind = 'context'
+          } else if (msg.includes('最大长度截断')) {
+            lastFailureKind = 'truncated'
+          } else if (isStreamTransportError(msg)) {
+            lastFailureKind = 'stream'
+          } else {
+            lastFailureKind = 'other'
+          }
+        }
+      }
+
+      if (!evaluation && !streamAborted && lastRawResult) {
+        const rescued = parseConstructedEvaluationMarkdown(lastRawResult.content)
+        if (rescued) {
+          evaluation = {
+            id: randomUUID(),
+            promptId: input.promptId,
+            score: rescued.score,
+            dimensions: rescued.dimensions,
+            summary: rescued.summary,
+            suggestions: rescued.suggestions,
+            createdAt: now(),
+            provider: `${lastRawResult.provider}/${lastRawResult.model}`
+          }
         }
       }
     }

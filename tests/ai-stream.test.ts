@@ -378,9 +378,14 @@ describe('AiService.askStream & cancelStream & Shenlun abort', () => {
     expect(evaluation.score).toBe(86)
   })
 
-  it('extractShenlunStreamPreview ignores dimension sub-scores and avoids double unescaping \\\\n', () => {
+  it('extractShenlunStreamPreview ignores dimension sub-scores, strips thinking tags, and avoids double unescaping \\\\n', () => {
+    const thinkingOnly = '<think>我认为考生大概能拿 99 分，因为写到了很多要点'
+    const pThinking = extractShenlunStreamPreview(thinkingOnly)
+    expect(pThinking.score).toBeUndefined()
+    expect(pThinking.snippet).toContain('正在分析材料与采分点')
+
     const partial =
-      '{"dimensions":[{"name":"要点","score":75,"comment":"[good]"}],"summary":"第一句\\\\n第二句\\n第三句"'
+      '<think>思考95分</think>{"dimensions":[{"name":"要点","score":75,"comment":"[good]"}],"summary":"第一句\\\\n第二句\\n第三句"'
     const preview1 = extractShenlunStreamPreview(partial)
     expect(preview1.score).toBeUndefined()
     expect(preview1.summary).toBe('第一句\\n第二句\n第三句')
@@ -388,5 +393,211 @@ describe('AiService.askStream & cancelStream & Shenlun abort', () => {
     const withTotal = `${partial},"score":84}`
     const preview2 = extractShenlunStreamPreview(withTotal)
     expect(preview2.score).toBe(84)
+  })
+
+  it('filters Google thought parts and supports array/message content in openai-chat streams', async () => {
+    const googleSse = [
+      'data: {"candidates":[{"content":{"parts":[{"thought":true,"text":"先内部推理一下 {\\"score\\":99}"},{"text":"{\\"score\\":"}]}}]}\n',
+      'data: {"candidates":[{"content":{"parts":[{"text":"85}"}]}}]}\n'
+    ]
+    const gRes = await consumeSseStream(
+      'google-generate-content',
+      streamFromChunks(googleSse),
+      () => {}
+    )
+    expect(gRes.content).toBe('{"score":85}')
+    expect(gRes.sawReasoning).toBe(true)
+
+    const compatSse = [
+      'data: {"choices":[{"message":{"content":[{"text":"第二段"}]}}]}\n',
+      'data: {"choices":[{"delta":{"reasoning_content":"思考中"},"finish_reason":"length"}]}\n'
+    ]
+    const cRes = await consumeSseStream('openai-chat', streamFromChunks(compatSse), () => {})
+    expect(cRes.content).toBe('第二段')
+    expect(cRes.finishReason).toBe('length')
+    expect(cRes.sawReasoning).toBe(true)
+  })
+
+  it('raises maxTokens floor for evaluate purpose and skips Google thought parts in ask()', async () => {
+    let seenBody: Record<string, unknown> | undefined
+    const { url } = await startHttpServer((req, res) => {
+      const chunks: Buffer[] = []
+      req.on('data', (chunk) => chunks.push(chunk))
+      req.on('end', () => {
+        seenBody = JSON.parse(Buffer.concat(chunks).toString('utf8')) as Record<string, unknown>
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(
+          JSON.stringify({
+            candidates: [
+              {
+                content: {
+                  parts: [{ thought: true, text: '思维链不应该进入正文' }, { text: '{"score":88}' }]
+                }
+              }
+            ]
+          })
+        )
+      })
+    })
+
+    const db = makeDb()
+    const ai = new AiService(db)
+    ai.saveConfig({
+      provider: 'ollama',
+      protocol: 'google-generate-content',
+      baseUrl: url,
+      model: 'gemini-3.6-flash',
+      temperature: 0.2,
+      maxTokens: 1024
+    })
+
+    const result = await ai.ask({
+      purpose: 'evaluate',
+      messages: [{ role: 'user', content: '评估此作答' }]
+    })
+    expect(result.content).toBe('{"score":88}')
+    expect((seenBody?.generationConfig as Record<string, unknown>)?.maxOutputTokens).toBe(8192)
+  })
+
+  it('throws descriptive truncation error when reasoning exhausts token budget', async () => {
+    const { url } = await startHttpServer((_req, res) => {
+      res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
+      res.write(
+        'data: {"choices":[{"delta":{"reasoning_content":"长思考"},"finish_reason":"length"}]}\n\n'
+      )
+      res.write('data: [DONE]\n\n')
+      res.end()
+    })
+
+    const db = makeDb()
+    const ai = new AiService(db)
+    ai.saveConfig({
+      provider: 'lmstudio',
+      protocol: 'openai-chat',
+      baseUrl: url,
+      model: 'qwen3',
+      temperature: 0.2,
+      maxTokens: 1024
+    })
+
+    await expect(
+      ai.askStream(
+        {
+          requestId: 'req-reason-trunc',
+          purpose: 'evaluate',
+          messages: [{ role: 'user', content: 'hi' }]
+        },
+        { onChunk: () => {} }
+      )
+    ).rejects.toThrow('模型输出被最大长度截断')
+  })
+
+  it('StudyService.evaluateConstructed switches to non-stream ask after stream failure and rescues Markdown output', async () => {
+    const db = makeDb()
+    const askStream = vi.fn(async () => {
+      throw new Error('模型返回了空内容')
+    })
+    const ask = vi.fn(async () => ({
+      content: JSON.stringify({
+        score: 83,
+        dimensions: [{ name: '要点覆盖', score: 83, comment: '核心要点齐全' }],
+        summary: '非流式重试成功。',
+        suggestions: ['继续保持规范作答']
+      }),
+      provider: 'lmstudio',
+      model: 'm'
+    }))
+
+    const study1 = new StudyService(db, {
+      getConfig: () => ({
+        provider: 'lmstudio',
+        protocol: 'openai-chat',
+        baseUrl: 'http://127.0.0.1:1234',
+        model: 'm',
+        temperature: 0.2,
+        maxTokens: 4096,
+        hasApiKey: false,
+        verified: true
+      }),
+      askStream,
+      ask
+    } as unknown as AiService)
+
+    const eval1 = await study1.evaluateConstructed({
+      promptId: 'p-fallback-ask',
+      title: '流式降级测试',
+      content: '这是一段超过二十个字的申论作答内容用于验证流式失败自动切非流式。',
+      requestId: 'req-stream-to-ask'
+    })
+    expect(askStream).toHaveBeenCalledTimes(1)
+    expect(ask).toHaveBeenCalledTimes(1)
+    expect(eval1.score).toBe(83)
+    expect(eval1.provider).toBe('lmstudio/m')
+
+    const mdContent = `总分：76分
+- **要点覆盖（76分）**：抓住关键对策，【缺：群众反馈机制】。
+- **结构组织（78分）**：条理清晰。
+### 综合反馈
+整体结构合理，但核心措施概括还需更凝练。
+### 修改建议
+1. 补全群众监督表述。
+2. 压缩背景句长度。`
+    const askStreamMd = vi.fn(async () => ({
+      content: mdContent,
+      provider: 'lmstudio',
+      model: 'm-md'
+    }))
+    const study2 = new StudyService(db, {
+      getConfig: () => ({
+        provider: 'lmstudio',
+        protocol: 'openai-chat',
+        baseUrl: 'http://127.0.0.1:1234',
+        model: 'm-md',
+        temperature: 0.2,
+        maxTokens: 4096,
+        hasApiKey: false,
+        verified: true
+      }),
+      askStream: askStreamMd
+    } as unknown as AiService)
+
+    const eval2 = await study2.evaluateConstructed({
+      promptId: 'p-md-rescue',
+      title: 'Markdown抢救测试',
+      content: '这是一段超过二十个字的申论作答内容用于验证非JSON评估结果抢救能力。',
+      requestId: 'req-md-rescue'
+    })
+    expect(eval2.score).toBe(76)
+    expect(eval2.provider).toBe('lmstudio/m-md')
+  })
+
+  it('StudyService.evaluateConstructed stops retrying on 401 auth errors and records failure reason', async () => {
+    const db = makeDb()
+    const askStream = vi.fn(async () => {
+      throw new Error('模型服务返回 401：invalid_api_key')
+    })
+    const study = new StudyService(db, {
+      getConfig: () => ({
+        provider: 'deepseek',
+        protocol: 'openai-chat',
+        baseUrl: 'https://api.deepseek.com',
+        model: 'deepseek-v4-flash',
+        temperature: 0.2,
+        maxTokens: 4096,
+        hasApiKey: true,
+        verified: false
+      }),
+      askStream
+    } as unknown as AiService)
+
+    const result = await study.evaluateConstructed({
+      promptId: 'p-auth-fail',
+      title: '鉴权失败不重试测试',
+      content: '这是一段超过二十个字的申论作答内容用于验证鉴权失败立即停止重试。',
+      requestId: 'req-auth-fail'
+    })
+    expect(askStream).toHaveBeenCalledTimes(1)
+    expect(result.provider).toBe('local-rubric')
+    expect(result.summary).toContain('401')
   })
 })

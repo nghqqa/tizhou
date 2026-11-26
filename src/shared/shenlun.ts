@@ -503,6 +503,11 @@ export interface ShenlunSheetCell {
   col: number
   char: string
   charIndex: number | null
+  charEndIndex: number | null
+  /** 因行首避头点挤入上一行末格右下角的标点 */
+  squeezedPunct?: string
+  /** 单格容纳 2 或 3 个半角字符时的紧凑排版等级 */
+  compactLevel?: 0 | 2 | 3
   cellNumber: number
   isLimitBoundary: boolean
   isOverLimit: boolean
@@ -521,12 +526,221 @@ export interface ShenlunSheetGrid {
   rows: ShenlunSheetRow[]
   caretRow: number
   caretCol: number
-  charCoordMap: Array<{ row: number; col: number }>
+  /** 光标落在多字符格内部时的水平偏移比例（0..1） */
+  caretSubOffset: number
+  /** 实际填入内容的方格数量 */
+  filledCellCount: number
+  /** 末字所落方格的 1-based 格号（对应答题卡 100/200/300 字刻度） */
+  lastFilledCellNumber: number
+  charCoordMap: Array<{ row: number; col: number; subOffset: number }>
+}
+
+const LINE_START_FORBIDDEN_PUNCT = new Set([
+  '，',
+  '。',
+  '、',
+  '；',
+  '：',
+  '？',
+  '！',
+  ',',
+  '.',
+  ';',
+  ':',
+  '?',
+  '!',
+  '》',
+  '）',
+  '】',
+  '”',
+  '’',
+  '」',
+  '』'
+])
+
+function isAsciiDigit(ch: string | undefined): boolean {
+  return Boolean(ch && ch >= '0' && ch <= '9')
+}
+
+function isAsciiLetter(ch: string | undefined): boolean {
+  return Boolean(ch && ((ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z')))
+}
+
+type SheetToken =
+  | { type: 'newline'; start: number; end: number }
+  | { type: 'pair-punct'; chars: [string, string]; start: number; end: number }
+  | { type: 'cell'; text: string; start: number; end: number; allowSqueeze: boolean }
+
+function pushPairChunks(tokens: SheetToken[], content: string, start: number, end: number): void {
+  for (let pos = start; pos < end; pos += 2) {
+    const chunkEnd = Math.min(pos + 2, end)
+    tokens.push({
+      type: 'cell',
+      text: content.slice(pos, chunkEnd),
+      start: pos,
+      end: chunkEnd,
+      allowSqueeze: false
+    })
+  }
 }
 
 /**
- * 将作答文本按真考申论答题卡（25 格/行，每 4 行 100 字）映射为方格矩阵，
- * 支持换行跳行、字数上限警戒线与点击方格反查光标位置。
+ * 将作答字符串切分为符合公考申论真考占格规则的方格单元：
+ * - 阿拉伯数字每 2 位占 1 格；小数点、百分号、1-2 位序号点与相邻数字合占 1 格
+ * - 1 位数字+1 位字母短代号（如 5G）合占 1 格；连续英文字母每 2 个占 1 格
+ * - 破折号（——）与省略号（……）标记为不可断行的双格单元
+ */
+function tokenizeShenlunSheetContent(content: string): SheetToken[] {
+  const tokens: SheetToken[] = []
+  const len = content.length
+  let i = 0
+
+  while (i < len) {
+    const ch = content[i]!
+    if (ch === '\r') {
+      i += 1
+      continue
+    }
+    if (ch === '\n') {
+      tokens.push({ type: 'newline', start: i, end: i + 1 })
+      i += 1
+      continue
+    }
+
+    if (content.startsWith('——', i)) {
+      tokens.push({ type: 'pair-punct', chars: ['—', '—'], start: i, end: i + 2 })
+      i += 2
+      continue
+    }
+    if (content.startsWith('……', i)) {
+      tokens.push({ type: 'pair-punct', chars: ['…', '…'], start: i, end: i + 2 })
+      i += 2
+      continue
+    }
+
+    // 阿拉伯数字开头（含整数/小数/百分数/数字序号/5G类短代号）
+    if (isAsciiDigit(ch)) {
+      let intEnd = i
+      while (intEnd < len && isAsciiDigit(content[intEnd])) intEnd += 1
+
+      // 1 位数字紧跟 1 位字母（如 5G/4G/3C）
+      if (
+        intEnd - i === 1 &&
+        isAsciiLetter(content[intEnd]) &&
+        !isAsciiDigit(content[intEnd + 1]) &&
+        !isAsciiLetter(content[intEnd + 1])
+      ) {
+        tokens.push({
+          type: 'cell',
+          text: content.slice(i, intEnd + 1),
+          start: i,
+          end: intEnd + 1,
+          allowSqueeze: false
+        })
+        i = intEnd + 1
+        continue
+      }
+
+      const numericCells: Array<{ text: string; start: number; end: number }> = []
+      for (let pos = i; pos < intEnd; pos += 2) {
+        const chunkEnd = Math.min(pos + 2, intEnd)
+        numericCells.push({
+          text: content.slice(pos, chunkEnd),
+          start: pos,
+          end: chunkEnd
+        })
+      }
+
+      let curEnd = intEnd
+      if (content[curEnd] === '.') {
+        const lastIntCell = numericCells[numericCells.length - 1]!
+        lastIntCell.text += '.'
+        lastIntCell.end = curEnd + 1
+        curEnd += 1
+
+        if (isAsciiDigit(content[curEnd])) {
+          let fracEnd = curEnd
+          while (fracEnd < len && isAsciiDigit(content[fracEnd])) fracEnd += 1
+          for (let pos = curEnd; pos < fracEnd; pos += 2) {
+            const chunkEnd = Math.min(pos + 2, fracEnd)
+            numericCells.push({
+              text: content.slice(pos, chunkEnd),
+              start: pos,
+              end: chunkEnd
+            })
+          }
+          curEnd = fracEnd
+        }
+      }
+
+      if (content[curEnd] === '%' || content[curEnd] === '‰') {
+        const lastCell = numericCells[numericCells.length - 1]!
+        if (lastCell.text.length < 3) {
+          lastCell.text += content[curEnd]
+          lastCell.end = curEnd + 1
+          curEnd += 1
+        }
+      }
+
+      for (const cell of numericCells) {
+        tokens.push({
+          type: 'cell',
+          text: cell.text,
+          start: cell.start,
+          end: cell.end,
+          allowSqueeze: false
+        })
+      }
+      i = curEnd
+      continue
+    }
+
+    // 连续 ASCII 英文字母每 2 个占 1 格
+    if (isAsciiLetter(ch)) {
+      let letterEnd = i
+      while (letterEnd < len && isAsciiLetter(content[letterEnd])) letterEnd += 1
+      pushPairChunks(tokens, content, i, letterEnd)
+      i = letterEnd
+      continue
+    }
+
+    const codePoint = content.codePointAt(i)
+    const charLen = codePoint !== undefined && codePoint > 0xffff ? 2 : 1
+    const unit = content.slice(i, i + charLen)
+    tokens.push({
+      type: 'cell',
+      text: unit,
+      start: i,
+      end: i + charLen,
+      allowSqueeze: LINE_START_FORBIDDEN_PUNCT.has(unit)
+    })
+    i += charLen
+  }
+
+  return tokens
+}
+
+function assignSpanCoords(
+  charCoordMap: Array<{ row: number; col: number; subOffset: number }>,
+  start: number,
+  end: number,
+  row: number,
+  col: number
+): void {
+  const span = Math.max(1, end - start)
+  for (let idx = start; idx < end; idx += 1) {
+    charCoordMap[idx] = {
+      row,
+      col,
+      subOffset: span <= 1 ? 0 : (idx - start) / span
+    }
+  }
+}
+
+/**
+ * 将作答文本按真考申论答题卡（25 格/行，每 4 行 100 字）映射为方格矩阵：
+ * - 支持 2 位数字/英文字母占 1 格、小数点与百分号合占、破折号/省略号不断行、行首标点自动避头挤入上一行末格；
+ * - 精准维护所有源码下标的二维坐标与选中区间，支撑点击定位与拖动批量删改。
  */
 export function buildShenlunSheetGrid(
   content: string,
@@ -537,36 +751,131 @@ export function buildShenlunSheetGrid(
   const targetCells = maxChars && maxChars > 0 ? maxChars + cols * 2 : 400
   const minRows = Math.max(10, Math.ceil(targetCells / cols))
 
-  const cellMap = new Map<string, { char: string; charIndex: number }>()
-  const lineEndIndex = new Map<number, number>()
-  const charCoordMap: Array<{ row: number; col: number }> = new Array(content.length + 1)
+  interface CellEntry {
+    char: string
+    charIndex: number
+    charEndIndex: number
+    squeezedPunct?: string
+    compactLevel: 0 | 2 | 3
+  }
 
+  const cellMap = new Map<string, CellEntry>()
+  const lineEndIndex = new Map<number, number>()
+  const charCoordMap: Array<{ row: number; col: number; subOffset: number }> = new Array(
+    content.length + 1
+  )
+
+  const tokens = tokenizeShenlunSheetContent(content)
   let row = 0
   let col = 0
-  for (let i = 0; i < content.length; i += 1) {
-    charCoordMap[i] = { row, col }
-    const ch = content[i]!
-    if (ch === '\r') continue
-    if (ch === '\n') {
-      lineEndIndex.set(row, i)
+  let autoWrappedPrevRow = false
+  let filledCellCount = 0
+  let lastFilledCellNumber = 0
+
+  const placeCell = (r: number, c: number, entry: CellEntry): void => {
+    cellMap.set(`${r}:${c}`, entry)
+    filledCellCount += 1
+    const cellNo = r * cols + c + 1
+    if (cellNo > lastFilledCellNumber) lastFilledCellNumber = cellNo
+  }
+
+  for (const token of tokens) {
+    if (token.type === 'newline') {
+      charCoordMap[token.start] = { row, col, subOffset: 0 }
+      lineEndIndex.set(row, token.start)
       row += 1
       col = 0
+      autoWrappedPrevRow = false
       continue
     }
-    cellMap.set(`${row}:${col}`, { char: ch, charIndex: i })
+
+    if (token.type === 'pair-punct') {
+      // 破折号 / 省略号禁止在行末拆为两行：仅剩 1 格时整体移到下一行
+      if (col === cols - 1) {
+        lineEndIndex.set(row, token.start)
+        row += 1
+        col = 0
+      }
+      const mid = token.start + 1
+      placeCell(row, col, {
+        char: token.chars[0],
+        charIndex: token.start,
+        charEndIndex: mid,
+        compactLevel: 0
+      })
+      assignSpanCoords(charCoordMap, token.start, mid, row, col)
+      col += 1
+
+      placeCell(row, col, {
+        char: token.chars[1],
+        charIndex: mid,
+        charEndIndex: token.end,
+        compactLevel: 0
+      })
+      assignSpanCoords(charCoordMap, mid, token.end, row, col)
+      col += 1
+
+      if (col >= cols) {
+        lineEndIndex.set(row, token.end)
+        row += 1
+        col = 0
+        autoWrappedPrevRow = true
+      } else {
+        autoWrappedPrevRow = false
+      }
+      continue
+    }
+
+    // 行首避头点：上一行写满自动换行且新行首为禁现标点时，挤入上一行末格右下角
+    if (token.allowSqueeze && col === 0 && autoWrappedPrevRow && row > 0) {
+      const prevCell = cellMap.get(`${row - 1}:${cols - 1}`)
+      if (prevCell && !prevCell.squeezedPunct) {
+        prevCell.squeezedPunct = token.text
+        prevCell.charEndIndex = token.end
+        lineEndIndex.set(row - 1, token.end)
+        charCoordMap[token.start] = {
+          row: row - 1,
+          col: cols - 1,
+          subOffset: 0.6
+        }
+        autoWrappedPrevRow = false
+        continue
+      }
+    }
+
+    const compactLevel: 0 | 2 | 3 = token.text.length >= 3 ? 3 : token.text.length === 2 ? 2 : 0
+
+    placeCell(row, col, {
+      char: token.text,
+      charIndex: token.start,
+      charEndIndex: token.end,
+      compactLevel
+    })
+    assignSpanCoords(charCoordMap, token.start, token.end, row, col)
     col += 1
+
     if (col >= cols) {
-      lineEndIndex.set(row, i + 1)
+      lineEndIndex.set(row, token.end)
       row += 1
       col = 0
+      autoWrappedPrevRow = true
+    } else {
+      autoWrappedPrevRow = false
     }
   }
-  charCoordMap[content.length] = { row, col }
+
+  // 回填可能被 \r 跳过的坐标，保证每个位置都有效
+  for (let idx = 0; idx < content.length; idx += 1) {
+    if (!charCoordMap[idx]) {
+      charCoordMap[idx] = charCoordMap[idx - 1] ?? { row: 0, col: 0, subOffset: 0 }
+    }
+  }
+  charCoordMap[content.length] = { row, col, subOffset: 0 }
   if (!lineEndIndex.has(row)) lineEndIndex.set(row, content.length)
 
   const totalRows = Math.max(minRows, row + 2)
   const clampedCaret = Math.max(0, Math.min(caretIndex, content.length))
-  const caretCoord = charCoordMap[clampedCaret] ?? { row, col }
+  const caretCoord = charCoordMap[clampedCaret] ?? { row, col, subOffset: 0 }
 
   const rows: ShenlunSheetRow[] = []
   for (let r = 0; r < totalRows; r += 1) {
@@ -580,6 +889,9 @@ export function buildShenlunSheetGrid(
         col: c,
         char: entry?.char ?? '',
         charIndex: entry ? entry.charIndex : null,
+        charEndIndex: entry ? entry.charEndIndex : null,
+        squeezedPunct: entry?.squeezedPunct,
+        compactLevel: entry?.compactLevel,
         cellNumber,
         isLimitBoundary: Boolean(maxChars && cellNumber === maxChars),
         isOverLimit: Boolean(maxChars && cellNumber > maxChars && entry)
@@ -597,6 +909,9 @@ export function buildShenlunSheetGrid(
     rows,
     caretRow: caretCoord.row,
     caretCol: caretCoord.col,
+    caretSubOffset: caretCoord.subOffset,
+    filledCellCount,
+    lastFilledCellNumber,
     charCoordMap
   }
 }

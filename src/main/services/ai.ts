@@ -484,6 +484,7 @@ function textFromResponse(protocol: AiProtocol, payload: Record<string, unknown>
       .flatMap((part) =>
         part &&
         typeof part === 'object' &&
+        (part as Record<string, unknown>).type !== 'thinking' &&
         typeof (part as Record<string, unknown>).text === 'string'
           ? [(part as Record<string, unknown>).text as string]
           : []
@@ -501,11 +502,12 @@ function textFromResponse(protocol: AiProtocol, payload: Record<string, unknown>
       .flatMap((part) =>
         part &&
         typeof part === 'object' &&
+        (part as Record<string, unknown>).thought !== true &&
         typeof (part as Record<string, unknown>).text === 'string'
           ? [(part as Record<string, unknown>).text as string]
           : []
       )
-      .join('\n')
+      .join('')
   }
   const choices = Array.isArray(payload.choices)
     ? (payload.choices as Array<Record<string, unknown>>)
@@ -514,7 +516,19 @@ function textFromResponse(protocol: AiProtocol, payload: Record<string, unknown>
     choices[0]?.message && typeof choices[0].message === 'object'
       ? (choices[0].message as Record<string, unknown>)
       : undefined
-  return typeof message?.content === 'string' ? message.content : ''
+  if (typeof message?.content === 'string') return message.content
+  if (Array.isArray(message?.content)) {
+    return (message.content as unknown[])
+      .flatMap((part) =>
+        part &&
+        typeof part === 'object' &&
+        typeof (part as Record<string, unknown>).text === 'string'
+          ? [(part as Record<string, unknown>).text as string]
+          : []
+      )
+      .join('')
+  }
+  return ''
 }
 
 function usageFromResponse(
@@ -541,60 +555,10 @@ function usageFromResponse(
   }
 }
 
-/** 从各协议的单帧 SSE JSON 中提取增量文本与可选 token 用量（导出供单测直接验证） */
-export function extractStreamDelta(
-  protocol: AiProtocol,
-  payload: Record<string, unknown>
-): { delta: string; usage?: AiAskResult['usage'] } {
-  if (protocol === 'openai-responses') {
-    const delta =
-      payload.type === 'response.output_text.delta' && typeof payload.delta === 'string'
-        ? payload.delta
-        : ''
-    const responseObj =
-      payload.type === 'response.completed' &&
-      payload.response &&
-      typeof payload.response === 'object'
-        ? (payload.response as Record<string, unknown>)
-        : payload
-    return { delta, usage: usageFromResponse(protocol, responseObj) }
-  }
-  if (protocol === 'anthropic-messages') {
-    let delta = ''
-    if (
-      payload.type === 'content_block_delta' &&
-      payload.delta &&
-      typeof payload.delta === 'object'
-    ) {
-      const deltaObj = payload.delta as Record<string, unknown>
-      if (deltaObj.type === 'text_delta' && typeof deltaObj.text === 'string') {
-        delta = deltaObj.text
-      }
-    }
-    const usageSource =
-      payload.message && typeof payload.message === 'object'
-        ? (payload.message as Record<string, unknown>)
-        : payload
-    return { delta, usage: usageFromResponse(protocol, usageSource) }
-  }
-  if (protocol === 'google-generate-content') {
-    return {
-      delta: textFromResponse(protocol, payload),
-      usage: usageFromResponse(protocol, payload)
-    }
-  }
-  const choices = Array.isArray(payload.choices)
-    ? (payload.choices as Array<Record<string, unknown>>)
-    : []
-  const deltaObj =
-    choices[0]?.delta && typeof choices[0].delta === 'object'
-      ? (choices[0].delta as Record<string, unknown>)
-      : undefined
-  let delta = ''
-  if (typeof deltaObj?.content === 'string') {
-    delta = deltaObj.content
-  } else if (Array.isArray(deltaObj?.content)) {
-    delta = (deltaObj.content as unknown[])
+function extractTextContentField(value: unknown): string {
+  if (typeof value === 'string') return value
+  if (Array.isArray(value)) {
+    return (value as unknown[])
       .flatMap((part) =>
         part &&
         typeof part === 'object' &&
@@ -604,20 +568,141 @@ export function extractStreamDelta(
       )
       .join('')
   }
-  return { delta, usage: usageFromResponse(protocol, payload) }
+  return ''
+}
+
+/** 从各协议的单帧 SSE JSON 中提取增量文本、可选 token 用量与完成/思考状态（导出供单测直接验证） */
+export function extractStreamDelta(
+  protocol: AiProtocol,
+  payload: Record<string, unknown>
+): {
+  delta: string
+  usage?: AiAskResult['usage']
+  finishReason?: string
+  sawReasoning?: boolean
+} {
+  if (protocol === 'openai-responses') {
+    const delta =
+      payload.type === 'response.output_text.delta' && typeof payload.delta === 'string'
+        ? payload.delta
+        : ''
+    const responseObj =
+      (payload.type === 'response.completed' || payload.type === 'response.incomplete') &&
+      payload.response &&
+      typeof payload.response === 'object'
+        ? (payload.response as Record<string, unknown>)
+        : payload
+    const finishReason =
+      payload.type === 'response.incomplete' || responseObj.status === 'incomplete'
+        ? 'length'
+        : undefined
+    return { delta, usage: usageFromResponse(protocol, responseObj), finishReason }
+  }
+  if (protocol === 'anthropic-messages') {
+    let delta = ''
+    let finishReason: string | undefined
+    let sawReasoning = false
+    if (
+      payload.type === 'content_block_delta' &&
+      payload.delta &&
+      typeof payload.delta === 'object'
+    ) {
+      const deltaObj = payload.delta as Record<string, unknown>
+      if (deltaObj.type === 'text_delta' && typeof deltaObj.text === 'string') {
+        delta = deltaObj.text
+      } else if (deltaObj.type === 'thinking_delta') {
+        sawReasoning = true
+      }
+    }
+    if (payload.delta && typeof payload.delta === 'object') {
+      const stopReason = (payload.delta as Record<string, unknown>).stop_reason
+      if (typeof stopReason === 'string' && stopReason) {
+        finishReason = stopReason
+      }
+    }
+    const usageSource =
+      payload.message && typeof payload.message === 'object'
+        ? (payload.message as Record<string, unknown>)
+        : payload
+    return {
+      delta,
+      usage: usageFromResponse(protocol, usageSource),
+      finishReason,
+      sawReasoning: sawReasoning || undefined
+    }
+  }
+  if (protocol === 'google-generate-content') {
+    const candidates = Array.isArray(payload.candidates)
+      ? (payload.candidates as Array<Record<string, unknown>>)
+      : []
+    const first = candidates[0]
+    const contentObj =
+      first?.content && typeof first.content === 'object'
+        ? (first.content as Record<string, unknown>)
+        : undefined
+    const parts = Array.isArray(contentObj?.parts) ? (contentObj.parts as unknown[]) : []
+    const sawReasoning = parts.some(
+      (part) =>
+        part && typeof part === 'object' && (part as Record<string, unknown>).thought === true
+    )
+    const finishReason = typeof first?.finishReason === 'string' ? first.finishReason : undefined
+    return {
+      delta: textFromResponse(protocol, payload),
+      usage: usageFromResponse(protocol, payload),
+      finishReason,
+      sawReasoning: sawReasoning || undefined
+    }
+  }
+  const choices = Array.isArray(payload.choices)
+    ? (payload.choices as Array<Record<string, unknown>>)
+    : []
+  const deltaObj =
+    choices[0]?.delta && typeof choices[0].delta === 'object'
+      ? (choices[0].delta as Record<string, unknown>)
+      : undefined
+  const messageObj =
+    choices[0]?.message && typeof choices[0].message === 'object'
+      ? (choices[0].message as Record<string, unknown>)
+      : undefined
+  let delta = deltaObj ? extractTextContentField(deltaObj.content) : ''
+  if (!delta && !deltaObj && messageObj) {
+    delta = extractTextContentField(messageObj.content)
+  }
+  const finishReason =
+    typeof choices[0]?.finish_reason === 'string' ? choices[0].finish_reason : undefined
+  const sawReasoning = Boolean(
+    deltaObj?.reasoning_content ||
+    deltaObj?.reasoning ||
+    messageObj?.reasoning_content ||
+    messageObj?.reasoning
+  )
+  return {
+    delta,
+    usage: usageFromResponse(protocol, payload),
+    finishReason,
+    sawReasoning: sawReasoning || undefined
+  }
 }
 
 /** 解析 ReadableStream SSE 分片（处理 UTF-8 跨块解码、半行拼接与 [DONE] 终止） */
 export async function consumeSseStream(
   protocol: AiProtocol,
   body: ReadableStream<Uint8Array>,
-  onDelta: (delta: string) => void
-): Promise<{ content: string; usage?: AiAskResult['usage'] }> {
+  onDelta: (delta: string) => void,
+  options?: { onActivity?: () => void }
+): Promise<{
+  content: string
+  usage?: AiAskResult['usage']
+  finishReason?: string
+  sawReasoning?: boolean
+}> {
   const reader = body.getReader()
   const decoder = new TextDecoder('utf-8')
   let buffer = ''
   let content = ''
   let mergedUsage: AiAskResult['usage']
+  let finishReason: string | undefined
+  let sawReasoning = false
   let streamFinished = false
 
   const handleLine = (rawLine: string): boolean => {
@@ -634,7 +719,14 @@ export async function consumeSseStream(
     if (payload.error) {
       throw new Error(`模型服务返回错误：${responseError(payload, data)}`)
     }
-    const { delta, usage } = extractStreamDelta(protocol, payload)
+    const {
+      delta,
+      usage,
+      finishReason: frameFinishReason,
+      sawReasoning: frameReasoning
+    } = extractStreamDelta(protocol, payload)
+    if (frameFinishReason) finishReason = frameFinishReason
+    if (frameReasoning) sawReasoning = true
     if (usage) {
       mergedUsage = {
         promptTokens: usage.promptTokens ?? mergedUsage?.promptTokens,
@@ -656,6 +748,9 @@ export async function consumeSseStream(
         streamFinished = true
         break
       }
+      if (value?.byteLength) {
+        options?.onActivity?.()
+      }
       buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n')
       let newlineIndex = buffer.indexOf('\n')
       while (newlineIndex >= 0) {
@@ -663,7 +758,12 @@ export async function consumeSseStream(
         buffer = buffer.slice(newlineIndex + 1)
         if (handleLine(line)) {
           await reader.cancel().catch(() => {})
-          return { content, usage: mergedUsage }
+          return {
+            content,
+            usage: mergedUsage,
+            finishReason,
+            sawReasoning: sawReasoning || undefined
+          }
         }
         newlineIndex = buffer.indexOf('\n')
       }
@@ -681,7 +781,12 @@ export async function consumeSseStream(
     }
     reader.releaseLock()
   }
-  return { content, usage: mergedUsage }
+  return {
+    content,
+    usage: mergedUsage,
+    finishReason,
+    sawReasoning: sawReasoning || undefined
+  }
 }
 
 export class AiService {
@@ -1007,10 +1112,19 @@ export class AiService {
       { role: 'system', content: basePromptForPurpose(input.purpose) },
       ...input.messages
     ]
-    // 知识整理要求模型输出大段结构化 JSON，16384 起步避免中途截断
+    // 知识整理与申论批改需输出大段结构化 JSON，按目的设置安全 maxTokens 下限避免中途截断
+    let minTokensForPurpose = config.maxTokens
+    if (input.purpose === 'knowledge') {
+      minTokensForPurpose = 16384
+    } else if (input.purpose === 'evaluate') {
+      minTokensForPurpose =
+        config.protocol === 'openai-responses' || config.protocol === 'google-generate-content'
+          ? 8192
+          : 4096
+    }
     const effective: StoredAiConfig =
-      input.purpose === 'knowledge'
-        ? { ...config, maxTokens: Math.max(config.maxTokens, 16384) }
+      minTokensForPurpose > config.maxTokens
+        ? { ...config, maxTokens: minTokensForPurpose }
         : config
     return { config: effective, apiKey, messages }
   }
@@ -1037,7 +1151,13 @@ export class AiService {
     const { config, apiKey, messages } = this.prepareAskContext(input)
     const controller = new AbortController()
     this.activeStreams.set(input.requestId, controller)
-    const timer = setTimeout(() => controller.abort(), timeoutMs)
+    let idleTimer: ReturnType<typeof setTimeout> | undefined
+    const resetIdleTimer = (): void => {
+      if (idleTimer) clearTimeout(idleTimer)
+      idleTimer = setTimeout(() => controller.abort(), timeoutMs)
+    }
+    resetIdleTimer()
+    const hardCapTimer = setTimeout(() => controller.abort(), Math.max(timeoutMs * 2, 240_000))
     let accumulated = ''
     const emitDelta = (delta: string): void => {
       if (!delta) return
@@ -1065,6 +1185,7 @@ export class AiService {
         signal: controller.signal,
         redirect: 'error'
       })
+      resetIdleTimer()
       if (!response.ok) {
         const raw = await response.text()
         const payload = safeParse<Record<string, unknown>>(raw, {})
@@ -1072,9 +1193,15 @@ export class AiService {
       }
       const contentType = (response.headers.get('content-type') ?? '').toLowerCase()
       let usage: AiAskResult['usage']
+      let finishReason: string | undefined
+      let sawReasoning = false
       if (contentType.includes('text/event-stream') && response.body) {
-        const streamed = await consumeSseStream(config.protocol, response.body, emitDelta)
+        const streamed = await consumeSseStream(config.protocol, response.body, emitDelta, {
+          onActivity: resetIdleTimer
+        })
         usage = streamed.usage
+        finishReason = streamed.finishReason
+        sawReasoning = Boolean(streamed.sawReasoning)
       } else {
         const raw = await response.text()
         if (/^data:/m.test(raw.trimStart())) {
@@ -1086,6 +1213,8 @@ export class AiService {
           })
           const streamed = await consumeSseStream(config.protocol, singleChunkStream, emitDelta)
           usage = streamed.usage
+          finishReason = streamed.finishReason
+          sawReasoning = Boolean(streamed.sawReasoning)
         } else {
           const payload = safeParse<Record<string, unknown>>(raw, {})
           const content = textFromResponse(config.protocol, payload)
@@ -1095,12 +1224,28 @@ export class AiService {
             const choices = Array.isArray(payload.choices)
               ? (payload.choices as Array<Record<string, unknown>>)
               : []
-            if (choices[0]?.finish_reason === 'length')
-              throw new Error('模型输出被最大长度截断，请在模型设置中调大最大输出长度')
+            const candidates = Array.isArray(payload.candidates)
+              ? (payload.candidates as Array<Record<string, unknown>>)
+              : []
+            finishReason =
+              (choices[0]?.finish_reason as string | undefined) ??
+              (candidates[0]?.finishReason as string | undefined) ??
+              (typeof payload.stop_reason === 'string' ? payload.stop_reason : undefined)
+            if (payload.status === 'incomplete') finishReason = 'length'
           }
         }
       }
       if (!accumulated.trim() && !this.userCancelled.has(input.requestId)) {
+        const truncated =
+          finishReason === 'length' ||
+          finishReason === 'MAX_TOKENS' ||
+          finishReason === 'max_tokens' ||
+          sawReasoning
+        if (truncated) {
+          throw new Error(
+            '模型输出被最大长度截断（可能因思考过程占满预算），请在模型设置中调大最大输出长度或关闭思考模型'
+          )
+        }
         throw new Error('模型返回了空内容')
       }
       return {
@@ -1127,7 +1272,8 @@ export class AiService {
       }
       throw error
     } finally {
-      clearTimeout(timer)
+      if (idleTimer) clearTimeout(idleTimer)
+      clearTimeout(hardCapTimer)
       this.activeStreams.delete(input.requestId)
       this.userCancelled.delete(input.requestId)
     }
@@ -1165,8 +1311,22 @@ export class AiService {
         const choices = Array.isArray(payload.choices)
           ? (payload.choices as Array<Record<string, unknown>>)
           : []
-        if (choices[0]?.finish_reason === 'length')
-          throw new Error('模型输出被最大长度截断，请在模型设置中调大最大输出长度')
+        const candidates = Array.isArray(payload.candidates)
+          ? (payload.candidates as Array<Record<string, unknown>>)
+          : []
+        const finishReason =
+          (choices[0]?.finish_reason as string | undefined) ??
+          (candidates[0]?.finishReason as string | undefined) ??
+          (typeof payload.stop_reason === 'string' ? payload.stop_reason : undefined)
+        if (
+          finishReason === 'length' ||
+          finishReason === 'MAX_TOKENS' ||
+          finishReason === 'max_tokens' ||
+          payload.status === 'incomplete'
+        )
+          throw new Error(
+            '模型输出被最大长度截断（可能因思考过程占满预算），请在模型设置中调大最大输出长度或关闭思考模型'
+          )
         throw new Error('模型返回了空内容')
       }
       return {

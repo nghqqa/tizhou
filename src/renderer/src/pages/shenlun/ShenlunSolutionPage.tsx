@@ -1056,7 +1056,13 @@ export function ShenlunSolutionPage(): React.JSX.Element {
           </>
         )}
       </Section>
-      {current && evaluation && <ShenlunEvaluationPanel evaluation={evaluation} />}
+      {current && evaluation && (
+        <ShenlunEvaluationPanel
+          evaluation={evaluation}
+          evaluating={evaluating}
+          onRetryEvaluate={() => void evaluate()}
+        />
+      )}
       <QuestionEditDialog
         question={current ?? null}
         open={editOpen}

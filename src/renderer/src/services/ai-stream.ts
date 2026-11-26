@@ -85,7 +85,7 @@ function unescapeJsonString(raw: string): string {
   })
 }
 
-/** 从申论批改模型正在流式吐出的 JSON 文本中提取可读摘要与得分，避免直接闪现原始花括号 */
+/** 从申论批改模型正在流式吐出的 JSON 文本中提取可读摘要与得分，避免直接闪现原始花括号与思考过程 */
 export function extractShenlunStreamPreview(raw: string): {
   chars: number
   score?: number
@@ -93,14 +93,29 @@ export function extractShenlunStreamPreview(raw: string): {
   snippet: string
 } {
   const chars = raw.length
-  const withoutDimensions = raw.replace(/"dimensions"\s*:\s*\[[\s\S]*?(?:\]\s*(?=[,}])|$)/, '')
+  const visibleRaw = raw
+    .replace(
+      /<(?:think|thought|reasoning)\b[^>]*>[\s\S]*?(?:<\/(?:think|thought|reasoning)>|$)/gi,
+      ''
+    )
+    .trim()
+  if (!visibleRaw && raw.trim()) {
+    return {
+      chars,
+      snippet: '模型正在分析材料与采分点，稍后输出批改结果…'
+    }
+  }
+  const withoutDimensions = visibleRaw.replace(
+    /"dimensions"\s*:\s*\[[\s\S]*?(?:\]\s*(?=[,}])|$)/,
+    ''
+  )
   const scoreMatch = withoutDimensions.match(/"score"\s*:\s*(\d{1,3}(?:\.\d+)?)/)
   const score = scoreMatch ? Number(scoreMatch[1]) : undefined
-  const summaryMatch = raw.match(/"summary"\s*:\s*"((?:[^"\\]|\\.)*)/)
+  const summaryMatch = visibleRaw.match(/"summary"\s*:\s*"((?:[^"\\]|\\.)*)/)
   const summary = summaryMatch?.[1] ? unescapeJsonString(summaryMatch[1]).trim() : undefined
   const snippet = summary
     ? summary
-    : raw
+    : visibleRaw
         .replace(/```(?:json)?/gi, '')
         .replace(/[{}\[\]"]+/g, ' ')
         .replace(/\s+/g, ' ')

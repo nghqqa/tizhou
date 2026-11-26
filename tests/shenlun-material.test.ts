@@ -96,6 +96,68 @@ describe('shenlun material splitting & recommendation', () => {
     expect(grid.caretRow).toBe(1)
     expect(grid.caretCol).toBe(0)
   })
+
+  it('follows official Shenlun sheet cell rules for numbers, decimals, percents, letters & line-start punctuation', () => {
+    // 1) 数字、小数点、百分号、年份、英文字母与序号占格
+    const sample = '655.2万、18%、100%、2025年、12.5%、1.问题、GDP与5G'
+    const grid = buildShenlunSheetGrid(sample, 200, 1)
+    const nonEmptyCells = grid.rows[0]!.cells.filter((cell) => cell.char)
+    expect(nonEmptyCells.map((c) => c.char)).toEqual([
+      '65',
+      '5.',
+      '2',
+      '万',
+      '、',
+      '18%',
+      '、',
+      '10',
+      '0%',
+      '、',
+      '20',
+      '25',
+      '年',
+      '、',
+      '12.',
+      '5%',
+      '、',
+      '1.',
+      '问',
+      '题',
+      '、',
+      'GD',
+      'P',
+      '与',
+      '5G'
+    ])
+    expect(grid.filledCellCount).toBe(25)
+    expect(grid.lastFilledCellNumber).toBe(25)
+    // 光标停在 "65" 的 '6' 与 '5' 之间时 subOffset 为 0.5
+    expect(grid.caretRow).toBe(0)
+    expect(grid.caretCol).toBe(0)
+    expect(grid.caretSubOffset).toBe(0.5)
+
+    // 2) 行首避头点：第 26 个字符为句号时挤入上一行第 25 格，不占新行首格
+    const squeezedGrid = buildShenlunSheetGrid(`${'字'.repeat(25)}。下一行`, 200, 26)
+    expect(squeezedGrid.rows[0]?.cells[24]?.char).toBe('字')
+    expect(squeezedGrid.rows[0]?.cells[24]?.squeezedPunct).toBe('。')
+    expect(squeezedGrid.rows[0]?.cells[24]?.charEndIndex).toBe(26)
+    expect(squeezedGrid.rows[1]?.cells[0]?.char).toBe('下')
+    expect(squeezedGrid.rows[1]?.cells[0]?.charIndex).toBe(26)
+    expect(squeezedGrid.caretRow).toBe(1)
+    expect(squeezedGrid.caretCol).toBe(0)
+
+    // 3) 破折号/省略号在行末第 25 格不断行，整体移到下一行前两格
+    const dashGrid = buildShenlunSheetGrid(`${'字'.repeat(24)}——继续`, 200, 0)
+    expect(dashGrid.rows[0]?.cells[24]?.char).toBe('')
+    expect(dashGrid.rows[1]?.cells[0]?.char).toBe('—')
+    expect(dashGrid.rows[1]?.cells[1]?.char).toBe('—')
+    expect(dashGrid.rows[1]?.cells[2]?.char).toBe('继')
+
+    // 4) 18% 不跨行拆分且整块占 1 格
+    const percentWrapGrid = buildShenlunSheetGrid(`${'字'.repeat(24)}18%下`, 200, 0)
+    expect(percentWrapGrid.rows[0]?.cells[24]?.char).toBe('18%')
+    expect(percentWrapGrid.rows[1]?.cells[0]?.char).toBe('下')
+  })
 })
 
 describe('shenlun normalization, quality inspection & cross-paper stitching', () => {
