@@ -1,0 +1,14 @@
+[Unit]
+Description=Tizhou Website Private Stats Dashboard
+After=network.target nginx.service
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/tizhou-stats.env
+ExecStart=/root/miniconda3/bin/python3 /opt/tizhou-stats/stats-server.py
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

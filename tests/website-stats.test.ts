@@ -11,7 +11,7 @@ import {
   isLikelyBot,
   parseNginxLogLine
 } from '../scripts/website-stats.mjs'
-import { startStatsUiServer } from '../scripts/website-stats-ui.mjs'
+import { renderStatsDashboardHtml, startStatsUiServer } from '../scripts/website-stats-ui.mjs'
 
 describe('Nginx 302 跳转片段生成与官网访问统计', () => {
   it('能从真实 website/src/release.ts 生成五条安全的 302 no-store 跳转规则', () => {
@@ -169,5 +169,33 @@ describe('Nginx 302 跳转片段生成与官网访问统计', () => {
     } finally {
       await handle.close()
     }
+  })
+
+  it('共享看板模板 website/deploy/stats-dashboard.html 占位符完整且替换后零残留', () => {
+    const raw = readFileSync(
+      join(process.cwd(), 'website', 'deploy', 'stats-dashboard.html'),
+      'utf8'
+    )
+    for (const token of [
+      '__CSP_NONCE__',
+      '__API_BASE__',
+      '__BADGE_TEXT__',
+      '__SOURCE_LABEL__',
+      '__INITIAL_DAYS__',
+      '__INITIAL_INCLUDE_BOTS__'
+    ]) {
+      expect(raw).toContain(token)
+    }
+    expect(raw).toContain('<meta name="robots" content="noindex, nofollow" />')
+
+    const rendered = renderStatsDashboardHtml({
+      nonce: 'abc123==',
+      apiBasePath: '/stats/api',
+      badgeText: '密钥鉴权 · 仅聚合计数',
+      sourceLabel: '服务器实时日志'
+    })
+    expect(rendered).not.toMatch(/__[A-Z_]+__/)
+    expect(rendered).toContain('nonce="abc123=="')
+    expect(rendered).toContain("const API_BASE = '/stats/api'")
   })
 })

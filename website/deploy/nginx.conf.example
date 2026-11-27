@@ -56,6 +56,18 @@ server {
     # 自动生成的 /go/* 302 跳转片段（deploy.sh 每次发布自动更新并 reload）
     include /etc/nginx/snippets/tizhou-redirects.conf;
 
+    # 私有流量与下载率可视化看板（?key= 密钥鉴权，关闭 access_log 防止密钥入日志或自增访问）
+    location ^~ /stats {
+        access_log off;
+        proxy_pass http://127.0.0.1:8782;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 30s;
+    }
+
     # 单页站点回退
     location / {
         try_files $uri $uri/ /index.html;

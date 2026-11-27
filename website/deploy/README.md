@@ -61,10 +61,18 @@ bash website/deploy/deploy.sh --no-build # 仅发布（dist 已构建好时）
 
 ## 3.5 查看官网访问量与下载转化率（零 Cookie / 零前端埋点）
 
-在仓库根目录执行：
+提供三种查看方式（均共用同一套日志解析口径）：
+
+1. **线上私有看板（推荐手机/电脑随时打开）**：访问 `https://tizhou.nghqqa.cn/stats?key=<你的密钥>`（密钥仅保存在服务器 `/etc/tizhou-stats.env`，切勿提交进仓库；未携带正确密钥一律返回 404，Nginx `location ^~ /stats` 已设 `access_log off` 防止密钥落盘或污染访问计数）。
+2. **本地一键可视化看板**：
 
 ```bash
 npm run website:stats:ui              # 启动本地可视化看板并自动打开浏览器（仅监听 127.0.0.1，支持实时刷新）
+```
+
+3. **命令行报表**：
+
+```bash
 npm run website:stats                 # 命令行查看近 14 天汇总、按天趋势、来源渠道与下载率
 npm run website:stats -- --days 1     # 仅查看今天
 npm run website:stats -- --days 30    # 查看近 30 天

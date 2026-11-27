@@ -1,5 +1,6 @@
 User-agent: *
 Allow: /
 Disallow: /go/
+Disallow: /stats
 
 Sitemap: https://tizhou.nghqqa.cn/sitemap.xml

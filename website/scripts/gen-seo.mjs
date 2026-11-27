@@ -14,9 +14,15 @@ mkdirSync(join(root, 'public'), { recursive: true })
 
 writeFileSync(
   join(root, 'public', 'robots.txt'),
-  ['User-agent: *', 'Allow: /', 'Disallow: /go/', '', `Sitemap: ${siteUrl}/sitemap.xml`, ''].join(
-    '\n'
-  ),
+  [
+    'User-agent: *',
+    'Allow: /',
+    'Disallow: /go/',
+    'Disallow: /stats',
+    '',
+    `Sitemap: ${siteUrl}/sitemap.xml`,
+    ''
+  ].join('\n'),
   'utf8'
 )
 

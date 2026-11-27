@@ -88,4 +88,20 @@ if [ -n "$DEPLOY_NGINX_REDIRECTS_FILE" ] && [ "$DEPLOY_NGINX_REDIRECTS_FILE" != 
   echo "[deploy] Nginx 302 跳转已校验并重载生效"
 fi
 
+# 如服务器已安装线上私有看板服务，顺带同步后端与模板并平滑重启
+if [ -f "$SCRIPT_DIR/stats-server.py" ] && [ -f "$SCRIPT_DIR/stats-dashboard.html" ]; then
+  if ssh "${SSH_OPTS[@]}" "$DEPLOY_USER@$DEPLOY_HOST" "[ -d /opt/tizhou-stats ]"; then
+    echo "[deploy] 同步线上可视化看板 /opt/tizhou-stats …"
+    tar czf - -C "$SCRIPT_DIR" stats-server.py stats-dashboard.html | ssh "${SSH_OPTS[@]}" "$DEPLOY_USER@$DEPLOY_HOST" "
+      set -e
+      tar xzf - -C /opt/tizhou-stats
+      chmod 755 /opt/tizhou-stats/stats-server.py
+      if systemctl is-enabled tizhou-stats >/dev/null 2>&1; then
+        systemctl restart tizhou-stats
+      fi
+    "
+    echo "[deploy] 线上可视化看板已更新并重启"
+  fi
+fi
+
 echo "[deploy] 发布完成：$DEPLOY_TARGET"
