@@ -208,6 +208,50 @@ describe('VaultService', () => {
     database.switchVault(first.vault.id)
     expect(database.listQuestions({ onlyFavorite: true })[0]?.id).toBe(firstQuestion.id)
   })
+
+  it('infers region from papers and sourceFile when frontmatter omits region and paper', () => {
+    const mdFromPapers = [
+      '---',
+      'id: "oe-paper_saduck_19382_q81"',
+      'subject: "xingce"',
+      'category: "判断推理-图形推理"',
+      'tags: ["判断推理","图形推理","2025年国家公务员录用考试《行测》（地市级）"]',
+      'source: "本地资料/OpenExam"',
+      'year: 2025',
+      'kind: "question"',
+      'questionType: "single"',
+      'difficulty: 2',
+      'options: [{"key":"A","text":"A"},{"key":"B","text":"B"}]',
+      'answer: ["A"]',
+      'papers: [{"paper":"2025年国家公务员录用考试《行测》（地市级）","order":81}]',
+      '---',
+      '# 题目',
+      '图形题干占位'
+    ].join('\n')
+    const mdFromSourceFile = [
+      '---',
+      'id: "oe-paper_saduck_19383_q82"',
+      'subject: "xingce"',
+      'category: "判断推理-图形推理"',
+      'source: "本地资料/OpenExam"',
+      'sourceFile: "2024年国家公务员录用考试《行测》（副省级）"',
+      'year: 2024',
+      'kind: "question"',
+      'questionType: "single"',
+      'difficulty: 2',
+      'options: [{"key":"A","text":"A"},{"key":"B","text":"B"}]',
+      'answer: ["B"]',
+      '---',
+      '# 题目',
+      '来源文件图推题干占位'
+    ].join('\n')
+    writeFileSync(join(vaultDirectory, 'q-papers.md'), mdFromPapers, 'utf8')
+    writeFileSync(join(vaultDirectory, 'q-sourcefile.md'), mdFromSourceFile, 'utf8')
+    const result = vaults.connect(vaultDirectory)
+    expect(result.vault.questionCount).toBe(2)
+    const questions = database.listQuestions()
+    expect(questions.every((item) => item.region === '国考')).toBe(true)
+  })
 })
 
 describe('图形题选项（图片选项）', () => {

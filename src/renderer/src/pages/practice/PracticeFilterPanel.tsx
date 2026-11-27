@@ -16,6 +16,7 @@ interface PracticeFilterPanelProps {
   category: string
   onCategoryChange: (category: string) => void
   categories: Category[]
+  categoriesLoaded?: boolean
   difficulty: string
   onDifficultyChange: (difficulty: string) => void
   feedbackMode: 'immediate' | 'summary'
@@ -49,6 +50,7 @@ export function PracticeFilterPanel({
   category,
   onCategoryChange,
   categories,
+  categoriesLoaded = false,
   difficulty,
   onDifficultyChange,
   feedbackMode,
@@ -81,6 +83,7 @@ export function PracticeFilterPanel({
     !onlyUnattempted &&
     !difficulty &&
     !keyword.trim()
+  const totalAvailable = categories.reduce((sum, item) => sum + item.count, 0)
   return (
     <>
       <Section
@@ -121,7 +124,9 @@ export function PracticeFilterPanel({
           </Field>
           <Field label="专项模块">
             <Select value={category} onChange={(_, data) => onCategoryChange(data.value)}>
-              <option value="">全部模块</option>
+              <option value="">
+                {categoriesLoaded ? `全部模块（${totalAvailable}）` : '全部模块'}
+              </option>
               {categories.map((item) => (
                 <option key={item.name} value={item.name}>
                   {item.name}（{item.count}）

@@ -1,5 +1,6 @@
 import { DatabaseSync } from 'node:sqlite'
-import type { Row } from './mappers'
+import { extractRegionFromText } from '../../../shared/region'
+import { type Row, extractPaperNamesFromJson, runInTransaction } from './mappers'
 
 export function openDatabase(databasePath: string): DatabaseSync {
   const database = new DatabaseSync(databasePath)
@@ -268,6 +269,35 @@ export function migrateDatabase(db: DatabaseSync): void {
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_questions_vault_subject_region_year ON questions(vault_id, subject, region, year);
     CREATE INDEX IF NOT EXISTS idx_questions_vault_subject_paper ON questions(vault_id, subject, paper);
+    CREATE INDEX IF NOT EXISTS idx_questions_vault_subject_region_category ON questions(vault_id, subject, region, category);
   `)
   db.prepare('INSERT OR IGNORE INTO app_meta(key, value) VALUES (?, ?)').run('schema_version', '1')
+  const backfilled = db
+    .prepare("SELECT value FROM app_meta WHERE key = 'region_backfill_papers_v1'")
+    .get() as Row | undefined
+  if (!backfilled) {
+    runInTransaction(db, () => {
+      const rows = db
+        .prepare(
+          "SELECT id, paper, papers_json, source, file_path FROM questions WHERE region IS NULL OR trim(region) = ''"
+        )
+        .all() as Row[]
+      const updateRegion = db.prepare('UPDATE questions SET region = ? WHERE id = ?')
+      for (const row of rows) {
+        const inferred = extractRegionFromText(
+          row.paper ? String(row.paper) : undefined,
+          ...extractPaperNamesFromJson(row.papers_json),
+          row.source ? String(row.source) : undefined,
+          row.file_path ? String(row.file_path) : undefined
+        )
+        if (inferred) {
+          updateRegion.run(inferred, String(row.id))
+        }
+      }
+      db.prepare('INSERT OR REPLACE INTO app_meta(key, value) VALUES (?, ?)').run(
+        'region_backfill_papers_v1',
+        '1'
+      )
+    })
+  }
 }

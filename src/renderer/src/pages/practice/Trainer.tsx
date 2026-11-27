@@ -92,6 +92,7 @@ export function Trainer({
   const ai = useAppStore((state) => state.data!.ai)
   const defaultRegion = useAppStore((state) => state.data?.settings.defaultRegion ?? '')
   const [categories, setCategories] = useState<Category[]>([])
+  const [categoriesLoaded, setCategoriesLoaded] = useState(false)
   const [facets, setFacets] = useState<QuestionFacets>({ years: [], regions: [], papers: [] })
   const [subject, setSubject] = useState<'' | Subject>(initial?.subject ?? 'xingce')
   const [category, setCategory] = useState(initial?.category ?? '')
@@ -102,6 +103,7 @@ export function Trainer({
   const [paper, setPaper] = useState('')
   const [difficulty, setDifficulty] = useState('')
   const [keyword, setKeyword] = useState('')
+  const [debouncedKeyword, setDebouncedKeyword] = useState('')
   const [onlyWrong, setOnlyWrong] = useState(Boolean(initial?.onlyWrong))
   const [onlyFavorite, setOnlyFavorite] = useState(Boolean(initial?.onlyFavorite))
   const [onlyUnattempted, setOnlyUnattempted] = useState(Boolean(initial?.onlyUnattempted))
@@ -177,34 +179,94 @@ export function Trainer({
   }, [])
 
   useEffect(() => {
-    // 科目/分类元数据跟随筛选变化（科目筛选来自 URL 参数或下拉选择，空值与 common 视为不限）
+    const trimmed = keyword.trim()
+    if (!trimmed) {
+      setDebouncedKeyword('')
+      return
+    }
+    const timer = window.setTimeout(() => setDebouncedKeyword(trimmed), 180)
+    return () => window.clearTimeout(timer)
+  }, [keyword])
+
+  useEffect(() => {
+    // 科目与地区变动时级联刷新年份与试卷候选列表
+    let cancelled = false
     const subjectFilter = subject === 'xingce' || subject === 'shenlun' ? subject : undefined
-    void invoke<Category[]>({
-      method: 'vault.categories',
-      params: { subject: review ? undefined : subjectFilter }
-    })
-      .then((nextCats) => {
-        setCategories(nextCats)
-        setCategory((currentCat) => {
-          if (!currentCat || nextCats.some((item) => item.name === currentCat)) return currentCat
-          const aliases = expandCategoryAliases(currentCat)
-          const matched = nextCats.find((item) => aliases.includes(item.name))
-          return matched ? matched.name : currentCat
-        })
-      })
-      .catch(() => setCategories([]))
     void invoke<QuestionFacets>({
       method: 'vault.facets',
       params: { subject: review ? undefined : subjectFilter, region: region || undefined }
     })
       .then((nextFacets) => {
+        if (cancelled) return
         setFacets(nextFacets)
         setPaper((currentPaper) =>
           currentPaper && !nextFacets.papers.includes(currentPaper) ? '' : currentPaper
         )
+        setYear((currentYear) =>
+          currentYear && !nextFacets.years.includes(Number(currentYear)) ? '' : currentYear
+        )
       })
-      .catch(() => setFacets({ years: [], regions: [], papers: [] }))
+      .catch(() => {
+        if (!cancelled) setFacets({ years: [], regions: [], papers: [] })
+      })
+    return () => {
+      cancelled = true
+    }
   }, [review, subject, region])
+
+  useEffect(() => {
+    // 专项模块题数跟随当前生效筛选条件实时联动
+    let cancelled = false
+    const subjectFilter = subject === 'xingce' || subject === 'shenlun' ? subject : undefined
+    const filterParams = review
+      ? {}
+      : {
+          subject: subjectFilter,
+          year: year ? Number(year) : undefined,
+          region: region || undefined,
+          paper: paper || undefined,
+          difficulty: difficulty ? (Number(difficulty) as 1 | 2 | 3 | 4 | 5) : undefined,
+          query: debouncedKeyword || undefined,
+          onlyWrong: onlyWrong || undefined,
+          onlyFavorite: onlyFavorite || undefined,
+          onlyUnattempted: onlyUnattempted || undefined
+        }
+    void invoke<Category[]>({
+      method: 'vault.categories',
+      params: filterParams
+    })
+      .then((nextCats) => {
+        if (cancelled) return
+        setCategories(nextCats)
+        setCategoriesLoaded(true)
+        setCategory((currentCat) => {
+          if (!currentCat || nextCats.some((item) => item.name === currentCat)) return currentCat
+          const aliases = expandCategoryAliases(currentCat)
+          const matched = nextCats.find((item) => aliases.includes(item.name))
+          return matched ? matched.name : ''
+        })
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setCategories([])
+          setCategoriesLoaded(true)
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [
+    review,
+    subject,
+    region,
+    year,
+    paper,
+    difficulty,
+    debouncedKeyword,
+    onlyWrong,
+    onlyFavorite,
+    onlyUnattempted
+  ])
 
   // 会话恢复只在挂载时查一次；若带 questionId 或 resumeActive 则按需直达训练
   useEffect(() => {
@@ -942,6 +1004,9 @@ export function Trainer({
           />
         </>
       )
+    const clearFilterError = (): void => {
+      if (error) setError('')
+    }
     return (
       <PracticeFilterPanel
         error={error}
@@ -950,6 +1015,7 @@ export function Trainer({
         subject={subject}
         onSubjectChange={(nextSubject) => {
           // 切科目时联动清空旧科目维度的残余筛选，避免「申论科目 + 行测模块」这类矛盾组合
+          clearFilterError()
           setSubject(nextSubject)
           setCategory('')
           setYear('')
@@ -958,6 +1024,7 @@ export function Trainer({
         }}
         category={category}
         onCategoryChange={(nextCategory) => {
+          clearFilterError()
           setCategory(nextCategory)
           if (
             isDataAnalysisCategory(nextCategory) &&
@@ -971,37 +1038,56 @@ export function Trainer({
           }
         }}
         categories={categories}
+        categoriesLoaded={categoriesLoaded}
         difficulty={difficulty}
-        onDifficultyChange={setDifficulty}
+        onDifficultyChange={(nextDifficulty) => {
+          clearFilterError()
+          setDifficulty(nextDifficulty)
+        }}
         feedbackMode={feedbackMode}
         onFeedbackModeChange={setFeedbackMode}
         keyword={keyword}
-        onKeywordChange={setKeyword}
+        onKeywordChange={(nextKeyword) => {
+          clearFilterError()
+          setKeyword(nextKeyword)
+        }}
         year={year}
-        onYearChange={setYear}
+        onYearChange={(nextYear) => {
+          clearFilterError()
+          setYear(nextYear)
+        }}
         facets={facets}
         region={region}
         paper={paper}
         onRegionOrPaperChange={(nextRegion, nextPaper) => {
+          clearFilterError()
           setRegion(nextRegion)
           if (!review) writeStoredRegion('tizhou:practice-region', nextRegion)
           if (nextPaper !== undefined) setPaper(nextPaper)
         }}
-        onPaperChange={setPaper}
+        onPaperChange={(nextPaper) => {
+          clearFilterError()
+          setPaper(nextPaper)
+        }}
         count={count}
         onCountChange={setCount}
         onlyUnattempted={onlyUnattempted}
         onOnlyUnattemptedChange={(checked) => {
+          clearFilterError()
           setOnlyUnattempted(checked)
           if (checked) setOnlyWrong(false)
         }}
         onlyWrong={onlyWrong}
         onOnlyWrongChange={(checked) => {
+          clearFilterError()
           setOnlyWrong(checked)
           if (checked) setOnlyUnattempted(false)
         }}
         onlyFavorite={onlyFavorite}
-        onOnlyFavoriteChange={setOnlyFavorite}
+        onOnlyFavoriteChange={(checked) => {
+          clearFilterError()
+          setOnlyFavorite(checked)
+        }}
         onStart={() => void startSession()}
       />
     )

@@ -927,4 +927,232 @@ describe('DatabaseService local-date statistics and exam edge cases', () => {
     const xingcePaper = database.listQuestionsByPaper('2025年国考同名卷')
     expect(xingcePaper.map((q) => q.id)).toEqual(['paper-xc-1'])
   })
+
+  it('listCategories 按筛选条件统计、facets 年份随地区联动且 normalizeActiveVaultRegions 回填 papers_json', async () => {
+    const { UNLABELED_REGION_FILTER } = await import('../src/shared/region')
+    const vaultId = database.getActiveVault()!.id
+    const db = (
+      database as unknown as {
+        db: { prepare: (sql: string) => { run: (...args: unknown[]) => void } }
+      }
+    ).db
+    const insertQ = db.prepare(
+      `INSERT INTO questions(
+        id, vault_id, subject, category, type, stem, options_json, answer_json, explanation,
+        difficulty, source, year, region, paper, papers_json, tags_json, content_hash, indexed_at
+      ) VALUES (?, ?, 'xingce', ?, 'single', ?, ?, '["A"]', '解析',
+        ?, '测试来源', ?, ?, ?, ?, '[]', ?, '2025-01-01')`
+    )
+    const opts = JSON.stringify([
+      { key: 'A', text: '甲' },
+      { key: 'B', text: '乙' }
+    ])
+    insertQ.run(
+      'cat-gk-1',
+      vaultId,
+      '判断推理-图形推理',
+      '国考专属图形推理独有词Alpha',
+      opts,
+      2,
+      2025,
+      '国考',
+      '2025国考',
+      null,
+      'h-cat-gk-1'
+    )
+    insertQ.run(
+      'cat-gk-2',
+      vaultId,
+      '判断推理',
+      '国考逻辑判断Beta',
+      opts,
+      4,
+      2024,
+      '国考',
+      '2024国考',
+      null,
+      'h-cat-gk-2'
+    )
+    insertQ.run(
+      'cat-bj-1',
+      vaultId,
+      '言语理解与表达',
+      '北京言语Gamma',
+      opts,
+      3,
+      2023,
+      '北京',
+      '2023北京',
+      null,
+      'h-cat-bj-1'
+    )
+    insertQ.run(
+      'cat-bj-2',
+      vaultId,
+      '言语理解与表达',
+      '北京市言语Delta',
+      opts,
+      3,
+      2022,
+      '北京市',
+      '2022北京',
+      null,
+      'h-cat-bj-2'
+    )
+    insertQ.run(
+      'cat-none-paper',
+      vaultId,
+      '数量关系',
+      '无地区数量Epsilon',
+      opts,
+      2,
+      2021,
+      null,
+      null,
+      JSON.stringify([{ paper: '2026年国家公务员录用考试《行测》（副省级）', order: 10 }]),
+      'h-cat-none-paper'
+    )
+    insertQ.run(
+      'cat-unlabeled-real',
+      vaultId,
+      '常识判断',
+      '纯未标注常识Zeta',
+      opts,
+      1,
+      2020,
+      null,
+      null,
+      null,
+      'h-cat-unlabeled-real'
+    )
+
+    expect(database.listCategories({ subject: 'xingce', region: '国考' })).toEqual(
+      expect.arrayContaining([
+        { name: '判断推理-图形推理', count: 1 },
+        { name: '判断推理', count: 1 }
+      ])
+    )
+    expect(database.listCategories({ subject: 'xingce', region: '国考' })).toHaveLength(2)
+
+    expect(database.listCategories({ subject: 'xingce', region: '北京' })).toEqual([
+      { name: '言语理解与表达', count: 2 }
+    ])
+
+    const unlabeledCats = database.listCategories({
+      subject: 'xingce',
+      region: UNLABELED_REGION_FILTER
+    })
+    expect(unlabeledCats.some((item) => item.name === '数量关系')).toBe(true)
+    expect(unlabeledCats.some((item) => item.name === '判断推理-图形推理')).toBe(false)
+
+    expect(database.listCategories({ subject: 'xingce', region: '国考', year: 2025 })).toEqual([
+      { name: '判断推理-图形推理', count: 1 }
+    ])
+    expect(database.listCategories({ subject: 'xingce', paper: '2024国考' })).toEqual([
+      { name: '判断推理', count: 1 }
+    ])
+    expect(database.listCategories({ subject: 'xingce', region: '国考', difficulty: 2 })).toEqual([
+      { name: '判断推理-图形推理', count: 1 }
+    ])
+    expect(database.listCategories({ subject: 'xingce', region: '国考', query: 'Alpha' })).toEqual([
+      { name: '判断推理-图形推理', count: 1 }
+    ])
+
+    database.setFavorite('cat-gk-1', true)
+    expect(
+      database.listCategories({ subject: 'xingce', region: '国考', onlyFavorite: true })
+    ).toEqual([{ name: '判断推理-图形推理', count: 1 }])
+
+    database.submitAttempt({
+      questionId: 'cat-gk-1',
+      answer: ['B'],
+      durationSeconds: 5,
+      mode: 'practice'
+    })
+    expect(database.listCategories({ subject: 'xingce', region: '国考', onlyWrong: true })).toEqual(
+      [{ name: '判断推理-图形推理', count: 1 }]
+    )
+    expect(
+      database.listCategories({ subject: 'xingce', region: '国考', onlyUnattempted: true })
+    ).toEqual([{ name: '判断推理', count: 1 }])
+
+    // facets 年份与试卷按地区级联
+    expect(database.getQuestionFacets('xingce', '国考').years).toEqual([2025, 2024])
+    expect(database.getQuestionFacets('xingce', '北京').years).toEqual([2023, 2022])
+
+    // normalizeActiveVaultRegions 从 papers_json 回填 region 且规整 '北京市' -> '北京'
+    const normalized = database.normalizeActiveVaultRegions()
+    expect(normalized.updated).toBeGreaterThanOrEqual(2)
+    expect(database.getQuestion('cat-bj-2')?.region).toBe('北京')
+    expect(database.getQuestion('cat-none-paper')?.region).toBe('国考')
+    expect(database.listCategories({ subject: 'xingce', region: '国考' })).toEqual(
+      expect.arrayContaining([
+        { name: '判断推理-图形推理', count: 1 },
+        { name: '判断推理', count: 1 },
+        { name: '数量关系', count: 1 }
+      ])
+    )
+  })
+
+  it('migrateDatabase 对存量库从 papers_json 自动回填缺失 region 且保持幂等', async () => {
+    const { DatabaseSync } = await import('node:sqlite')
+    const migDir = mkdtempSync(join(tmpdir(), 'tizhou-mig-region-'))
+    const migDbPath = join(migDir, 'workbench.sqlite')
+    const raw = new DatabaseSync(migDbPath)
+    raw.exec(`
+      CREATE TABLE app_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      CREATE TABLE vault_registry (
+        id TEXT PRIMARY KEY, name TEXT NOT NULL, path TEXT NOT NULL UNIQUE,
+        connected_at TEXT NOT NULL, last_indexed_at TEXT NOT NULL,
+        question_count INTEGER NOT NULL DEFAULT 0, document_count INTEGER NOT NULL DEFAULT 0,
+        warnings_json TEXT NOT NULL DEFAULT '[]', is_builtin INTEGER NOT NULL DEFAULT 0,
+        active INTEGER NOT NULL DEFAULT 1
+      );
+      CREATE TABLE questions (
+        id TEXT PRIMARY KEY, vault_id TEXT NOT NULL, subject TEXT NOT NULL, category TEXT NOT NULL,
+        type TEXT NOT NULL, stem TEXT NOT NULL, options_json TEXT NOT NULL, answer_json TEXT NOT NULL,
+        explanation TEXT NOT NULL, difficulty INTEGER NOT NULL, tags_json TEXT NOT NULL,
+        source TEXT NOT NULL, year INTEGER, region TEXT, paper TEXT, papers_json TEXT,
+        file_path TEXT NOT NULL, content_hash TEXT NOT NULL, indexed_at TEXT NOT NULL
+      );
+      INSERT INTO app_meta(key, value) VALUES ('schema_version', '1');
+      INSERT INTO vault_registry(id, name, path, connected_at, last_indexed_at, question_count, active)
+      VALUES ('v1', '测试库', 'C:\\\\vault', '2025-01-01', '2025-01-01', 2, 1);
+      INSERT INTO questions(
+        id, vault_id, subject, category, type, stem, options_json, answer_json, explanation,
+        difficulty, tags_json, source, year, region, paper, papers_json, file_path, content_hash, indexed_at
+      ) VALUES
+      ('m-gk', 'v1', 'xingce', '判断推理-图形推理', 'single', '题1', '[]', '["A"]', '解析',
+       2, '[]', '本地资料/OpenExam', 2025, NULL, NULL,
+       '[{"paper":"2025年国家公务员录用考试《行测》（地市级）","order":81}]', 'q1.md', 'h1', '2025-01-01'),
+      ('m-none', 'v1', 'xingce', '常识判断-时政', 'single', '题2', '[]', '["A"]', '解析',
+       2, '[]', '本地资料/时政', 2026, NULL, NULL, NULL, 'q2.md', 'h2', '2025-01-01');
+    `)
+    raw.close()
+
+    const svc1 = new DatabaseService(migDbPath, migDir, join(migDir, 'backups'))
+    try {
+      expect(svc1.getQuestion('m-gk')?.region).toBe('国考')
+      expect(svc1.getQuestion('m-none')?.region).toBeUndefined()
+    } finally {
+      svc1.close()
+    }
+
+    // 幂等验证：写入一条新 region=NULL 行并重复打开库，确认迁移不会重复触发也不会报错
+    const raw2 = new DatabaseSync(migDbPath)
+    const flag = raw2
+      .prepare("SELECT value FROM app_meta WHERE key = 'region_backfill_papers_v1'")
+      .get() as { value: string } | undefined
+    expect(flag?.value).toBe('1')
+    raw2.prepare("UPDATE questions SET region = NULL WHERE id = 'm-gk'").run()
+    raw2.close()
+
+    const svc2 = new DatabaseService(migDbPath, migDir, join(migDir, 'backups'))
+    try {
+      expect(svc2.getQuestion('m-gk')?.region).toBeUndefined()
+    } finally {
+      svc2.close()
+      rmSync(migDir, { recursive: true, force: true })
+    }
+  })
 })

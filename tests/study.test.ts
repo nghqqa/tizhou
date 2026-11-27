@@ -438,6 +438,87 @@ describe('StudyService.selectPractice（抽题池与筛选）', () => {
     })
     expect(wrongPicked.map((item) => item.id)).toEqual(['frag-da-1'])
   })
+
+  it('二级模块无直接命中时可回退匹配父模块与标签，但资料分析不走散题标签兜底', () => {
+    const vaultId = database.getActiveVault()!.id
+    const db = (
+      database as unknown as {
+        db: { prepare: (sql: string) => { run: (...v: unknown[]) => unknown } }
+      }
+    ).db
+    const insertTagRow = db.prepare(
+      `INSERT INTO questions(
+        id, vault_id, subject, category, type, stem, options_json, answer_json, explanation,
+        difficulty, source, region, tags_json, content_hash, indexed_at
+      ) VALUES (?, ?, 'xingce', ?, 'single', ?, ?, '["A"]', '解析',
+        3, '真题测试', '国考', ?, ?, '2025-01-01')`
+    )
+    const opts = JSON.stringify([
+      { key: 'A', text: '甲' },
+      { key: 'B', text: '乙' }
+    ])
+    insertTagRow.run(
+      'fallback-tu-1',
+      vaultId,
+      '判断推理',
+      '国考图推1',
+      opts,
+      JSON.stringify(['判断推理-图形推理-数量规律', '图形推理']),
+      'h-fb-1'
+    )
+    insertTagRow.run(
+      'fallback-tu-2',
+      vaultId,
+      '判断推理',
+      '国考图推2',
+      opts,
+      JSON.stringify(['判断推理-图形推理-空间重构']),
+      'h-fb-2'
+    )
+    insertTagRow.run(
+      'fallback-dy-1',
+      vaultId,
+      '判断推理',
+      '国考定义1',
+      opts,
+      JSON.stringify(['判断推理-定义判断-单定义', '定义判断']),
+      'h-fb-3'
+    )
+    insertTagRow.run(
+      'fallback-da-1',
+      vaultId,
+      '资料分析',
+      '国考资料散题1',
+      opts,
+      JSON.stringify(['资料分析-综合分析-综合判断', '综合分析']),
+      'h-fb-4'
+    )
+    insertTagRow.run(
+      'fallback-da-2',
+      vaultId,
+      '资料分析',
+      '国考资料散题2',
+      opts,
+      JSON.stringify(['资料分析-综合分析-综合判断', '综合分析']),
+      'h-fb-5'
+    )
+
+    const pickedGraph = study.selectPractice({
+      mode: 'sequence',
+      count: 10,
+      feedbackMode: 'immediate',
+      filter: { subject: 'xingce', category: '判断推理-图形推理', region: '国考' }
+    })
+    expect(pickedGraph.map((item) => item.id)).toEqual(['fallback-tu-1', 'fallback-tu-2'])
+
+    const pickedDataAnalysis = study.selectPractice({
+      mode: 'sequence',
+      count: 10,
+      feedbackMode: 'immediate',
+      filter: { subject: 'xingce', category: '资料分析-综合分析', region: '国考' }
+    })
+    expect(pickedDataAnalysis).toEqual([])
+  })
 })
 
 describe('StudyService.getDiagnosis（强弱项门槛与严格互斥）', () => {

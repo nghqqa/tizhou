@@ -34,6 +34,7 @@ import {
   type VaultQueryCaches,
   appendKeywordFilter,
   buildQuestionFilter,
+  extractPaperNamesFromJson,
   mapDocument,
   mapQuestion,
   mapVault,
@@ -985,21 +986,21 @@ export function rollbackVaultSnapshot(
 
 export function listCategories(
   db: DatabaseSync,
-  subject?: string
+  filterOrSubject?: string | Omit<QuestionListFilter, 'category' | 'categories' | 'limit'>
 ): Array<{ name: string; count: number }> {
-  const rows = subject
-    ? (db
-        .prepare(
-          `SELECT q.category, COUNT(*) AS count FROM questions q JOIN vault_registry v ON v.id=q.vault_id
-        WHERE v.active=1 AND q.subject=? GROUP BY q.category ORDER BY count DESC`
-        )
-        .all(subject) as Row[])
-    : (db
-        .prepare(
-          `SELECT q.category, COUNT(*) AS count FROM questions q JOIN vault_registry v ON v.id=q.vault_id
-        WHERE v.active=1 GROUP BY q.category ORDER BY count DESC`
-        )
-        .all() as Row[])
+  const rawFilter: QuestionListFilter =
+    typeof filterOrSubject === 'string'
+      ? { subject: filterOrSubject }
+      : filterOrSubject
+        ? { ...filterOrSubject, category: undefined, categories: undefined, limit: undefined }
+        : {}
+  const { where, values } = buildQuestionFilter(rawFilter)
+  const rows = db
+    .prepare(
+      `SELECT q.category, COUNT(*) AS count FROM questions q JOIN vault_registry v ON v.id=q.vault_id
+      WHERE ${where.join(' AND ')} GROUP BY q.category ORDER BY count DESC`
+    )
+    .all(...values) as Row[]
   return rows.map((row) => ({ name: String(row.category), count: numberValue(row.count) }))
 }
 
@@ -1061,7 +1062,7 @@ export function getQuestionFacets(
     paperRegionParams = aliases
   }
   const result: QuestionFacets = {
-    years: read('year') as number[],
+    years: read('year', paperRegionClause, paperRegionParams) as number[],
     regions: regionCounts.map((item) => item.region),
     regionCounts,
     papers: read('paper', paperRegionClause, paperRegionParams) as string[]
@@ -1077,7 +1078,9 @@ export function normalizeActiveVaultRegions(
   const active = getActiveVault(db)
   if (!active) return { updated: 0 }
   const rows = db
-    .prepare('SELECT id, region, paper, source, file_path FROM questions WHERE vault_id = ?')
+    .prepare(
+      'SELECT id, region, paper, papers_json, source, file_path FROM questions WHERE vault_id = ?'
+    )
     .all(active.id) as Row[]
   const updateStmt = db.prepare('UPDATE questions SET region = ? WHERE id = ?')
   let updated = 0
@@ -1088,6 +1091,7 @@ export function normalizeActiveVaultRegions(
         (current ? normalizeRegionName(current) : '') ||
         extractRegionFromText(
           row.paper ? String(row.paper) : undefined,
+          ...extractPaperNamesFromJson(row.papers_json),
           row.source ? String(row.source) : undefined,
           row.file_path ? String(row.file_path) : undefined
         ) ||

@@ -73,7 +73,7 @@ export function createVaultHandlers(ctx: IpcContext): Pick<IpcHandlerMap, VaultH
     'vault.question': (params) => database.getQuestion(params.id),
     'questions.update': (params) => vaults.updateQuestion(params),
     'vault.normalizeRegions': () => database.normalizeActiveVaultRegions(),
-    'vault.categories': (params) => database.listCategories(params?.subject),
+    'vault.categories': (params) => database.listCategories(params),
     'vault.facets': (params) => database.getQuestionFacets(params?.subject, params?.region),
     'vault.asset': (params) => {
       try {

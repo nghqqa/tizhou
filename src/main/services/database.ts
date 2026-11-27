@@ -277,8 +277,10 @@ export class DatabaseService {
     return questionRepo.rollbackVaultSnapshot(this.db, this.caches, snapshotId)
   }
 
-  listCategories(subject?: string): Array<{ name: string; count: number }> {
-    return questionRepo.listCategories(this.db, subject)
+  listCategories(
+    filterOrSubject?: string | Omit<QuestionListFilter, 'category' | 'categories' | 'limit'>
+  ): Array<{ name: string; count: number }> {
+    return questionRepo.listCategories(this.db, filterOrSubject)
   }
 
   getQuestionFacets(subject?: string, region?: string): QuestionFacets {

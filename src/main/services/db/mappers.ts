@@ -116,6 +116,15 @@ export function numberValue(value: unknown): number {
   return typeof value === 'bigint' ? Number(value) : Number(value ?? 0)
 }
 
+/** 从 papers_json 提取去空白后的卷名数组 */
+export function extractPaperNamesFromJson(papersJson: SqlValue | undefined): string[] {
+  const refs = parseJson<Array<{ paper?: string }>>(papersJson ?? null, [])
+  if (!Array.isArray(refs)) return []
+  return refs
+    .map((entry) => (typeof entry?.paper === 'string' ? entry.paper.trim() : ''))
+    .filter(Boolean)
+}
+
 export function buildQuestionFilter(filter: QuestionListFilter): {
   where: string[]
   values: SqlValue[]

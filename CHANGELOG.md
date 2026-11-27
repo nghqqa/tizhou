@@ -1,5 +1,13 @@
 # 更新日志
 
+## 1.0.54 - 2026-11-27
+
+### 专项练习筛选联动修复与题库地区自动回填
+
+- **入库与存量库地区自动回填（`src/main/services/vault.ts`、`db/migrations.ts`、`db/question-repo.ts`）**：修复题库解析与 `normalizeActiveVaultRegions` 仅检索 `paper`/`source`/`file_path`、漏读 `papers`/`papers_json`/`sourceFile` 导致 OpenExam 等题源国考真题缺失 `region` 的问题；新增幂等启动迁移 `region_backfill_papers_v1` 自动补全存量本地库缺失地区，并补充 `(vault_id, subject, region, category)` 覆盖索引加速筛选聚合
+- **专项模块与年份实时联动（`Trainer.tsx`、`PracticeFilterPanel.tsx`、`vault.categories`）**：`vault.categories` / `listCategories` 接入全部活动筛选条件（科目、地区、年份、试卷、难度、关键词、只练未做/错题/收藏）实时返回准确题数，「全部模块」同步显示当前可用总题数；`getQuestionFacets` 年份列表随所选地区级联过滤；切换筛选条件时自动清除失效的模块/年份选择及残余错误提示
+- **跨题源二级模块兜底抽题（`src/main/services/study.ts`）**：`StudyService.selectPractice` 对非资料分析的 `大模块-子模块`（如 `判断推理-图形推理`）在精确匹配为空时，安全回退检索父模块（含别名）下带对应标签的题目，同时严格豁免资料分析 5 题整组保护；Vitest 单元测试扩充至 596 项全量通过
+
 ## 1.0.53 - 2026-11-27
 
 ### 全科目 PDF OCR 与直导解析引擎深度优化（覆盖行测五科与申论）

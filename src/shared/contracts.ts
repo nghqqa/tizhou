@@ -990,7 +990,7 @@ export interface WorkbenchMethodMap {
   'vault.question': { params: { id: string }; result: Question | undefined }
   'vault.normalizeRegions': { params?: undefined; result: { updated: number } }
   'vault.categories': {
-    params?: { subject?: Subject }
+    params?: Omit<QuestionFilter, 'category' | 'categories' | 'limit'>
     result: Array<{ name: string; count: number }>
   }
   'vault.facets': { params?: { subject?: Subject; region?: string }; result: QuestionFacets }

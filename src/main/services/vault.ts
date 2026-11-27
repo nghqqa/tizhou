@@ -926,9 +926,27 @@ export class VaultService {
     const rawRegion = normalizeText(data.region || data.area || data.province)
     const paper = normalizeText(data.paper || data.paperName || data.exam)
     const source = normalizeText(data.source)
+    const sourceFile = normalizeText(data.sourceFile)
+    const papers = Array.isArray(data.papers)
+      ? data.papers.flatMap((item: unknown) => {
+          if (!item || typeof item !== 'object') return []
+          const record = item as Record<string, unknown>
+          const paperName = normalizeText(record.paper || record.title)
+          const order = Number(record.order)
+          return paperName && Number.isFinite(order)
+            ? [{ paper: paperName, order: Math.max(1, Math.round(order)) }]
+            : []
+        })
+      : undefined
     const region =
       (rawRegion ? normalizeRegionName(rawRegion) : '') ||
-      extractRegionFromText(paper, source, relativePath) ||
+      extractRegionFromText(
+        paper,
+        ...(papers?.map((item) => item.paper) ?? []),
+        sourceFile,
+        source,
+        relativePath
+      ) ||
       ''
     const year = data.year && Number.isFinite(Number(data.year)) ? Number(data.year) : undefined
     const stableSignature = `${subject}\n${category}\n${stem}\n${JSON.stringify(options)}\n${source}\n${year ?? ''}\n${rawRegion}\n${paper}`
@@ -960,17 +978,7 @@ export class VaultService {
       ],
       filePath,
       contentHash: hash(raw),
-      papers: Array.isArray(data.papers)
-        ? data.papers.flatMap((item: unknown) => {
-            if (!item || typeof item !== 'object') return []
-            const record = item as Record<string, unknown>
-            const paperName = normalizeText(record.paper || record.title)
-            const order = Number(record.order)
-            return paperName && Number.isFinite(order)
-              ? [{ paper: paperName, order: Math.max(1, Math.round(order)) }]
-              : []
-          })
-        : undefined
+      papers
     }
   }
 }

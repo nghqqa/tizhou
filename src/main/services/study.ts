@@ -48,8 +48,12 @@ function shuffled<T>(items: T[]): T[] {
 
 export const DATA_ANALYSIS_GROUP_SIZE = 5
 
+export function isDataAnalysisCategory(category: string): boolean {
+  return category === '资料分析' || category.startsWith('资料分析')
+}
+
 export function isDataAnalysisQuestion(question: Question): boolean {
-  return question.category === '资料分析' || question.category.startsWith('资料分析')
+  return isDataAnalysisCategory(question.category)
 }
 
 export function isLockedDataAnalysisUnit(unit: Question[]): boolean {
@@ -249,6 +253,35 @@ export class StudyService {
           category: undefined,
           categories: aliases
         })
+      }
+      if (
+        pool.length === 0 &&
+        selection.filter.category.includes('-') &&
+        !isDataAnalysisCategory(selection.filter.category)
+      ) {
+        const rawCategory = selection.filter.category.trim()
+        const dashIdx = rawCategory.indexOf('-')
+        const parent = rawCategory.slice(0, dashIdx).trim()
+        const sub = rawCategory.slice(dashIdx + 1).trim()
+        if (parent && sub) {
+          const parentAliases = expandCategoryAliases(parent)
+          const candidates = this.database.listQuestionsForPool({
+            ...selection.filter,
+            category: undefined,
+            categories: parentAliases
+          })
+          pool = candidates.filter((question) =>
+            question.tags.some(
+              (tag) =>
+                tag === sub ||
+                tag === rawCategory ||
+                tag.startsWith(`${rawCategory}-`) ||
+                parentAliases.some(
+                  (pa) => tag === `${pa}-${sub}` || tag.startsWith(`${pa}-${sub}-`)
+                )
+            )
+          )
+        }
       }
     }
     const strictDataAnalysis =
