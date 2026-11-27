@@ -15,7 +15,7 @@ export const STRUCTURED_PACKAGE = 'rapid-doc==0.9.10'
 
 // OCR worker 预处理/过滤策略版本：修改渲染 DPI、去水印预处理或页眉剔除策略时递增，
 // 让旧转换缓存自然失效，避免已导过的 PDF 重导时命中旧结果
-export const OCR_WORKER_POLICY_VERSION = 'p3'
+export const OCR_WORKER_POLICY_VERSION = 'p6'
 
 // 文字通道切出的可用题少于此数时，"题号+图片页充足"的文件才按纯图推题本走保留通道；
 // 行测整卷有大量图表页但文字题健康，不能因此整文件放弃结构化
@@ -160,6 +160,7 @@ export interface DirectBookEntry {
   relativePath: string
   questions: ReturnType<typeof parseQuestionBook>
   groups: Map<string, string>
+  sectionGroups?: Map<string, string>
   graphic?: {
     items: ReturnType<typeof mergeGraphicQuestions>['items']
     itemWarnings: string[][]
@@ -193,6 +194,8 @@ export interface DirectBatchCollector {
   directPreservation: DirectPreservationEntry[]
   directEssays: DirectEssayEntry[]
   directSolutions: Map<string, ParsedSolution>
+  directAnswerGroups: Map<string, string>
+  directSectionAnswers: Map<string, string>
   solutionPageMaps: Map<string, Array<number | undefined>>
   solutionSourceOf: Map<string, string>
   trainingMarkers: number

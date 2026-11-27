@@ -1956,4 +1956,406 @@ describe('stripTocSetTitleRuns（目录套标题过滤与套号对齐）', () =>
     ])
     expect([...solutions.keys()]).toEqual(['1-1', '2-1'])
   })
+
+  it('题号后紧跟四位年份（如 2.2022年 / 16.2020年）与 # 标题前缀正常切题，同时继续拦截小数', () => {
+    const lines = [
+      '练习题01',
+      '2022年1～7月，全国规模以上工业发电4.77万亿千瓦时，同比增长1.4%，增速比上半年加快0.7个百分点。',
+      '1.2021年7月份，全国发电量大约是多少亿千瓦时：',
+      'A. 6570',
+      'B. 6920',
+      'C. 7712',
+      'D. 7800',
+      '2.2022年1～7月份，全国城乡居民生活用电量比2021年约多：',
+      '1.5亿元属于小数续行，不能误切为第1题',
+      '1.20225也不是年份题号',
+      'A. 672亿千瓦时',
+      'B. 843亿千瓦时',
+      'C. 925亿千瓦时',
+      'D. 1020亿千瓦时',
+      '# 3. 2016~2021年全国移动数据收入增长最多的年份是：',
+      'A. 2016年',
+      'B. 2017年',
+      'C. 2020年',
+      'D. 2021年',
+      '5.2023年该市农村居民人均消费支出较上一年增加了多少元：',
+      'A. 2874',
+      'B. 2746',
+      'C. 2647',
+      'D. 2584'
+    ]
+    const questions = parseQuestionBook(lines)
+    expect(questions.map((q) => q.num)).toEqual([1, 2, 3, 5])
+    expect(questions[0]?.stem).toContain('2021年7月份')
+    expect(questions[1]?.stem).toContain('2022年1～7月份')
+    expect(questions[1]?.stem).toContain('1.5亿元属于小数续行')
+    expect(questions[1]?.stem).toContain('1.20225也不是年份题号')
+    expect(questions[2]?.stem).toContain('2016~2021年')
+    // 跳号续切的第 5 题必须保留套内共享材料
+    expect(questions[3]?.material).toContain('全国规模以上工业发电')
+    expect(questions[3]?.materialLineRange).toBeDefined()
+
+    const solutions = parseSolutionBook([
+      '练习题01',
+      '1.2021年7月份，全国发电量大约是多少亿千瓦时：',
+      '【参考答案及正确率】C，89%',
+      '【实战解析】解析一。',
+      '2.2022年1～7月份，全国城乡居民生活用电量比2021年约多：',
+      '【参考答案及正确率】B，81%',
+      '【实战解析】解析二。'
+    ])
+    expect([...solutions.keys()]).toEqual(['1-1', '1-2'])
+    expect(solutions.get('1-2')?.answer).toBe('B')
+  })
+
+  it('四海独立答案册（无冒号+同行双段+重号纠偏）与具名段标题精准配对', async () => {
+    const { parseAnswerGroupsDetailed } = await import('../src/main/services/question-import')
+    const answerLines = [
+      '【四海】海海刷数量关系题本答案',
+      '考点刷题 1',
+      '1-5 ACDDA 6-10 BDDCC',
+      '11-15 BDDDA 15-20 DAACC',
+      '考点刷题 2',
+      '1-5 DCDBB 6-10 DACBA'
+    ]
+    const detail = parseAnswerGroupsDetailed(answerLines)
+    expect(detail.count).toBe(30)
+    expect(detail.bySection.get('考点刷题1-1')).toBe('A')
+    expect(detail.bySection.get('考点刷题1-6')).toBe('B')
+    // 15-20 紧跟 11-15 自动纠偏为 16-20
+    expect(detail.bySection.get('考点刷题1-16')).toBe('D')
+    expect(detail.bySection.get('考点刷题2-1')).toBe('D')
+
+    // 题本即便只含「考点刷题 2」一段，也能凭段标题精准命中对应答案而非错配第 1 段
+    const bookLines = [
+      '考点刷题 2',
+      '1. 甲乙丙丁四人共有图书若干本，已知甲比乙多 10 本，问总数？',
+      'A. 40',
+      'B. 50',
+      'C. 60',
+      'D. 70'
+    ]
+    const questions = parseQuestionBook(bookLines)
+    expect(questions).toHaveLength(1)
+    expect(questions[0]?.sectionTitle).toBe('考点刷题2')
+    const merged = mergeDirectQuestions(questions, new Map(), detail.bySet, {
+      subject: 'xingce',
+      category: '行测-直导题库',
+      sourceFile: '四海数量.pdf',
+      tags: [],
+      sectionAnswers: detail.bySection
+    })
+    expect(merged.items).toHaveLength(1)
+    expect(merged.items[0]?.answer).toEqual(['D'])
+  })
+
+  it('酷酷刷【例题N】+书尾答案（含单题答案）与夸夸刷【例N】+随节内嵌答案均正常切题配对', async () => {
+    const { parseAnswerGroupsDetailed } = await import('../src/main/services/question-import')
+    const kukuLines = [
+      '练习1 增量',
+      '# 【例题1】（2020贵州）',
+      '2019年全国居民人均可支配收入30733元，比上年增长8.9%。',
+      '问：2019年全国居民人均可支配收入比上年增加约多少元？',
+      'A. 2400',
+      'B. 2510',
+      'C. 2620',
+      'D. 2730',
+      '# 【例题2】（2021福建）',
+      '2016年农民工月均收入3275元，增长6.6%。问占比变化是：',
+      'A. 变大',
+      'B. 变小',
+      'C. 不变',
+      'D. 无法推出',
+      '参考答案',
+      '练习1 增量',
+      '1-1：B 2：A'
+    ]
+    const kukuQs = parseQuestionBook(kukuLines)
+    expect(kukuQs.map((q) => q.num)).toEqual([1, 2])
+    const kukuAns = parseAnswerGroupsDetailed(kukuLines)
+    const kukuMerged = mergeDirectQuestions(kukuQs, new Map(), kukuAns.bySet, {
+      subject: 'xingce',
+      category: '资料分析',
+      sourceFile: '酷酷刷-资料分析.pdf',
+      tags: [],
+      sectionAnswers: kukuAns.bySection
+    })
+    expect(kukuMerged.items.map((item) => item.answer.join(''))).toEqual(['B', 'A'])
+
+    const kkLines = [
+      '【例1】（2020联考）某厂生产甲乙丙三种机型，求产量比：',
+      'A. 2:1:3',
+      'B. 2:3:4',
+      'C. 3:2:1',
+      'D. 3:2:4',
+      '【例2】（2023联考）两冰块相撞，原来体积是10倍，现在是几倍？',
+      'A. 16',
+      'B. 10',
+      'C. 8',
+      'D. 6',
+      '答案：1-2：CA'
+    ]
+    const kkQs = parseQuestionBook(kkLines)
+    expect(kkQs).toHaveLength(2)
+    // 随节内嵌答案行绝不污染上一题末选项
+    expect(kkQs[1]?.options[3]?.text).toBe('6')
+    const kkAns = parseAnswerGroupsDetailed(kkLines)
+    const kkMerged = mergeDirectQuestions(kkQs, new Map(), kkAns.bySet, {
+      subject: 'xingce',
+      category: '数量关系',
+      sourceFile: '夸夸刷-数量关系.pdf',
+      tags: []
+    })
+    expect(kkMerged.items.map((item) => item.answer.join(''))).toEqual(['C', 'A'])
+  })
+
+  it('repairDriftedQuestionNumbers 不得将 HTML 表格单元格内的序号误判为漂移题号', () => {
+    const lines = [
+      '练习1 增量',
+      '# 【例题4】（2021浙江）',
+      '<table><tr><td>指标名称</td><td>亿元</td></tr><tr><td>5.外商及港澳台投资企业</td><td>459.8</td></tr></table>',
+      '问：营业收入同比增长了多少亿元？',
+      'A. 1042',
+      'B. 1120',
+      'C. 1288',
+      'D. 1315',
+      '# 【例题5】（2023重庆）',
+      '2022年8月商品零售32510亿元，问增长多少亿元？',
+      'A. 3788',
+      'B. 3843',
+      'C. 3970',
+      'D. 4011'
+    ]
+    const qs = parseQuestionBook(lines)
+    expect(qs.map((q) => q.num)).toEqual([4, 5])
+    expect(qs[0]?.options).toHaveLength(4)
+    expect(qs[0]?.stem).toContain('<table>')
+    expect(qs[1]?.options).toHaveLength(4)
+  })
+
+  it('图推分组题号（第一组/第二组）延续段名连续号，且 HTML 多套参考答案表与转义 \\~ 精准拆段', async () => {
+    const { parseAnswerGroupsDetailed } = await import('../src/main/services/question-import')
+    // 1) 四海「图推刷题1」下分「第一组 1~2」「第二组 1~2」，独立答案册为「图推刷题1」连续 1~4
+    const shBook = toLines(
+      [
+        '图推刷题1',
+        '第一组',
+        '1. 从所给的四个选项中选择最合适的一项：',
+        'A. 见图',
+        'B. 见图',
+        '2. 把下面的六个图形分为两类：',
+        'A. ①②③',
+        'B. ①②④',
+        '第二组',
+        '1. 左边给定的是正方体展开图：',
+        'A. 见图',
+        'B. 见图'
+      ].join('\n')
+    )
+    const shQs = parseQuestionBook(shBook)
+    expect(shQs.map((q) => [q.set, q.num, q.sectionTitle, q.sectionQuestionNum])).toEqual([
+      [1, 1, '图推刷题1', undefined],
+      [1, 2, '图推刷题1', undefined],
+      [2, 1, '图推刷题1', 3]
+    ])
+    const shAns = parseAnswerGroupsDetailed(
+      toLines(['【四海】海海刷判断推理题本答案', '图推刷题 1', '1-5 CADAD'].join('\n'))
+    )
+    const shMerged = mergeDirectQuestions(shQs, new Map(), shAns.bySet, {
+      subject: 'xingce',
+      category: '判断推理',
+      sourceFile: '四海判断.pdf',
+      tags: [],
+      sectionAnswers: shAns.bySection
+    })
+    expect(shMerged.items.map((item) => item.answer.join(''))).toEqual(['C', 'A', 'D'])
+
+    // 2) 酷酷刷单行 HTML <table> 内含多套「专项刷题一：…专项刷题二：…」+ 转义 \~ 区间
+    const kukuAnsLines = toLines(
+      [
+        '参考答案',
+        '<table><tr><td colspan="4">专项刷题一：</td></tr><tr><td>1\\~5：DDBDD</td><td>6\\~10：AABCC</td></tr><tr><td>专项刷题二：</td><td></td></tr><tr><td>1\\~5：ADBBD</td><td>6\\~10：CBDDC</td></tr></table>'
+      ].join('\n')
+    )
+    const kukuAns = parseAnswerGroupsDetailed(kukuAnsLines)
+    expect(kukuAns.count).toBe(20)
+    expect(kukuAns.bySection.get('专项刷题一-1')).toBe('D')
+    expect(kukuAns.bySection.get('专项刷题一-10')).toBe('C')
+    expect(kukuAns.bySection.get('专项刷题二-1')).toBe('A')
+    expect(kukuAns.bySection.get('专项刷题二-10')).toBe('C')
+  })
+
+  it('资料分析同套多篇材料精准切分、单题前置材料不污染上题 D 选项且目录页不进入共享材料', () => {
+    const lines = toLines(
+      [
+        '实战公考 资料分析',
+        '# 目 录',
+        '套题训练1…… 1',
+        '套题训练2…… 10',
+        '# 套题训练1',
+        '# 一、根据所给材料，回答1～2题。',
+        '2022年1～7月，全国发电量4.77万亿千瓦时，同比增长1.4%。其中7月发电8059亿千瓦时，同比增长4.5%。',
+        '# 请回答1~2题',
+        '1. 2021年7月全国发电量约是多少亿千瓦时？',
+        'A. 6570',
+        'B. 6920',
+        'C. 7712',
+        'D. 7800',
+        '2. 下列哪项可以推出？',
+        'A. 选项甲',
+        'B. 选项乙',
+        'C. 选项丙',
+        'D. 选项丁',
+        '# 二、根据所给材料，回答3～4题。',
+        '表 2020年广东省技术合同认定登记情况',
+        '<table><tr><td>城市</td><td>合同数</td></tr><tr><td>广州</td><td>22843</td></tr></table>',
+        '# 请回答3~4题',
+        '3. 2020年广州市合同数为多少项？',
+        'A. 22843',
+        'B. 11717',
+        'C. 39845',
+        'D. 2653',
+        '2019年，全国棉花产量588.9万吨，比上年减少21.3万吨，其中新疆棉花产量500.2万吨，同比下降2.1%。',
+        '4. 2018年全国棉花产量约为多少万吨？',
+        'A. 567.6',
+        'B. 610.2',
+        'C. 625.0',
+        'D. 640.5'
+      ].join('\n')
+    )
+    const qs = parseQuestionBook(lines)
+    expect(qs).toHaveLength(4)
+    expect(qs[0]?.sectionTitle).toBe('套题训练1')
+    // 目录与封面绝不进入材料
+    expect(qs[0]?.material).not.toContain('目录')
+    expect(qs[0]?.material).toContain('发电量')
+    // 第 2 题 D 选项干净，不吞入第 2 篇材料与表格
+    expect(qs[1]?.options[3]?.text).toBe('选项丁')
+    // 第 3 题拿到第 2 篇表格材料，不再误挂第 1 篇发电量材料
+    expect(qs[2]?.material).toContain('<table>')
+    expect(qs[2]?.material).not.toContain('发电量')
+    // 第 3 题 D 选项不吞入第 4 题前置统计段，第 4 题拿到自己的棉花材料
+    expect(qs[2]?.options[3]?.text).toBe('2653')
+    expect(qs[3]?.material).toContain('棉花产量')
+    expect(qs[3]?.material).not.toContain('<table>')
+  })
+
+  it('解析册单行重印题干（资料分析高频形态）保留题号同行文本用于配对对齐，不再误判错位拦截', () => {
+    const bookQs = parseQuestionBook([
+      '练习题01套',
+      '1. 2021年7月份，全国发电量大约是多少亿千瓦时：',
+      'A. 6570',
+      'B. 6920',
+      'C. 7712',
+      'D. 7800',
+      '2. 2022年1～7月份，全国城乡居民生活用电量比2021年约多：',
+      'A. 672亿千瓦时',
+      'B. 843亿千瓦时',
+      'C. 925亿千瓦时',
+      'D. 1020亿千瓦时'
+    ])
+    const sols = parseSolutionBook([
+      '目录',
+      '练习题01套',
+      '练习题02套',
+      '练习题03套',
+      '练习题04套',
+      '练习题05套',
+      '练习题01套',
+      '1. 2021年7月份，全国发电量大约是多少亿千瓦时：',
+      'A. 6570',
+      'B. 6920',
+      'C. 7712',
+      'D. 7800',
+      '【参考答案及正确率】C，89%',
+      '【实战解析】基期=8059/(1+4.5%)≈7712。',
+      '2. 2022年1～7月份，全国城乡居民生活用电量比2021年约多：',
+      'A. 672亿千瓦时',
+      'B. 843亿千瓦时',
+      'C. 925亿千瓦时',
+      'D. 1020亿千瓦时',
+      '【参考答案及正确率】B，81%',
+      '【实战解析】增量=7586/9≈843。'
+    ])
+    expect([...sols.keys()]).toEqual(['1-1', '1-2'])
+    const merged = mergeDirectQuestions(bookQs, sols, new Map(), {
+      subject: 'xingce',
+      category: '资料分析',
+      sourceFile: '资料分析600题.pdf',
+      tags: []
+    })
+    expect(merged.aborted).toBe(false)
+    expect(merged.skippedMisaligned).toBe(0)
+    expect(merged.items.map((item) => item.answer.join(''))).toEqual(['C', 'B'])
+  })
+
+  it('申论 --structured Markdown 标题、内联真题出处与粘连虚线名言框正确解析', () => {
+    const parsed = parseEssayBook([
+      '第一章 归纳概括',
+      '【训练一】提升基层社会治理水平经验做法......2',
+      '【训练二】如何提供和优化铁路物流服务......5',
+      '# 第一章 归纳概括',
+      '# 【训练一】提升基层社会治理水平经验做法',
+      '# 资料2',
+      '![](images/divider.jpg)',
+      '近年来，W市经开区积极探索社区基金参与基层社会治理的新模式，通过设立多元筹资渠道和规范项目评审机制，推动居民自治与专业服务深度融合。',
+      '根据“给定资料2”，归纳W市经开区依托社区基金提升基层社会治理水平的经验做法。(2023 年山东 B 卷)',
+      '要求：全面，准确，有条理，不超过300字。---一·一·一·一·一► 唯物辩证法认为外因是变化的条件。',
+      '# 【训练二】如何提供和优化铁路物流服务',
+      '# 资料1',
+      '江化铁路物流中心围绕企业降本增效需求，整合场站仓储与多式联运资源，打造一站式智慧调度平台，大幅压缩货物在途周转时间。',
+      '根据“给定资料1”，简要说明江化铁路物流中心是如何提供和优化铁路物流服务的。(2026年国考市地卷）',
+      '要求：全面、准确、有条理。不超过250字。'
+    ])
+    expect(parsed.units).toHaveLength(2)
+    expect(parsed.units[0]?.chapter).toBe('归纳概括')
+    expect(parsed.units[0]?.year).toBe(2023)
+    expect(parsed.units[0]?.region).toBe('山东')
+    expect(parsed.units[0]?.material).not.toContain('divider.jpg')
+    expect(parsed.units[0]?.stem).toContain('不超过300字。')
+    expect(parsed.units[0]?.stem).not.toContain('唯物辩证法')
+    expect(parsed.units[1]?.year).toBe(2026)
+    expect(parsed.units[1]?.region).toBe('国考')
+    expect(parsed.units[1]?.stem).toContain('简要说明江化铁路物流中心')
+  })
+
+  it('言语题本 RapidDoc 将 D 选项与下一题真题头粘连到同行时准确拆出，且支持篇章阅读跳号材料头与答案对照表', () => {
+    const raw = [
+      '# 第一章 片段阅读',
+      '# 第一节 中心理解题',
+      '# 实战演练一',
+      '1.【2023国考】下列关于矿物晶体的表述正确的是：',
+      'A. 选项甲',
+      'B. 选项乙',
+      'C. 选项丙',
+      'D. 不同天然矿物晶体的熔点区别2.【2023事业联考】互联网时代，汉字使用发挥着重要作用。',
+      'A. 融媒体传播迅速',
+      'B. 汉字规范亟待加强',
+      'C. 传统文化持续复兴',
+      'D. 网络语言不断演进',
+      '阅读下文，回答26~30题。',
+      '这是一段用于篇章阅读的长文章材料，讨论人工智能在医学影像诊断中的临床边界。',
+      '26. 根据文章内容，下列说法正确的是：',
+      'A. 甲',
+      'B. 乙',
+      'C. 丙',
+      'D. 丁',
+      '# 答案对照表',
+      '1~2：AC 26~26：D'
+    ]
+    const qs = parseQuestionBook(raw)
+    expect(qs).toHaveLength(3)
+    expect(qs[0]?.material).toBeUndefined()
+    expect(qs[0]?.options[3]?.text).toBe('不同天然矿物晶体的熔点区别')
+    expect(qs[1]?.num).toBe(2)
+    expect(qs[1]?.stem).toContain('【2023事业联考】互联网时代')
+    expect(qs[1]?.options).toHaveLength(4)
+    expect(qs[2]?.num).toBe(26)
+    expect(qs[2]?.material).toContain('人工智能在医学影像诊断中的临床边界')
+    expect(qs[1]?.options[3]?.text).not.toContain('人工智能')
+    const ans = parseAnswerGroups(raw)
+    expect(ans.get('1-1')).toBe('A')
+    expect(ans.get('1-2')).toBe('C')
+    expect(ans.get('1-26')).toBe('D')
+  })
 })

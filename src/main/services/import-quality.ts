@@ -69,10 +69,14 @@ export function quarantineNumberStreamLine(line: string): string {
 
 export const WATERMARK_PATTERNS = [
   /公考最新资料[、，]?\s*更新进度微信\S*/g,
+  /一手最全公考资源加微信\s*[A-Za-z0-9_-]*/g,
+  /公考资料免费更新[^\n]*/g,
+  /关注[“"'「]?花生十三[”"'」]?公众号[^\n]*/g,
   /微信SKA\d+/g,
   /公众号[：:]\S+/g,
   /超格学员专用/g,
-  /资料分析600[贴折]/g
+  /扫码查看答案/g,
+  /资料分析600[贴折起题]/g
 ] as const
 
 /** 行内水印剥离：只删命中的机构宣传片段，题目出处/年份/地区/资料来源不动 */
@@ -124,15 +128,77 @@ export interface TableQuality {
   tables: number
   /** 列数不一致（单元格残缺）的表格数 */
   ragged: number
-  /** 表格结构置信度：1 - 残缺占比；无表格时缺省不发布误导数值 */
+  /** 疑似行粘连 / 单元格双数值错位行数（如两行统计数据并进同一行） */
+  mergedRowSuspects?: number
+  /** 表格结构置信度：1 - 异常占比；无表格时缺省不发布误导数值 */
   confidence?: number
 }
 
+const MULTI_NUMERIC_CELL = /^[-+]?\d[\d,]*(?:\.\d+)?[%％]?(?:\s+[-+]?\d[\d,]*(?:\.\d+)?[%％]?)+$/
+
+/** 计算 HTML 表格各行考虑 rowspan / colspan 后的逻辑列数，并检出疑似行粘连的数据行 */
+function analyzeHtmlTable(tableHtml: string): { isRagged: boolean; mergedRows: number } {
+  const rows = tableHtml.match(/<tr[\s\S]*?<\/tr>/gi) ?? []
+  if (rows.length === 0) return { isRagged: false, mergedRows: 0 }
+  const activeSpans = new Map<number, number>()
+  const logicalWidths: number[] = []
+  let mergedRows = 0
+
+  for (const row of rows) {
+    const cells = row.match(/<t[dh]\b[^>]*>[\s\S]*?<\/t[dh]>/gi) ?? []
+    let col = 0
+    let multiNumericCells = 0
+    const advanceOccupied = (): void => {
+      while ((activeSpans.get(col) ?? 0) > 0) col += 1
+    }
+    for (const cell of cells) {
+      advanceOccupied()
+      const openTag = cell.match(/^<t[dh]\b[^>]*>/i)?.[0] ?? ''
+      const colspanMatch = openTag.match(/\bcolspan\s*=\s*["']?(\d+)/i)
+      const rowspanMatch = openTag.match(/\browspan\s*=\s*["']?(\d+)/i)
+      const colspan = Math.max(1, Number(colspanMatch?.[1] ?? '1') || 1)
+      const rowspan = Math.max(1, Number(rowspanMatch?.[1] ?? '1') || 1)
+      if (rowspan > 1) {
+        for (let offset = 0; offset < colspan; offset += 1) {
+          activeSpans.set(col + offset, Math.max(activeSpans.get(col + offset) ?? 0, rowspan))
+        }
+      }
+      col += colspan
+      // 检查单元格内是否存在空白分隔的多独立数值（典型行粘连：如「87.78 -40.68」「415 350」）
+      const cellText = cell
+        .replace(/<br\s*\/?>/gi, ' ')
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+      if (MULTI_NUMERIC_CELL.test(cellText)) {
+        const parts = cellText.split(/\s+/)
+        const allYears = parts.every((part) => /^(?:19|20)\d{2}$/.test(part))
+        if (!allYears) multiNumericCells += 1
+      }
+    }
+    advanceOccupied()
+    const maxOccupied = activeSpans.size ? Math.max(...activeSpans.keys()) + 1 : 0
+    logicalWidths.push(Math.max(col, maxOccupied))
+    // 同一行内出现 >=2 个多数值粘连单元格，视为疑似两行数据合并
+    if (multiNumericCells >= 2) mergedRows += 1
+    // 本行结束后递减跨行计数
+    for (const [colIdx, remaining] of [...activeSpans.entries()]) {
+      if (remaining <= 1) activeSpans.delete(colIdx)
+      else activeSpans.set(colIdx, remaining - 1)
+    }
+  }
+
+  const isRagged = logicalWidths.some((width) => width !== logicalWidths[0])
+  return { isRagged, mergedRows }
+}
+
 // 表格结构一致性：识别 markdown 管道表格与 HTML 表格（RapidDoc 还原输出形态），
-// 列/单元格数不一致说明单元格识别残缺——不强行补齐，按数量产生告警。
+// HTML 表格按 rowspan/colspan 计算真实逻辑列数（消除多级合并表头误报），
+// 并检测单格多数值行粘连（不强行补齐，按数量产生告警）。
 export function scanTableQuality(markdown: string): TableQuality {
   let tables = 0
   let ragged = 0
+  let mergedRowSuspects = 0
   // markdown 管道表格：连续 | 行，各行列数需一致
   let current: number[] | undefined
   const close = (): void => {
@@ -151,17 +217,18 @@ export function scanTableQuality(markdown: string): TableQuality {
     }
   }
   close()
-  // HTML 表格：逐表比较各行 td/th 单元格数
+  // HTML 表格：模拟 rowspan / colspan 逻辑列宽并扫描行粘连
   const htmlTables = markdown.match(/<table[\s\S]*?<\/table>/gi) ?? []
   for (const table of htmlTables) {
     tables += 1
-    const rows = table.match(/<tr[\s\S]*?<\/tr>/gi) ?? []
-    const counts = rows.map((row) => (row.match(/<t[dh][\s>]/gi) ?? []).length)
-    if (counts.some((cells) => cells !== counts[0])) ragged += 1
+    const { isRagged, mergedRows } = analyzeHtmlTable(table)
+    if (isRagged) ragged += 1
+    mergedRowSuspects += mergedRows
   }
   return {
     tables,
     ragged,
+    ...(mergedRowSuspects > 0 ? { mergedRowSuspects } : {}),
     ...(tables > 0 ? { confidence: Math.round((1 - ragged / tables) * 100) / 100 } : {})
   }
 }
@@ -187,10 +254,10 @@ export function questionCompleteness(
   }
 }
 
-// 结构性噪声行：单独成行的「请回答1～5题」「（第1~5题）」等组题指引，
+// 结构性噪声行：单独成行的「请回答1～5题」「# 请回答6~10题」「（第1~5题）」等组题指引，
 // 不是题干也不是材料——过滤而非并入材料/题干（不允许当普通题干）。
 export const STRUCTURAL_NOISE_LINE =
-  /^[（(]?\s*(?:请回答|请根据.*回答)?\s*第?\s*\d{1,3}\s*[～～~-]\s*\d{1,3}\s*题\s*[)）]?$/
+  /^#{0,4}\s*[（(]?\s*(?:请回答|请根据.*回答)?\s*第?\s*\d{1,3}\s*[～～~-]\s*\d{1,3}\s*题\s*[)）]?\s*$/
 
 export function stripStructuralNoise(lines: string[]): { lines: string[]; removed: number } {
   const kept = lines.filter((line) => !STRUCTURAL_NOISE_LINE.test(line))
@@ -203,10 +270,14 @@ export function stripStructuralNoise(lines: string[]): { lines: string[]; remove
 
 const WATERMARK_TRAINS = [
   /公考最新资料[、，]?\s*更新进度微信\S*/g,
+  /一手最全公考资源加微信\s*[A-Za-z0-9_-]*/g,
+  /公考资料免费更新[^\n]*/g,
+  /关注[“"'「]?花生十三[”"'」]?公众号[^\n]*/g,
   /微信SKA\d+/g,
   /公众号[：:]\S+/g,
   /超格学员专用/g,
-  /资料分析600[贴折]/g,
+  /扫码查看答案/g,
+  /资料分析600[贴折起题]/g,
   /(?:^|[\s，、。])花生十[三]?(?=\s*[，、。]|(?:\s|$))/g
 ] as const
 

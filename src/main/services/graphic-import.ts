@@ -48,7 +48,8 @@ export function isGraphicCandidate(regions: StructuredRegions): boolean {
   return questionPages >= 4
 }
 
-const QUESTION_TRIGGER = /^\s*(\d{1,3})\s*[.、．]\s*(.+)$/
+const QUESTION_TRIGGER =
+  /^\s*(?:#{0,4}\s*)?(?:(\d{1,3})\s*[.、．]\s*(.+)|【\s*例题?\s*0*(\d{1,3})\s*】\s*(.*))$/
 
 function groupByPage(regions: RegionBlock[]): Map<number, RegionBlock[]> {
   const byPage = new Map<number, RegionBlock[]>()
@@ -318,15 +319,25 @@ export function buildGraphicPreservation(
 // 图在下页顶），跨度按全局阅读顺序（页, y）取到下一个题号锚点。绑定结果一律进人工核对。
 
 const GRAPHIC_STEM =
-  /从所给的四个选项中|使之呈现一定的规律性|填入问号处|分为两类|每一类图形|图形的变化规律|所给图形/
+  /从所给的四个选项中|使之呈现一定的规律性|填入问号处|分为两类|每一类图形|图形的变化规律|所给图形|外表面展开图|多面体的截面|正方体.*俯视图|左视图和主视图|折叠成的纸盒|立方体的不同视角|展开的图形|正方体纸盒|多面体.*切割|变化情况的曲线|折线图|柱状图|饼状图|饼图|趋势图/
 const OPTION_LABEL = /^[A-DＡ-Ｄ]\s*[.、．]?$/
-// 与 question-import 的 QUESTION_NO 对齐：题号后不得紧跟数字，防止 "1.5亿元" 这类小数被当题号锚点
-const QUESTION_ANCHOR = /^\s*(\d{1,3})\s*[.、．](?!\d)/
+const TEXT_OPTION_BLOCK = /^[A-DＡ-Ｄ]\s*[.、．]\s*\S/
+// 与 question-import 的 QUESTION_NO / EXAMPLE_QUESTION_NO 对齐：防小数（"1.5亿元"），
+// 但放行「# 32.」「2.2022年…」与「【例1】/【例题1】」
+const QUESTION_ANCHOR = /^\s*#{0,4}\s*(\d{1,3})\s*[.、．](?:(?!\d)|(?=(?:19|20)\d{2}(?:[^\d.]|$)))/
+const EXAMPLE_ANCHOR = /^\s*#{0,4}\s*【\s*例题?\s*0*(\d{1,3})\s*】/
+
+function matchAnchorNum(text: string): number | undefined {
+  const example = text.match(EXAMPLE_ANCHOR)
+  if (example) return Number(example[1])
+  const match = text.match(QUESTION_ANCHOR)
+  return match ? Number(match[1]) : undefined
+}
 
 export interface GraphicBindingSummary {
-  /** 四个选项图全部绑定的题数 */
+  /** 四个选项图全部绑定的题数（含 3 标签 + 1 几何补齐） */
   bound: number
-  /** 无标签、按顺序兜底绑定的题数（置信度较低） */
+  /** 无标签顺序兜底或合并选项图（见题干图）绑定的题数（需人工核对） */
   partial: number
   /** 选项本身是文字（"分为两类"等题型），只把题干图附上的题数 */
   stemOnly: number
@@ -341,9 +352,129 @@ function centerX(block: RegionBlock): number {
   return (x0 + x1) / 2
 }
 
+function centerY(block: RegionBlock): number {
+  const [, y0 = 0, , y1 = 0] = block.bbox
+  return (y0 + y1) / 2
+}
+
 function widthOf(block: RegionBlock): number {
   const [x0 = 0, , x1 = 0] = block.bbox
   return Math.max(1, x1 - x0)
+}
+
+function heightOf(block: RegionBlock): number {
+  const [, y0 = 0, , y1 = 0] = block.bbox
+  return Math.max(1, y1 - y0)
+}
+
+/** 有效图形块：包含 image 与 RapidDoc 把九宫格归为 table 但保存了裁图的块，排除极小装饰图标 */
+function isVisualBlock(block: RegionBlock): boolean {
+  if ((block.type !== 'image' && block.type !== 'table') || !block.imgPath) return false
+  return widthOf(block) >= 24 && heightOf(block) >= 24
+}
+
+/** 3 缺 1 几何补齐：OCR 偶发漏识单个 A/B/C/D 标签时，在同页 1×4 横排或 2×2 网格的精确缺位上
+ *  寻找尺寸匹配的未使用图片块，仅在位置与面积双重吻合时补齐第 4 个选项图。 */
+function completeMissingFourthOption(
+  bound: Map<string, RegionBlock>,
+  used: Set<RegionBlock>,
+  images: RegionBlock[],
+  keys: readonly string[]
+): boolean {
+  if (bound.size !== 3) return false
+  const missingKey = keys.find((key) => !bound.has(key))
+  if (!missingKey) return false
+  const boundEntries = keys
+    .filter((key) => bound.has(key))
+    .map((key) => ({ key, block: bound.get(key)! }))
+  const page = boundEntries[0]!.block.page
+  if (!boundEntries.every((entry) => entry.block.page === page)) return false
+  const candidates = images.filter((image) => !used.has(image) && image.page === page)
+  if (candidates.length === 0) return false
+
+  const areas = boundEntries.map((entry) => area(entry.block)).sort((a, b) => a - b)
+  const widths = boundEntries.map((entry) => widthOf(entry.block)).sort((a, b) => a - b)
+  const heights = boundEntries.map((entry) => heightOf(entry.block)).sort((a, b) => a - b)
+  const medArea = areas[1] ?? areas[0] ?? 1
+  const medW = widths[1] ?? widths[0] ?? 1
+  const medH = heights[1] ?? heights[0] ?? 1
+  const sizeOk = (img: RegionBlock): boolean => {
+    const a = area(img)
+    return a >= medArea * 0.35 && a <= medArea * 2.2
+  }
+
+  // 情况 1：1×4 同排（3 张已绑图 y 相近且按 A<B<C<D 单调递增）
+  const ys = boundEntries.map((entry) => centerY(entry.block))
+  const isRow = Math.max(...ys) - Math.min(...ys) <= medH * 0.75
+  const xsMonotonic = boundEntries.every(
+    (entry, idx) => idx === 0 || centerX(entry.block) > centerX(boundEntries[idx - 1]!.block)
+  )
+  if (isRow && xsMonotonic) {
+    const avgY = ys.reduce((sum, y) => sum + y, 0) / ys.length
+    const missingIdx = keys.indexOf(missingKey)
+    const prevKey = missingIdx > 0 ? keys[missingIdx - 1] : undefined
+    const nextKey = missingIdx < keys.length - 1 ? keys[missingIdx + 1] : undefined
+    const prevBlock = prevKey ? bound.get(prevKey) : undefined
+    const nextBlock = nextKey ? bound.get(nextKey) : undefined
+    let expectedX: number
+    if (prevBlock && nextBlock) {
+      expectedX = (centerX(prevBlock) + centerX(nextBlock)) / 2
+    } else if (prevBlock) {
+      const step =
+        (centerX(boundEntries[2]!.block) - centerX(boundEntries[0]!.block)) /
+        (keys.indexOf(boundEntries[2]!.key) - keys.indexOf(boundEntries[0]!.key))
+      expectedX = centerX(prevBlock) + step
+    } else {
+      const step =
+        (centerX(boundEntries[2]!.block) - centerX(boundEntries[0]!.block)) /
+        (keys.indexOf(boundEntries[2]!.key) - keys.indexOf(boundEntries[0]!.key))
+      expectedX = centerX(nextBlock!) - step
+    }
+    let best: { image: RegionBlock; dist: number } | undefined
+    for (const img of candidates) {
+      if (!sizeOk(img)) continue
+      const cx = centerX(img)
+      const cy = centerY(img)
+      if (Math.abs(cy - avgY) > medH * 0.75) continue
+      if (prevBlock && cx <= centerX(prevBlock)) continue
+      if (nextBlock && cx >= centerX(nextBlock)) continue
+      const dist = Math.abs(cx - expectedX)
+      if (dist > medW * 1.4) continue
+      if (!best || dist < best.dist) best = { image: img, dist }
+    }
+    if (best) {
+      used.add(best.image)
+      bound.set(missingKey, best.image)
+      return true
+    }
+  }
+
+  // 情况 2：2×2 网格（A/B 上排、C/D 下排，A/C 左列、B/D 右列）
+  const rowPartnerKey =
+    missingKey === 'A' ? 'B' : missingKey === 'B' ? 'A' : missingKey === 'C' ? 'D' : 'C'
+  const colPartnerKey =
+    missingKey === 'A' ? 'C' : missingKey === 'C' ? 'A' : missingKey === 'B' ? 'D' : 'B'
+  const rowPartner = bound.get(rowPartnerKey)
+  const colPartner = bound.get(colPartnerKey)
+  if (rowPartner && colPartner) {
+    const expectedX = centerX(colPartner)
+    const expectedY = centerY(rowPartner)
+    let best: { image: RegionBlock; dist: number } | undefined
+    for (const img of candidates) {
+      if (!sizeOk(img)) continue
+      const dx = Math.abs(centerX(img) - expectedX)
+      const dy = Math.abs(centerY(img) - expectedY)
+      if (dx > medW * 0.8 || dy > medH * 0.8) continue
+      const dist = dx + dy
+      if (!best || dist < best.dist) best = { image: img, dist }
+    }
+    if (best) {
+      used.add(best.image)
+      bound.set(missingKey, best.image)
+      return true
+    }
+  }
+  return false
 }
 
 /** 选项文本只是字母占位（"A.A"）或为空：文字通道没拿到真正的选项内容 */
@@ -355,7 +486,7 @@ function placeholderOptions(question: ParsedQuestion): boolean {
     const text = option.text
       .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
       .replace(/[A-DＡ-Ｄ][.、．][A-DＡ-Ｄ]/g, '')
-      .replace(/\s+/g, '')
+      .replace(/[.、．。\s]+/g, '')
       .normalize('NFKC')
       .toUpperCase()
     // 只剩 A-D 字母（含散落标签拼接成的 "AB"/"BD"）即无实质内容
@@ -368,9 +499,13 @@ function isLabelDebris(line: string): boolean {
   return /^([A-DＡ-Ｄ]([.、．][A-DＡ-Ｄ]?)?)+$/.test(line.replace(/\s+/g, ''))
 }
 
-// 题干里已有的图片引用去重后重排：先文字，再题干图（按版面顺序）
+// 题干里已有的图片引用去重后重排：先文字，再题干图（按版面顺序）；
+// RapidDoc 把九宫格图推误识别为 <table>（单元格里塞满碎图和误识符号）但同时保存了完整裁图时，
+// 剥离损坏的 HTML 表格源码、保留完整裁图，避免题干里同时出现破损表格与高清图。
 function withStemImages(stem: string, stemImages: RegionBlock[]): string {
-  const text = stem
+  const hasTableSnapshot = stemImages.some((image) => image.type === 'table')
+  const base = hasTableSnapshot ? stem.replace(/<table\b[\s\S]*?<\/table>/gi, '') : stem
+  const text = base
     .split('\n')
     .filter((line) => !isLabelDebris(line.trim()))
     .join('\n')
@@ -401,7 +536,7 @@ function sortRegionsInReadingOrder(regions: RegionBlock[]): RegionBlock[] {
     const leftOnly = blocks.filter((block) => (block.bbox[2] ?? 0) <= mid + 8)
     const rightOnly = blocks.filter((block) => (block.bbox[0] ?? 0) >= mid - 8)
     const hasAnchor = (list: RegionBlock[]): boolean =>
-      list.some((block) => block.type === 'text' && QUESTION_ANCHOR.test(block.text))
+      list.some((block) => block.type === 'text' && matchAnchorNum(block.text) !== undefined)
     const ySpan = (list: RegionBlock[]): number =>
       list.length
         ? Math.max(...list.map((block) => block.bbox[3] ?? 0)) -
@@ -456,9 +591,9 @@ export function bindGraphicOptionsByGeometry(
   const anchors: Array<{ num: number; index: number }> = []
   ordered.forEach((block, index) => {
     if (block.type !== 'text') return
-    const match = block.text.match(QUESTION_ANCHOR)
-    if (!match) return
-    anchors.push({ num: Number(match[1]), index })
+    const num = matchAnchorNum(block.text)
+    if (num === undefined) return
+    anchors.push({ num, index })
   })
   // 题号锚点按 `${set}-${num}` 键控并与 questions 顺序对齐：同文件多套题库时题号重复，
   // 只按 num 索引会把第二套全部映射回第一套的版面位置。锚点游标只前进，容忍 OCR 丢锚点；
@@ -552,7 +687,7 @@ export function bindGraphicOptionsByGeometry(
     }
     const end = anchorIndexes.find((index) => index > start) ?? ordered.length
     const span = ordered.slice(start + 1, end)
-    const images = span.filter((block) => block.type === 'image' && block.imgPath)
+    const images = span.filter(isVisualBlock)
     if (images.length === 0) {
       if (!GRAPHIC_STEM.test(question.stem)) continue
       summary.skipped += 1
@@ -562,11 +697,18 @@ export function bindGraphicOptionsByGeometry(
       continue
     }
     if (!placeholder) {
-      // 选项是真实文字（如"分为两类"的 ①②④，③⑤⑥）：图片全部属于题干
-      question.stem = withStemImages(question.stem, images)
+      // 选项是真实文字（如"分为两类"的 ①②④，③⑤⑥）：只取文字选项之前的图片，
+      // 防止将本题选项后紧跟的讲义/思维导图插图误并入题干
+      const optionBlockPos = span.findIndex(
+        (block) => block.type === 'text' && TEXT_OPTION_BLOCK.test(block.text.trim())
+      )
+      const stemCandidates =
+        optionBlockPos > 0 ? span.slice(0, optionBlockPos).filter(isVisualBlock) : images
+      const stemImages = stemCandidates.length > 0 ? stemCandidates : images
+      question.stem = withStemImages(question.stem, stemImages)
       summary.stemOnly += 1
       summary.notes.set(`${question.set}-${question.num}`, [
-        `图形推理：${images.length} 张题干图已随题附上，选项为文字，请核对图序`
+        `图形推理：${stemImages.length} 张题干图已随题附上，选项为文字，请核对图序`
       ])
       continue
     }
@@ -598,13 +740,17 @@ export function bindGraphicOptionsByGeometry(
         bound.set(label.key, best.image)
       }
     }
+    const completedFourth =
+      bound.size === 3 && completeMissingFourthOption(bound, used, images, keys)
     if (bound.size === 4) {
       const stemImages = images.filter((image) => !used.has(image))
       question.options = keys.map((key) => ({ key, text: '', image: bound.get(key)!.imgPath }))
       question.stem = withStemImages(question.stem, stemImages)
       summary.bound += 1
       summary.notes.set(`${question.set}-${question.num}`, [
-        '图形推理：4 个选项图已按版面坐标绑定（几何匹配），发布前请人工核对'
+        completedFourth
+          ? '图形推理：3 个标签 + 1 个几何补齐选项图已绑定，发布前请人工核对'
+          : '图形推理：4 个选项图已按版面坐标绑定（几何匹配），发布前请人工核对'
       ])
     } else if (labels.length === 0 && images.length >= 4 && optionLike(images.slice(-4))) {
       const tail = images.slice(-4)
@@ -613,6 +759,15 @@ export function bindGraphicOptionsByGeometry(
       summary.partial += 1
       summary.notes.set(`${question.set}-${question.num}`, [
         '图形推理：未识别到选项标签，末尾 4 张图按顺序作为选项（置信度较低），请人工核对'
+      ])
+    } else if (GRAPHIC_STEM.test(question.stem) || labels.length >= 2) {
+      // 合并选项横条图 / 整题组合图兜底：RapidDoc 常把 4 个选项合并成 1 张横条图或整题大图，
+      // 不强行裁剪像素，把完整图形按阅读序挂入题干并以「见图」占位 A-D，进人工核对门禁
+      question.stem = withStemImages(question.stem, images)
+      question.options = keys.map((key) => ({ key, text: '见图' }))
+      summary.partial += 1
+      summary.notes.set(`${question.set}-${question.num}`, [
+        `图形推理：选项印在组合图内（${images.length} 张图已完整附于题干，按图序对应 A-D），发布前请人工核对`
       ])
     } else {
       summary.skipped += 1

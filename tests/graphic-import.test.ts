@@ -571,4 +571,104 @@ describe('bindGraphicOptionsByGeometry（混合卷图推小题几何绑定）', 
       'images/right-d.png'
     ])
   })
+
+  it('3 缺 1 几何补齐：OCR 漏识单个选项字母时，按同排等距缺位补齐第 4 张选项图', () => {
+    const regions: RegionBlock[] = [
+      text(0, 100, '2.从所给的四个选项中，选择最合适的一个填入问号处，使之呈现一定的规律性：'),
+      image(0, 260, 170, 480, 70, 'images/stem-strip.png'),
+      image(0, 310, 260, 86, 68, 'images/opt-a.png'),
+      { type: 'text', page: 0, bbox: [345, 335, 365, 352], imgPath: '', text: 'A' },
+      image(0, 410, 260, 88, 68, 'images/opt-b.png'),
+      { type: 'text', page: 0, bbox: [445, 335, 465, 352], imgPath: '', text: 'B' },
+      image(0, 510, 260, 88, 66, 'images/opt-c.png'),
+      { type: 'text', page: 0, bbox: [545, 335, 565, 352], imgPath: '', text: 'C' },
+      // D 标签被 OCR 漏识（空文本），但第 4 张图位于同排等距缺位
+      image(0, 610, 260, 86, 67, 'images/opt-d.png'),
+      { type: 'text', page: 0, bbox: [645, 335, 665, 352], imgPath: '', text: '' }
+    ]
+    const list: ParsedQuestion[] = [
+      {
+        set: 1,
+        num: 2,
+        stem: '从所给的四个选项中，选择最合适的一个填入问号处，使之呈现一定的规律性：',
+        options: []
+      }
+    ]
+    const summary = bindGraphicOptionsByGeometry(list, { pages: 1, regions })
+    expect(summary.bound).toBe(1)
+    expect(summary.skipped).toBe(0)
+    expect(list[0]!.options.map((o) => o.image)).toEqual([
+      'images/opt-a.png',
+      'images/opt-b.png',
+      'images/opt-c.png',
+      'images/opt-d.png'
+    ])
+    expect(list[0]!.stem).toContain('images/stem-strip.png')
+    expect(summary.notes.get('1-2')?.[0]).toContain('几何补齐')
+  })
+
+  it('九宫格 table 裁图 + 合并选项横条图兜底 + 分组题截断后续讲义图', () => {
+    const regions: RegionBlock[] = [
+      text(0, 100, '1.从所给四个选项中，选择最合适的一个填入问号处，使之呈现一定的规律性：'),
+      // RapidDoc 将九宫格归为 table 但保留 imgPath，选项合并为 1 张横条图
+      {
+        type: 'table',
+        page: 0,
+        bbox: [390, 190, 606, 340],
+        imgPath: 'images/nine-grid.png',
+        text: ''
+      },
+      image(0, 355, 355, 280, 55, 'images/opt-strip.png'),
+      { type: 'text', page: 0, bbox: [387, 412, 406, 427], imgPath: '', text: 'A' },
+      { type: 'text', page: 0, bbox: [524, 412, 541, 427], imgPath: '', text: 'C' },
+      { type: 'text', page: 0, bbox: [592, 412, 610, 426], imgPath: '', text: 'D' },
+      // 第 2 题：分组文字选项题，选项下方跟有讲义示例图（不应吞入第 2 题题干）
+      text(
+        0,
+        460,
+        '2.把下面的六个图形分为两类，使每一类图形都有各自的共同特征或规律，分类正确的一项是：'
+      ),
+      image(0, 200, 520, 72, 56, 'images/g1.png'),
+      image(0, 300, 520, 72, 56, 'images/g2.png'),
+      text(0, 610, 'A.①③④；②⑤⑥ B.①⑤⑥；②③④ C.①②⑥；③④⑤ D.①④⑥；②③⑤'),
+      image(0, 230, 700, 200, 48, 'images/lecture-after.png')
+    ]
+    const list: ParsedQuestion[] = [
+      {
+        set: 1,
+        num: 1,
+        stem: '从所给四个选项中，选择最合适的一个填入问号处，使之呈现一定的规律性：\n<table><tr><td><img src="images/shard.png" />亚</td></tr></table>',
+        options: []
+      },
+      {
+        set: 1,
+        num: 2,
+        stem: '把下面的六个图形分为两类，使每一类图形都有各自的共同特征或规律，分类正确的一项是：',
+        options: [
+          { key: 'A', text: '①③④；②⑤⑥' },
+          { key: 'B', text: '①⑤⑥；②③④' },
+          { key: 'C', text: '①②⑥；③④⑤' },
+          { key: 'D', text: '①④⑥；②③⑤' }
+        ]
+      }
+    ]
+    const summary = bindGraphicOptionsByGeometry(list, { pages: 1, regions })
+    expect(summary.partial).toBe(1)
+    expect(summary.stemOnly).toBe(1)
+    expect(summary.skipped).toBe(0)
+    // 第 1 题：九宫格 table 裁图与选项横条图都保留在题干，且剥离 RapidDoc 损坏的碎图 HTML 表格
+    expect(list[0]!.stem).toContain('images/nine-grid.png')
+    expect(list[0]!.stem).toContain('images/opt-strip.png')
+    expect(list[0]!.stem).not.toContain('<table>')
+    expect(list[0]!.options).toEqual([
+      { key: 'A', text: '见图' },
+      { key: 'B', text: '见图' },
+      { key: 'C', text: '见图' },
+      { key: 'D', text: '见图' }
+    ])
+    // 第 2 题：只保留文字选项前的 2 张题干图，不吞入选项后的 lecture-after.png
+    expect(list[1]!.stem).toContain('images/g1.png')
+    expect(list[1]!.stem).toContain('images/g2.png')
+    expect(list[1]!.stem).not.toContain('lecture-after.png')
+  })
 })

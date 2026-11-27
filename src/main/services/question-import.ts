@@ -27,6 +27,10 @@ export interface ParsedQuestion {
   num: number
   stem: string
   options: DirectOption[]
+  /** 所属段/小节规范化标题（如「考点刷题1」「练习1增量」），用于与独立答案册精准按段配对 */
+  sectionTitle?: string
+  /** 段内连续题号（如四海「图推刷题1」下分「第一组/第二组」各自 1~10 题，段内连续号为 1~40），用于与独立答案册连续题号对齐 */
+  sectionQuestionNum?: number
   /** 该题所属套的共享材料（统计表/文字资料），资料分析类书籍专用 */
   material?: string
   /** 题目在输入行数组中的起始行号（0-based，TOC 过滤后）：来源页证据用 */
@@ -87,18 +91,75 @@ export interface DirectQuestion {
 }
 
 const SET_TITLE = /^#{0,4}\s*练习题\s*0*(\d{1,3})\s*套?\s*#*\s*$/
-const CHAPTER_TITLE = /^第[一二三四五六七八九十百0-9]{1,4}[篇章套]/
-const QUESTION_NO = /^(\d{1,3})\s*[.、．](?!\d)\s*(.*)$/
-const OPTION_NO = /^([A-D])\s*[.、．]?\s*(.+)$/
+const CHAPTER_TITLE = /^#{0,4}\s*第[一二三四五六七八九十百0-9]{1,4}[篇章套]/
+// 具名段内分组标题（如四海「图推刷题1」下的「第一组」「第二组」）：重置印制题号但延续段名与段内连续题号
+const SUBGROUP_TITLE = /^#{0,4}\s*第[一二三四五六七八九十0-9]{1,2}组\s*$/
+// 资料分析 / 篇章阅读同套内多篇共享材料分隔头（如「# 二、根据所给材料，回答6～10题。」「阅读下文，回答26~30题。」「材料二」）；
+// 分组 1 捕获起始题号，供状态机在跳号/篇章阅读（如 26~30 题、111~115 题）场景同步 expected
+const MATERIAL_GROUP_HEADER =
+  /^#{0,4}\s*(?:[一二三四五六七八九十0-9]{1,3}\s*[、.．]\s*)?(?:(?:请?根据(?:所给|以下|下列|下面|上述)?(?:文字|统计|图表)?(?:材料|资料)|阅读(?:下文|下面文章|以下文章|下列文章|材料))[，,]?\s*(?:回答|完成)\s*第?\s*(\d{1,3})\s*[～~—-]\s*\d{1,3}\s*题[。.:：]?|(?:文字|图表|表格|综合)?(?:材料|资料)\s*[一二三四五六七八九十0-9]{1,2}\s*[:：]?)\s*$/
+// 目录页头与练习册结构性板块提示（不并入共享材料）
+const TOC_HEADER = /^#{0,4}\s*目\s*录\s*$/
+const BOILERPLATE_HEADING =
+  /^#{0,4}\s*(?:复盘心得|用时|正确率|引言|前言|课程设置|第[一二三四五六七八九十百0-9]{1,3}[章节]\s*[^\n]{0,24}|（[一二三四五六七八九十]+）[^\n]{2,18}|[一二三四五六七八九十]+、[^\n]{2,18})\s*[:：]?[^\n]{0,16}$/
+// 答案区内的中文序号小节（如夸夸刷「一、部分数、个数」「二、对称轴」）
+const ANSWER_SUBSECTION_TITLE = /^#{0,4}\s*[一二三四五六七八九十]{1,3}、\s*[^\n]{1,28}\s*$/
+// 四海系（考点刷题 1 / 套题训练 1 / 图推刷题 1）、酷酷刷系（专项刷题一 / 练习1 增量 / 第一练：①和差倍比）与夸夸刷系（实战演练一）段标题
+const NAMED_SECTION_TITLE =
+  /^#{0,4}\s*(?:(?:考点|综合|专项|套题|实战|图推|类比|定义|逻辑|判断|言语|数量|资料|选词|片段)(?:刷题|套题|训练|演练)\s*0*[一二三四五六七八九十百0-9]{1,3}\s*[:：]?|练习\s*0*\d{1,3}\s*[\u4e00-\u9fff][^\n]{0,30}|第[一二三四五六七八九十百0-9]{1,3}练\s*[:：]\s*[^\n]{1,36})\s*$/
+// 目录引导行（如「考点刷题1…… 1」「练习1 增量.... ...1」），避免误认作正文段标题
+const TOC_LEADER_TAIL = /(?:[.。…·•]{2,}\s*\d{0,4}|[.。…·•]\s+\d{1,4})\s*$/
+// 夸夸刷小节分隔（如「（二）渐入佳境（20题）」）与随节内嵌答案行（如「答案：1-5：ABADD 6-7：CA」）
+const INLINE_ANSWER_LINE = /^#{0,4}\s*(?:参考)?答案\s*[:：]\s*\d{1,3}\s*(?:[-—~～]\s*\d{1,3})?/
+// 题号匹配：允许 RapidDoc 产出的 Markdown 标题前缀（如「# 32.」），
+// 仍拦截小数（如「1.5亿元」「2.5」），但放行点后紧跟四位年份的资料分析题干（如「2.2022年…」「16.2020年，…」）
+const QUESTION_NO =
+  /^#{0,4}\s*(\d{1,3})\s*[.、．](?:(?!\d)\s*(.*)|(?=(?:19|20)\d{2}(?:[^\d.]|$))(.*)$)/
+// 夸夸刷 / 酷酷刷例题与速算练习题号（如「【例1】（2020联考）…」「# 【例题11】…」「练习1：现期=…」）
+const EXAMPLE_QUESTION_NO =
+  /^#{0,4}\s*(?:【\s*例题?\s*0*(\d{1,3})\s*】\s*(.*)|练习\s*0*(\d{1,3})\s*[:：]\s*(.+))$/
+
+function matchQuestionNo(line: string): { num: number; rest: string } | undefined {
+  const example = line.match(EXAMPLE_QUESTION_NO)
+  if (example) {
+    return {
+      num: Number(example[1] ?? example[3] ?? '0'),
+      rest: example[2] ?? example[4] ?? ''
+    }
+  }
+  const match = line.match(QUESTION_NO)
+  if (!match) return undefined
+  return { num: Number(match[1] ?? '0'), rest: match[2] ?? match[3] ?? '' }
+}
+
+/** 规范化段标题（去 #、空白、标点差异），用于题本与独立答案册精准按段名对齐 */
+export function normalizeSectionTitle(line: string): string {
+  return line
+    .replace(/^#{0,4}\s*/, '')
+    .replace(/[\s:：、，,（）()]+/g, '')
+    .trim()
+}
+
+function isNamedSectionTitle(line: string): boolean {
+  if (TOC_LEADER_TAIL.test(line)) return false
+  return NAMED_SECTION_TITLE.test(line)
+}
+
+// 严格要求标点或空白后有实质内容，防止图片题孤立标签行「A.」「B.」把句点当成选项正文
+const OPTION_NO = /^([A-D])(?:\s*[.、．]\s*(.+)|\s+(.+))$/
 const ANSWER_MARK = /【参考答案】\s*([A-D]+)/
 const ANSWER_RATE_MARK = /【参考答案及正确率】\s*([A-D]+)(?:[，,]\s*(\d{1,3})\s*%)?/
 // 花生十三系解析册的加长变体：【参考答案及正确率】C，89%（正确率喂难度映射）
 const META_MARK = /【题型(?:与文段类型|分类)】\s*(.+)/
 const EXPLAIN_MARK = /【实战解析】/
 const ORIGIN_MARK = /^[（(]\s*(\d{4})\s*年?\s*([^)）]*?)\s+(\d{1,3})\s*%\s*[)）]/
-const ANSWER_SECTION = /^参考答案$|^答案速查$/
-const ANSWER_RANGE = /^(\d{1,3})\s*[-—~]\s*(\d{1,3})\s*[:：]\s*([A-Da-d]{1,30})/
-const NOISE = /^(四海公考|SIHAIGONGKAO|花生十三|花生\+三|超格学员专用|公众号[：:].*)$/i
+const ANSWER_SECTION =
+  /^#{0,4}\s*(?:参考答案|(?:参考)?答案(?:速查|对照表|一览表)|(?:【[^】]{1,12}】)?[^\n]{0,28}题本(?:[（(]?参考)?答案[）)]?)\s*$/
+// 支持冒号缺省（四海「1-5 CADAD 6-10 BABBD」）与冒号形式（花生/酷酷刷「1-5:BBDBC」），全局匹配同行多段
+const ANSWER_RANGE_GLOBAL = /(\d{1,3})\s*[-—~～]\s*(\d{1,3})\s*(?:[:：]\s*|\s+)([A-Da-d]{1,30})/g
+// 酷酷刷单题答案格（如「6：B」「26：B」，兼容 RapidDoc <td>6：B</td> 表格形态）
+const SINGLE_ANSWER_GLOBAL = /(?:^|[\s>])(\d{1,3})\s*[:：]\s*([A-Da-d]{1,4})(?=[\s<]|$)/g
+const NOISE = /^(四海公考|SIHAIGONGKAO|花生十三|花生[+＋十]三?|超格学员专用|公众号[：:].*)$/i
 const OPTION_LINE = /^[A-D]\s*[.、．]/
 
 /**
@@ -123,23 +184,32 @@ export function repairDriftedQuestionNumbers(lines: string[]): string[] {
       // 该题号本就来自行尾漂移，宁缺不串
       const structural =
         SET_TITLE.test(line) ||
+        CHAPTER_TITLE.test(line) ||
+        SUBGROUP_TITLE.test(line) ||
+        isNamedSectionTitle(line) ||
+        INLINE_ANSWER_LINE.test(line) ||
         ANSWER_SECTION.test(line) ||
         NOISE.test(line) ||
         OPTION_LINE.test(line) ||
-        /^(!\[|\|)/.test(line)
+        /^(!\[|\||<table\b)/i.test(line)
       if (!structural) {
         line = prefix(carried, line)
         carried = undefined
       } else carried = undefined
     }
-    if (SET_TITLE.test(line)) {
+    if (
+      SET_TITLE.test(line) ||
+      SUBGROUP_TITLE.test(line) ||
+      isNamedSectionTitle(line) ||
+      INLINE_ANSWER_LINE.test(line)
+    ) {
       expected = 1
       out.push(line)
       continue
     }
-    const head = line.match(QUESTION_NO)
+    const head = matchQuestionNo(line)
     if (head) {
-      const num = Number(head[1])
+      const num = head.num
       // 行首出现的合理题号即重同步：引擎整个丢掉几道题的题号时（73/74/75 全无），
       // 后续真题号不能被死等的期望值卡住
       if (num === 1) expected = 2
@@ -147,8 +217,22 @@ export function repairDriftedQuestionNumbers(lines: string[]): string[] {
       out.push(line)
       continue
     }
-    if (OPTION_LINE.test(line) || /^(!\[|\|)/.test(line)) {
-      // 选项行不处理；图片引用/表格行里的十六进制文件名（"…a77.png"）不是题号
+    const matGroup = line.match(MATERIAL_GROUP_HEADER)
+    if (matGroup) {
+      const rangeStart = Number(matGroup[1] ?? '0')
+      if (rangeStart >= 1 && rangeStart <= 200) expected = rangeStart
+      out.push(line)
+      continue
+    }
+    if (
+      OPTION_LINE.test(line) ||
+      ANSWER_SECTION.test(line) ||
+      CHAPTER_TITLE.test(line) ||
+      TOC_HEADER.test(line) ||
+      TOC_LEADER_TAIL.test(line) ||
+      /^(!\[|\||<table\b)/i.test(line)
+    ) {
+      // 选项行、答案区与图片/Markdown 表格/HTML 表格不修题号漂移（防止「<td>5.外商企业</td>」被误判为漂移题号）
       out.push(line)
       continue
     }
@@ -184,13 +268,20 @@ export function repairDriftedQuestionNumbers(lines: string[]): string[] {
 }
 
 // ---- 申论主观题教材（直导）：单元式「训练 + 资料 + 提问 + 要求」结构 ----
-// 两种实测版式：【训练一】标题（夸夸刷系） / 训练一：标题（酷酷刷系）
-const ESSAY_UNIT_MARK = /^【?训练\s*[一二三四五六七八九十百0-9]{1,4}\s*】?\s*[:：]?\s*(.+)$/
-const ESSAY_CHAPTER_MARK = /^第[一二三四五六七八九十百0-9]{1,4}章\s*(.*)$/
-const ESSAY_MATERIAL_HEADER = /^(?:资料|给定资料)\s*[0-9一二三四五六七八九十]{0,3}\s*[:：]?$/
-const ESSAY_REQUIREMENT_MARK = /^要求[:：]\s*(.+)$/
+// 两种实测版式：【训练一】标题（夸夸刷系） / 训练一：标题（酷酷刷系）；兼容 --structured 产出的 Markdown # 标题前缀
+const ESSAY_UNIT_MARK =
+  /^#{0,4}\s*【?训练\s*[一二三四五六七八九十百0-9]{1,4}\s*】?\s*[:：]?\s*(.+)$/
+const ESSAY_CHAPTER_MARK = /^#{0,4}\s*第[一二三四五六七八九十百0-9]{1,4}章\s*(.*)$/
+const ESSAY_MATERIAL_HEADER =
+  /^#{0,4}\s*(?:资料|给定资料)\s*[0-9一二三四五六七八九十]{0,3}\s*[:：]?$/
+const ESSAY_REQUIREMENT_MARK = /^#{0,4}\s*要求[:：]\s*(.+)$/
 const ESSAY_ORIGIN_MARK = /^[（(]\s*(\d{4})\s*年?\s*([^)）]{1,24}?)\s*[)）]\s*$/
-const ESSAY_ANSWER_HEADER = /^(?:【)?(?:参考答案|答案要点)(?:】)?\s*[:：]?$/
+// 题干段尾内联真题出处（如「……(2023 年山东 B 卷)」「……(2026年国考市地卷）」）
+const ESSAY_INLINE_ORIGIN =
+  /[（(]\s*((?:19|20)\d{2})\s*年\s*([^)）]{1,28}?)\s*[)）](?:\s*[（(]\s*\d{1,2}\s*分\s*[)）])?[。.]?\s*$/
+// 剔除 RapidDoc 将「要求：」与下方虚线名言框粘连的装饰尾段（如 `---一·一·一…► 唯物辩证法…`）
+const ESSAY_DASHED_DECORATION = /\s*(?:[-－—–=]{3,}|(?:[-－—–一]\s*[·•.．]\s*){3,})[\s\S]*$/
+const ESSAY_ANSWER_HEADER = /^#{0,4}\s*(?:【)?(?:参考答案|答案要点)(?:】)?\s*[:：]?$/
 // 目录页点线引导符与孤立页码（OCR 常产出「.2」「…38」「100」这类残渣行）
 const ESSAY_LEADER_LINE = /^[.。…·•]{2,}\s*\d{0,4}$/
 const ESSAY_PAGE_NUMBER = /^\d{1,4}$/
@@ -219,7 +310,7 @@ export function toLinesWithPageMap(
     // markdown 非空行序与页清单行序一致（同一 worker 生成）：非空行依序消费标签
     const label = manifest && !isBlank ? (rawPageOf[manifestCursor++] ?? undefined) : undefined
     if (isBlank) continue
-    line = line.replace(/~+/g, '～')
+    line = line.replace(/\\?~+/g, '～')
     line = line.replace(/【全篇答案】[A-D]{2,}/g, '').trim()
     if (!line) continue
     // 行内水印剥离（与 stripWatermarkFragments 同一模式表：只删片段、保留其余内容）
@@ -288,7 +379,9 @@ function stripTocSetTitleRuns(lines: string[]): TocStrippedLines {
       2,
       Math.min(Math.floor(clusters[a]!.rows.length / 2), Math.ceil(laterSets.size / 2))
     )
-    if (shared >= threshold) {
+    // 整书总目录（≥5 条连续套标题）出现在单套分册/单套切片头部时，后文仅重现 1 套也必为目录
+    const denseSingleSetToc = clusters[a]!.rows.length >= 5 && laterSets.size === 1 && shared >= 1
+    if (shared >= threshold || denseSingleSetToc) {
       poisonedClusters.add(a)
     }
   }
@@ -311,6 +404,56 @@ function materialText(materialLines: string[]): string | undefined {
   return cleaned.length >= 30 ? cleaned : undefined
 }
 
+// D 选项完整后的新材料边界判定（夸夸刷「材料在前、题号在后」单题资料分析 & 表格/图表题）：
+// 防止将下一题的前置统计表、图表或资料段落错并进上一题的 D 选项。
+const STANDALONE_IMAGE_LINE = /^!\[[^\]]*\]\([^)]+\)$/
+const TABLE_OR_CHART_CAPTION =
+  /^#{0,4}\s*(?:(?:表|图)\s*\d*\s+\S.{3,}|(?:19|20)\d{2}(?:年)?\s*[～~—-]\s*(?:19|20)\d{2}年?[^\n]{4,}(?:表|图|情况|统计|构成)|(?:19|20)\d{2}年[^\n]{4,}(?:成本|增速|产量|收入|授权量|情况|统计|构成|销售|出口|进口)(?:[^\n]{0,12}$))/
+const DATA_PARAGRAPH_START =
+  /^(?:截至\s*)?(?:(?:19|20)\d{2}\s*年|《[^》]{4,30}》|据[^\n]{2,18}统计|全国\d+%人口)/
+const STAT_METRIC_GLOBAL =
+  /\d+(?:\.\d+)?\s*(?:%|％|亿元|万元|元|万吨|万件|万人|万户|亿户|亿个|亿千瓦时|万千瓦|千公顷|万亩|个百分点|倍)/g
+
+function isNewMaterialAfterOptions(line: string, lastOptionText: string): boolean {
+  if (/^<table\b/i.test(line)) return true
+  if (STANDALONE_IMAGE_LINE.test(line) && lastOptionText.trim().length > 0) return true
+  const optTrim = lastOptionText.trim()
+  const optLooksComplete =
+    optTrim.length <= 28 ||
+    /[。！？）)]$/.test(optTrim) ||
+    /\d\s*(?:万|亿|%|％|元|件|人|个|倍)?$/.test(optTrim)
+  if (!optLooksComplete) return false
+  if (TABLE_OR_CHART_CAPTION.test(line)) return true
+  if (line.length >= 38 && DATA_PARAGRAPH_START.test(line)) {
+    const metrics = line.match(STAT_METRIC_GLOBAL) ?? []
+    if (metrics.length >= 2) return true
+  }
+  return false
+}
+
+// RapidDoc 版面还原偶将上一题末选项与下一题真题头粘连到同一行（如 `D. xxx2.【2023事业联考】互联网时代…`）；
+// 严格锚定「期望题号 + 年份考期括号头」拆分，既抢救失踪题目又绝不误切选项中的小数/序号
+function splitGluedQuestionInOption(
+  text: string,
+  expectedNum: number
+): { optionTail: string; num: number; rest: string } | null {
+  for (const candidate of [expectedNum, expectedNum + 1]) {
+    if (candidate < 1 || candidate > 200) continue
+    const pattern = new RegExp(
+      `^(.+?)(?<!\\d)(${candidate})\\s*[.、．]\\s*([【（(]\\s*(?:19|20)\\d{2}[\\s\\S]+)$`
+    )
+    const hit = text.match(pattern)
+    if (hit && (hit[1]?.trim().length ?? 0) >= 2 && (hit[3]?.trim().length ?? 0) >= 6) {
+      return {
+        optionTail: hit[1]!.trim(),
+        num: candidate,
+        rest: hit[3]!.trim()
+      }
+    }
+  }
+  return null
+}
+
 // 题本切题：期望题号状态机；目录页连续标题只认第一行；题号行丢失时跳号续切；选项换行并入末选项
 // lineStart 为输入行数组的 0-based 起始行号（TOC 删除行已修正回输入索引），
 // 与调用方 toLines 输出的行号对齐——来源页证据用
@@ -324,29 +467,72 @@ export function parseQuestionBook(inputLines: string[]): ParsedQuestion[] {
   const lines = repairDriftedQuestionNumbers(tocLines)
   const questions: ParsedQuestion[] = []
   let setNo = 0
+  let sectionTitle: string | undefined
+  let sectionOffset = 0
+  let sectionQuestionCount = 0
   let current: ParsedQuestion | null = null
   let expected = 1
   let nextOption: string | null = null
   let lastLineWasHeader = false
   let currentStartLine = 0
-  // 套内共享材料：套标题之后、第一道题之前的统计表/文字资料，附着给套内每道题
+  // 套内/篇内共享材料：套标题或「二、根据所给材料…」之后、小题之前的统计表/文字资料，附着给组内小题
   let setMaterial: string[] = []
   let materialRange: { start: number; end: number } | undefined
   const closeQuestion = () => {
     if (current && current.stem) {
       current.lineStart = currentStartLine
       questions.push(current)
+      if (sectionTitle) sectionQuestionCount += 1
+    }
+  }
+  const createQuestion = (num: number, rest: string, inputLine: number): ParsedQuestion => {
+    currentStartLine = inputLine
+    expected = num + 1
+    nextOption = 'A'
+    return {
+      set: setNo,
+      num,
+      stem: rest,
+      options: [],
+      ...(sectionTitle ? { sectionTitle } : {}),
+      ...(sectionTitle && sectionOffset > 0 ? { sectionQuestionNum: sectionOffset + num } : {}),
+      material: materialText(setMaterial),
+      materialLineRange: materialRange
     }
   }
   for (const [lineIndex, line] of lines.entries()) {
     if (NOISE.test(line)) continue
     if (ANSWER_SECTION.test(line)) break // 书尾分组答案区不再属于题干
+    // 目录页头与点线目录引导行不并入共享材料，并清空此前累积的封面文字
+    if (!current && (TOC_HEADER.test(line) || TOC_LEADER_TAIL.test(line))) {
+      setMaterial = []
+      materialRange = undefined
+      continue
+    }
+    // 随节内嵌答案行（如夸夸刷「答案：1-5：ABADD 6-7：CA」）：结束上一题并开启下一节，防止污染末选项
+    if (INLINE_ANSWER_LINE.test(line)) {
+      closeQuestion()
+      current = null
+      nextOption = null
+      setNo += 1
+      expected = 1
+      sectionTitle = undefined
+      sectionOffset = 0
+      sectionQuestionCount = 0
+      setMaterial = []
+      materialRange = undefined
+      lastLineWasHeader = false
+      continue
+    }
     const setTitle = line.match(SET_TITLE)
     if (setTitle) {
       const header = Number(setTitle[1] ?? '0')
       if (header > setNo && !lastLineWasHeader) {
         closeQuestion()
         setNo = header
+        sectionTitle = undefined
+        sectionOffset = 0
+        sectionQuestionCount = 0
         current = null
         expected = 1
         nextOption = null
@@ -356,70 +542,110 @@ export function parseQuestionBook(inputLines: string[]): ParsedQuestion[] {
       lastLineWasHeader = true
       continue
     }
+    // 四海/酷酷刷具名段标题（如「考点刷题 1」「套题训练 1」「专项刷题一」「练习1 增量」）：切分新套并记录段名
+    if (isNamedSectionTitle(line)) {
+      const normalized = normalizeSectionTitle(line)
+      if (!lastLineWasHeader && normalized !== sectionTitle) {
+        closeQuestion()
+        setNo += 1
+        sectionTitle = normalized
+        sectionOffset = 0
+        sectionQuestionCount = 0
+        current = null
+        expected = 1
+        nextOption = null
+        setMaterial = []
+        materialRange = undefined
+      }
+      lastLineWasHeader = true
+      continue
+    }
+    // 具名段内分组标题（如四海「图推刷题1」下分「第一组/第二组」各 1~10 题）：
+    // setNo 递增保持 (set, num) 与版面锚点唯一不冲突，同时延续 sectionTitle 与段内连续偏移量
+    if (sectionTitle && SUBGROUP_TITLE.test(line)) {
+      closeQuestion()
+      if (sectionQuestionCount > 0) {
+        setNo += 1
+        sectionOffset = sectionQuestionCount
+      }
+      current = null
+      expected = 1
+      nextOption = null
+      setMaterial = []
+      materialRange = undefined
+      lastLineWasHeader = false
+      continue
+    }
+    // 资料分析 / 篇章阅读同套内多篇材料分隔头（如「# 二、根据所给材料，回答6～10题。」「阅读下文，回答26~30题。」）：
+    // 结束前一篇末题并切换新材料缓冲，且当分隔头给出起始题号时同步 expected（支持 26~30、111~115 跳段衔接）
+    const materialHeader = line.match(MATERIAL_GROUP_HEADER)
+    if (materialHeader) {
+      closeQuestion()
+      current = null
+      nextOption = null
+      setMaterial = []
+      materialRange = undefined
+      const rangeStart = Number(materialHeader[1] ?? '0')
+      if (rangeStart >= 1 && rangeStart <= 200) expected = rangeStart
+      lastLineWasHeader = false
+      continue
+    }
     lastLineWasHeader = false
-    const match = line.match(QUESTION_NO)
+    const match = matchQuestionNo(line)
     if (match) {
-      const num = Number(match[1] ?? '0')
-      const rest = match[2] ?? ''
+      const num = match.num
+      const rest = match.rest
       const inputLine = inputIndexOf[lineIndex] ?? lineIndex
-      if (!current && num === 1) {
+      const isExample = EXAMPLE_QUESTION_NO.test(line)
+      if (
+        !current &&
+        (num === 1 ||
+          num === expected ||
+          (setNo > 0 && num > expected && num <= expected + 5) ||
+          (isExample && num >= 1))
+      ) {
         if (setNo === 0) setNo = 1
-        currentStartLine = inputLine
-        current = {
-          set: setNo,
-          num: 1,
-          stem: rest,
-          options: [],
-          material: materialText(setMaterial),
-          materialLineRange: materialRange
+        // 前一题已因独立图/新材料提前收尾（expected > 5）时，新题号回到 1 须递增套号防 1-1 碰撞
+        else if (num === 1 && expected > 5) {
+          setNo += 1
+          sectionTitle = undefined
+          sectionOffset = 0
+          sectionQuestionCount = 0
         }
-        expected = 2
-        nextOption = 'A'
+        current = createQuestion(num, rest, inputLine)
         continue
       }
       if (num === expected && current) {
         closeQuestion()
-        currentStartLine = inputLine
-        current = {
-          set: setNo,
-          num,
-          stem: rest,
-          options: [],
-          material: materialText(setMaterial),
-          materialLineRange: materialRange
-        }
-        expected = num + 1
-        nextOption = 'A'
+        current = createQuestion(num, rest, inputLine)
         continue
       }
       if (num === 1 && current && current.num >= 5) {
         closeQuestion()
         setNo += 1
-        currentStartLine = inputLine
-        current = {
-          set: setNo,
-          num: 1,
-          stem: rest,
-          options: [],
-          material: materialText(setMaterial),
-          materialLineRange: materialRange
-        }
-        expected = 2
-        nextOption = 'A'
+        sectionTitle = undefined
+        sectionOffset = 0
+        sectionQuestionCount = 0
+        setMaterial = []
+        materialRange = undefined
+        current = createQuestion(1, rest, inputLine)
         continue
       }
-      // OCR 偶尔丢失题号行：当前题结构完整时允许跳号续切，避免后续题目全部并入前一题
-      if (num > expected && num <= expected + 5 && current && current.options.length >= 3) {
+      // OCR 偶尔丢失题号行（或例题跨页跳号）：当前题结构完整时允许跳号续切，避免后续题目全部并入前一题
+      if (
+        num > expected &&
+        num <= expected + (isExample ? 10 : 5) &&
+        current &&
+        current.options.length >= 3
+      ) {
         closeQuestion()
-        currentStartLine = inputLine
-        current = { set: setNo, num, stem: rest, options: [] }
-        expected = num + 1
-        nextOption = 'A'
+        current = createQuestion(num, rest, inputLine)
         continue
       }
     }
-    // 题目未开始时：非题号/选项的正文行累积为该套共享材料（统计表/文字资料）
+    // 题目未开始时：非题号/选项的正文行累积为该篇共享材料（过滤复盘/用时等册页结构性提示行）
     if (!current) {
+      if (BOILERPLATE_HEADING.test(line)) continue
       setMaterial.push(line)
       const inputLine = inputIndexOf[lineIndex] ?? lineIndex
       materialRange = materialRange
@@ -430,7 +656,18 @@ export function parseQuestionBook(inputLines: string[]): ParsedQuestion[] {
     if (current && nextOption) {
       const option = line.match(OPTION_NO)
       if (option && option[1] === nextOption) {
-        current.options.push({ key: option[1] ?? '', text: option[2] ?? '' })
+        const optText = option[2] ?? option[3] ?? ''
+        if (nextOption === 'D') {
+          const glued = splitGluedQuestionInOption(optText, expected)
+          if (glued) {
+            current.options.push({ key: 'D', text: glued.optionTail })
+            closeQuestion()
+            const inputLine = inputIndexOf[lineIndex] ?? lineIndex
+            current = createQuestion(glued.num, glued.rest, inputLine)
+            continue
+          }
+        }
+        current.options.push({ key: option[1] ?? '', text: optText })
         nextOption =
           nextOption === 'A' ? 'B' : nextOption === 'B' ? 'C' : nextOption === 'C' ? 'D' : null
         continue
@@ -439,6 +676,27 @@ export function parseQuestionBook(inputLines: string[]): ParsedQuestion[] {
     if (current) {
       const lastOption = current.options[current.options.length - 1]
       if (current.options.length > 0 && lastOption) {
+        // D 选项续行粘连下一题真题头（如 `……的新动力9.【2026国考】…`）：拆出下一题
+        if (current.options.length === 4) {
+          const glued = splitGluedQuestionInOption(line, expected)
+          if (glued) {
+            lastOption.text += glued.optionTail
+            closeQuestion()
+            const inputLine = inputIndexOf[lineIndex] ?? lineIndex
+            current = createQuestion(glued.num, glued.rest, inputLine)
+            continue
+          }
+        }
+        // D 选项完整后紧跟独立统计表/图片/新资料段：结束本题并转为下一题的前置材料，绝不污染 D 选项
+        if (current.options.length === 4 && isNewMaterialAfterOptions(line, lastOption.text)) {
+          closeQuestion()
+          current = null
+          nextOption = null
+          const inputLine = inputIndexOf[lineIndex] ?? lineIndex
+          setMaterial = [line]
+          materialRange = { start: inputLine, end: inputLine }
+          continue
+        }
         lastOption.text += line
       } else {
         current.stem += line
@@ -496,11 +754,11 @@ export function parseSolutionBook(
       continue
     }
     lastLineWasHeader = false
-    const match = line.match(QUESTION_NO)
+    const match = matchQuestionNo(line)
     if (match) {
-      const num = Number(match[1] ?? '0')
+      const num = match.num
       emit(`Q num=${num} exp=${expected} @${lineNumber}`)
-      const rest = match[2] ?? ''
+      const rest = match.rest
       const origin = rest.match(ORIGIN_MARK)
       const originData = origin
         ? {
@@ -509,6 +767,9 @@ export function parseSolutionBook(
             rate: Number(origin[3] ?? '0')
           }
         : undefined
+      // 保留题号同行的重印题干首行（剥离出处括号标记）：资料分析题干多为单行，
+      // 丢弃首行会导致 stemExcerpt 只剩 A-D 选项，触发整书配对误拦截
+      const stemHead = (origin ? rest.slice(origin[0].length) : rest).trim()
       if (current && (num === expected || (num > expected && num <= expected + 5))) {
         // 跳号容错：解析册里常有题干行被吞（如「2.2022年」被当小数），导致后续题号整体
         // 前移一位。允许 ≤5 的前进跳号按真实题号落位，否则一套之内一旦错位整批失配。
@@ -523,7 +784,7 @@ export function parseSolutionBook(
         }
         registerSolution(`${setNo}-${num}`)
         inExplanation = false
-        excerptLines = []
+        excerptLines = stemHead ? [stemHead] : []
         expected = num + 1
         continue
       }
@@ -540,7 +801,7 @@ export function parseSolutionBook(
         }
         registerSolution(`${setNo}-1`)
         inExplanation = false
-        excerptLines = []
+        excerptLines = stemHead ? [stemHead] : []
         expected = 2
         continue
       }
@@ -557,7 +818,7 @@ export function parseSolutionBook(
         }
         registerSolution(`${setNo}-1`)
         inExplanation = false
-        excerptLines = []
+        excerptLines = stemHead ? [stemHead] : []
         expected = 2
         continue
       }
@@ -624,36 +885,128 @@ export function parseSolutionBook(
   return solutions
 }
 
-// 书尾分组答案：「第N篇」+「1-5:BBDBC」。OCR 常把起止号印重（如连续两个 25-30），
-// 以每组上一行的结束号 +1 修正起始号，答案字母数不足时按实际长度截取。
-export function parseAnswerGroups(lines: string[]): Map<string, string> {
-  const answers = new Map<string, string>()
+export interface ParsedAnswerGroupsDetail {
+  /** 按「段序-题号」索引（如 "1-5" -> "A"），与 parseAnswerGroups 完全兼容 */
+  bySet: Map<string, string>
+  /** 按「规范化段标题-题号」索引（如 "考点刷题1-5" -> "A"），跨文件配对首选 */
+  bySection: Map<string, string>
+  /** 共提取的答案总条数 */
+  count: number
+}
+
+// 书尾分组答案 / 独立答案册 / 随节内嵌答案：
+// 支持「第N篇」「考点刷题 1」「练习1 增量」「第一练：①...」等段标题；
+// 支持同行多段与无冒号（四海「1-5 CADAD 6-10 BABBD」）、带冒号（花生/酷酷刷「1-5:BBDBC」）、
+// 随节内嵌（「答案：1-5：ABADD 6-7：CA」）及单题答案（「6：B」）。
+// OCR/印刷偶发起止号印重（如「11-15 ... 15-20 ...」），以每段上一组的结束号 +1 自动修正起始号。
+export function parseAnswerGroupsDetailed(lines: string[]): ParsedAnswerGroupsDetail {
+  const bySet = new Map<string, string>()
+  const bySection = new Map<string, string>()
   let chapter = 0
+  let sectionTitle: string | undefined
   let inAnswerSection = false
+  let inlineSectionOpen = false
   let lastEnd = 0
+
+  const recordRange = (startRaw: number, printedEnd: number, lettersRaw: string): void => {
+    if (chapter === 0) chapter = 1
+    let start = startRaw
+    const letters = lettersRaw.toUpperCase()
+    if (start <= lastEnd && lastEnd > 0) start = lastEnd + 1
+    const count = Math.min(letters.length, Math.max(1, printedEnd - start + 1))
+    for (let offset = 0; offset < count; offset += 1) {
+      const ans = letters[offset] ?? ''
+      if (!ans) continue
+      const num = start + offset
+      bySet.set(`${chapter}-${num}`, ans)
+      if (sectionTitle) bySection.set(`${sectionTitle}-${num}`, ans)
+    }
+    lastEnd = start + count - 1
+  }
+
+  const extractAnswersFromLine = (text: string): number => {
+    let hits = 0
+    for (const hit of text.matchAll(ANSWER_RANGE_GLOBAL)) {
+      recordRange(Number(hit[1] ?? '0'), Number(hit[2] ?? '0'), hit[3] ?? '')
+      hits += 1
+    }
+    // 剥离已匹配的区间片段后再扫同行残留单题答案（如「1-1：B 2：A」「1-5：ABADD 6：C」）
+    const remainder = hits > 0 ? text.replace(ANSWER_RANGE_GLOBAL, ' ') : text
+    for (const hit of remainder.matchAll(SINGLE_ANSWER_GLOBAL)) {
+      const num = Number(hit[1] ?? '0')
+      const ans = (hit[2] ?? '').toUpperCase()
+      if (num <= 0 || !ans) continue
+      if (chapter === 0) chapter = 1
+      bySet.set(`${chapter}-${num}`, ans)
+      if (sectionTitle) bySection.set(`${sectionTitle}-${num}`, ans)
+      lastEnd = Math.max(lastEnd, num)
+      hits += 1
+    }
+    return hits
+  }
+
+  const expandAnswerLine = (rawLine: string): string[] => {
+    // RapidDoc 常把整页多套参考答案合并进单个 HTML <table>（如「专项刷题一：…专项刷题二：…」），
+    // 按 <tr> 拆行后逐行识别段标题与区间答案，避免跨段覆盖
+    if (!/<tr\b/i.test(rawLine)) return [rawLine]
+    const rows = rawLine.match(/<tr\b[^>]*>[\s\S]*?<\/tr>/gi) ?? []
+    if (rows.length === 0) return [rawLine]
+    return rows
+      .map((row) => {
+        const cells = row.match(/<t[dh]\b[^>]*>[\s\S]*?<\/t[dh]>/gi) ?? []
+        return (cells.length ? cells : [row])
+          .map((cell) =>
+            cell
+              .replace(/<[^>]+>/g, ' ')
+              .replace(/\s+/g, ' ')
+              .trim()
+          )
+          .filter(Boolean)
+          .join(' ')
+      })
+      .filter(Boolean)
+  }
+
   for (const line of lines) {
     if (ANSWER_SECTION.test(line)) {
       inAnswerSection = true
+      inlineSectionOpen = false
       continue
+    }
+    // 随节内嵌答案行（如夸夸刷「答案：1-5：ABADD 6-7：CA」）：不必等待书尾参考答案区
+    if (!inAnswerSection && INLINE_ANSWER_LINE.test(line)) {
+      chapter += 1
+      sectionTitle = undefined
+      lastEnd = 0
+      inlineSectionOpen = true
+      const body = line.replace(/^#{0,4}\s*(?:参考)?答案\s*[:：]\s*/, '')
+      extractAnswersFromLine(body)
+      continue
+    }
+    if (!inAnswerSection && inlineSectionOpen) {
+      if (extractAnswersFromLine(line) > 0) continue
+      inlineSectionOpen = false
     }
     if (!inAnswerSection) continue
-    if (CHAPTER_TITLE.test(line)) {
-      chapter += 1
-      lastEnd = 0
-      continue
+    for (const subLine of expandAnswerLine(line)) {
+      if (
+        CHAPTER_TITLE.test(subLine) ||
+        isNamedSectionTitle(subLine) ||
+        ANSWER_SUBSECTION_TITLE.test(subLine)
+      ) {
+        chapter += 1
+        sectionTitle = isNamedSectionTitle(subLine) ? normalizeSectionTitle(subLine) : undefined
+        lastEnd = 0
+        continue
+      }
+      extractAnswersFromLine(subLine)
     }
-    const range = line.match(ANSWER_RANGE)
-    if (!range) continue
-    let start = Number(range[1] ?? '0')
-    const printedEnd = Number(range[2] ?? '0')
-    const letters = (range[3] ?? '').toUpperCase()
-    if (start <= lastEnd && lastEnd > 0) start = lastEnd + 1
-    const count = Math.min(letters.length, Math.max(1, printedEnd - start + 1))
-    for (let offset = 0; offset < count; offset += 1)
-      answers.set(`${chapter}-${start + offset}`, letters[offset] ?? '')
-    lastEnd = start + count - 1
   }
-  return answers
+  return { bySet, bySection, count: bySet.size }
+}
+
+export function parseAnswerGroups(lines: string[]): Map<string, string> {
+  return parseAnswerGroupsDetailed(lines).bySet
 }
 
 // ---- 申论主观题解析：确定性切分「章节 + 训练单元」式教材，不调用模型 ----
@@ -725,7 +1078,7 @@ export function normalizeOcrText(value: string): string {
     .trim()
 }
 
-const ESSAY_REQUIREMENT_PREFIX = /^要求[:：]/
+const ESSAY_REQUIREMENT_PREFIX = /^#{0,4}\s*要求[:：]/
 
 function startsEssayStructuralLine(line: string): boolean {
   return (
@@ -741,7 +1094,7 @@ function startsEssayStructuralLine(line: string): boolean {
 // 段落级设问语式：命中且长度受限的段落判定为题干段候选。
 // 关键词覆盖动宾式与口语式；位置约束（紧邻要求的连续带）由调用方保证。
 const ESSAY_QUESTION_PARAGRAPH =
-  /(请你|请您|^请[根根结]|谈谈|如何理解|如何看待|怎么看|归纳|概括|分析|梳理|提出了?哪些|有哪些|什么问题|原因是什么|启示|撰写|起草|写一篇|宣讲提纲|公开信|新闻稿|短评|汇报)/
+  /(请你|请您|^请[根结]|根据[“"「]?给定资料|谈谈|如何理解|如何看待|怎么看|归纳|概括|概述|简要说明|分析|梳理|提出了?哪些|有哪些|什么问题|原因是什么|启示|撰写|起草|写一篇|宣讲提纲|公开信|新闻稿|短评|汇报)/
 
 // OCR 输出是逐视觉行的：行尾没有句末标点的都是被版面折断的半句话，
 // 与下一行无缝拼接；遇到结构标记（资料头/新训练/要求/答案头/出处）或句子收束才真正分段。
@@ -805,7 +1158,7 @@ function buildEssayUnit(entry: EssayUnitEntry, seq: number): ParsedEssayUnit | u
     const line = body[index] ?? ''
     const requirementMatch = line.match(ESSAY_REQUIREMENT_MARK)
     if (requirementMatch) {
-      requirement = requirementMatch[1]?.trim() ?? ''
+      requirement = (requirementMatch[1] ?? '').replace(ESSAY_DASHED_DECORATION, '').trim()
       requirementIndex = index
     }
     const originMatch = line.match(ESSAY_ORIGIN_MARK)
@@ -831,8 +1184,10 @@ function buildEssayUnit(entry: EssayUnitEntry, seq: number): ParsedEssayUnit | u
   }
   const zoneRows = body.slice(materialHeaderIndex + 1, absoluteEnd)
   const paragraphs = joinProseParagraphs(zoneRows).filter(
-    // 结构残行（资料头/孤行出处等）不参与题干与材料
-    (paragraph) => !(paragraph.length <= 16 && startsEssayStructuralLine(paragraph))
+    // 结构残行（资料头/孤行出处/装饰配图）不参与题干与材料
+    (paragraph) =>
+      !STANDALONE_IMAGE_LINE.test(paragraph) &&
+      !(paragraph.length <= 16 && startsEssayStructuralLine(paragraph))
   )
   const questionParas: string[] = []
   // 题干段只从「要求」上方取连续的一段带：典型版式里设问句紧邻出处行与要求，
@@ -850,6 +1205,16 @@ function buildEssayUnit(entry: EssayUnitEntry, seq: number): ParsedEssayUnit | u
     questionParas.unshift(paragraph)
   }
   const questionFound = questionParas.length > 0
+  if (!originYear) {
+    for (let index = questionParas.length - 1; index >= 0; index -= 1) {
+      const inlineMatch = questionParas[index]?.match(ESSAY_INLINE_ORIGIN)
+      if (inlineMatch) {
+        originYear = Number(inlineMatch[1])
+        originPaper = cleanEssayTitle(inlineMatch[2] ?? '')
+        break
+      }
+    }
+  }
 
   const material = joinProseParagraphs(
     paragraphs.filter((paragraph) => !questionParas.includes(paragraph))
@@ -943,6 +1308,8 @@ export function mergeDirectQuestions(
     tags: string[]
     /** 解析条目 → 解析册 sourceId（来源证据分别记录题本页与解析册页） */
     solutionSourceOf?: Map<string, string>
+    /** 独立答案册按段标题索引的答案（如 "考点刷题1-5" -> "A"），优先于纯套号匹配 */
+    sectionAnswers?: Map<string, string>
   }
 ): {
   items: DirectQuestion[]
@@ -967,7 +1334,12 @@ export function mergeDirectQuestions(
     }
     const key = `${question.set}-${question.num}`
     const solution = solutions.get(key)
-    const groupAnswer = answerGroups.get(key)
+    const sectionAnswer = question.sectionTitle
+      ? options.sectionAnswers?.get(
+          `${question.sectionTitle}-${question.sectionQuestionNum ?? question.num}`
+        )
+      : undefined
+    const groupAnswer = sectionAnswer ?? answerGroups.get(key)
     const answerText = (solution?.answer || groupAnswer || '').toUpperCase().replace(/[^A-D]/g, '')
     if (!answerText) {
       skippedNoAnswer += 1

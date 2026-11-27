@@ -405,4 +405,196 @@ assert 'p0.png' in new_md4 and 'p6.png' in new_md4 and 'p12.png' in new_md4
 `
     execFileSync(VENV_PYTHON, ['-c', script], { timeout: 30000 })
   })
+
+  it('strip_edge_noise 绝不因纯数字页码/套标题 discarded 块挖空正文年份或表格数值', () => {
+    const script = `
+import importlib.util
+spec = importlib.util.spec_from_file_location('ocr_worker', r'${WORKER.replace(/\\/g, '\\\\')}')
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+regions = [
+  {'type': 'discarded', 'page': 0, 'bbox': [50, 940, 100, 970], 'imgPath': '', 'text': '016'},
+  {'type': 'discarded', 'page': 1, 'bbox': [50, 940, 100, 970], 'imgPath': '', 'text': '105'},
+  {'type': 'discarded', 'page': 0, 'bbox': [60, 20, 200, 60], 'imgPath': '', 'text': '练习题 01套'},
+  {'type': 'discarded', 'page': 0, 'bbox': [500, 20, 900, 60], 'imgPath': '', 'text': '一手最全公考资源加微信 SYA547'},
+]
+md = '\\n'.join([
+  '# 练习题 01套',
+  '2015～2016年中国生活服务电商市场交易规模统计表',
+  '<table><tr><td>长春</td><td>2.016</td><td>1050</td></tr></table>',
+  '7.（2018国考）如按2016年移动出行市场同比增长趋势估算，增速105%： 一手最全公考资源加微信 SYA547',
+  '016',
+])
+cleaned, removed, _ = mod.strip_edge_noise(md, regions)
+assert '练习题 01套' in cleaned
+assert '2015～2016年' in cleaned
+assert '<td>2.016</td><td>1050</td>' in cleaned
+assert '如按2016年移动出行市场' in cleaned
+assert '增速105%' in cleaned
+assert '一手最全公考资源加微信 SYA547' not in cleaned
+# 孤立页码行 016 整行剔除，不影响正文 2016
+assert [l.strip() for l in cleaned.splitlines() if l.strip() == '016'] == []
+assert removed >= 2
+`
+    execFileSync(VENV_PYTHON, ['-c', script], { timeout: 30000 })
+  })
+
+  it('split_inline_options 支持 A-B / C-D / 题干+A-D 拆分，且不误伤正文与表格', () => {
+    const script = `
+import importlib.util
+spec = importlib.util.spec_from_file_location('ocr_worker', r'${WORKER.replace(/\\/g, '\\\\')}')
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+assert mod.split_inline_options('A．75 本 B．77 本') == ['A．75 本', 'B．77 本']
+assert mod.split_inline_options('C. 352.5 D. 290.2') == ['C. 352.5', 'D. 290.2']
+assert mod.split_inline_options('之比是？A. 7:2 B. 4:1C. 15:4 D. 17:8') == [
+  '之比是？', 'A. 7:2', 'B. 4:1', 'C. 15:4', 'D. 17:8'
+]
+assert mod.split_inline_options('B. 6920C. 7712 D. 7800') == ['B. 6920', 'C. 7712', 'D. 7800']
+assert mod.split_inline_options('以下是？A. A>B>C B. A>C>BC. B>C>A D. C>B>A') == [
+  '以下是？', 'A. A>B>C', 'B. A>C>B', 'C. B>C>A', 'D. C>B>A'
+]
+assert mod.split_inline_options('问总收入多少？ A. 100 B. 200 C. 300 D. 400') == [
+  '问总收入多少？', 'A. 100', 'B. 200', 'C. 300', 'D. 400'
+]
+# 正文中间偶发 B. ... C. ... 不误切
+body = '据统计B. 某人认为C. 某事不符合要求'
+assert mod.split_inline_options(body) == [body]
+# 表格行不切
+tbl = '<table><tr><td>A. 1</td><td>B. 2</td></tr></table>'
+assert mod.split_inline_options(tbl) == [tbl]
+# filter_lines 对文字层跨页长页眉与孤立第N页生效，同时拆开同行横排选项
+pages = [
+  [
+    {'text': '关注“花生十三”公众号，每日图推、类比、速算等', 'top': 0, 'bottom': 0, 'score': 1.0},
+    {'text': f'第 {i + 1} 页', 'top': 0, 'bottom': 0, 'score': 1.0},
+    {'text': f'{i + 1}. 题目{i + 1}？', 'top': 0, 'bottom': 0, 'score': 1.0},
+    {'text': 'A. 10 B. 20', 'top': 0, 'bottom': 0, 'score': 1.0},
+    {'text': 'C. 30 D. 40', 'top': 0, 'bottom': 0, 'score': 1.0},
+  ]
+  for i in range(4)
+]
+kept, quality = mod.filter_lines(pages, [None] * 4, ['text-layer'] * 4)
+assert quality['removedPageNumbers'] == 4
+assert quality['removedNoiseLines'] == 4
+assert kept[0] == ['1. 题目1？', 'A. 10', 'B. 20', 'C. 30', 'D. 40']
+# 正向 PDF OCR 引擎默认关闭 180° 方向分类器（防纯数字倒翻与整行丢失）
+engine = mod.create_pdf_ocr_engine()
+assert engine.use_cls is False
+`
+    execFileSync(VENV_PYTHON, ['-c', script], { timeout: 60000 })
+  })
+
+  it(
+    'run_structured 对纯文字层 PDF 走快路径并输出与正文严格对齐的 _pages.json',
+    { timeout: 60000 },
+    () => {
+      const dir = temporaryDirectory('tizhou-ocr-struct-fast-')
+      const fixturePdf = join(process.cwd(), 'fixtures', 'text-only.pdf')
+      const outPath = join(dir, 'output.md')
+      const stdout = execFileSync(VENV_PYTHON, [WORKER, fixturePdf, outPath, '--structured'], {
+        timeout: 60000,
+        encoding: 'utf8'
+      })
+      const lastLine = stdout.trim().split('\n').pop() ?? ''
+      const payload = parseOcrWorkerLine(lastLine)
+      expect(payload?.type).toBe('quality')
+      const quality = payload as OcrQualityPayload
+      expect(quality.ocrPages).toBe(0)
+      expect(quality.textLayerPages).toBeGreaterThan(0)
+      const mdLines = readFileSync(outPath, 'utf8')
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean)
+      const manifest = JSON.parse(readFileSync(join(dir, 'images', '_pages.json'), 'utf8')) as {
+        pages: Array<{ pageNumber: number; lines: string[] }>
+      }
+      const manifestLines = manifest.pages.flatMap((page) => page.lines)
+      expect(manifestLines).toEqual(mdLines)
+    }
+  )
+
+  it('order_ocr_lines 精准分离左右交替边栏批注，且绝不误切单栏或 2×2 选项页', () => {
+    const script = `
+import importlib.util
+spec = importlib.util.spec_from_file_location('ocr_worker', r'${WORKER.replace(/\\/g, '\\\\')}')
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+
+W, H = 2000, 2800
+# 场景1：左侧批注栏（x: 120..500）+ 右侧主解析栏（x: 620..1850），交错排列
+left_sidebar_lines = [
+  {'text': '1. 2021年全国发电量约多少：', 'left': 620, 'right': 1750, 'top': 350, 'bottom': 390, 'score': 0.99},
+  {'text': '①花生批注：', 'left': 120, 'right': 360, 'top': 370, 'bottom': 405, 'score': 0.98},
+  {'text': 'A. 6570', 'left': 650, 'right': 850, 'top': 420, 'bottom': 455, 'score': 0.99},
+  {'text': 'B=8059 R=4.5%', 'left': 120, 'right': 420, 'top': 435, 'bottom': 465, 'score': 0.98},
+  {'text': '【参考答案】C', 'left': 650, 'right': 1020, 'top': 500, 'bottom': 535, 'score': 0.99},
+  {'text': '800 36 -30', 'left': 130, 'right': 390, 'top': 520, 'bottom': 555, 'score': 0.97},
+  {'text': '【实战解析】定位材料第一段，求得A≈7710，选C。', 'left': 620, 'right': 1840, 'top': 580, 'bottom': 620, 'score': 0.99},
+  {'text': 'A≈7710', 'left': 140, 'right': 340, 'top': 610, 'bottom': 645, 'score': 0.98},
+  {'text': '2. 2022年用电量增长多少：', 'left': 620, 'right': 1720, 'top': 1150, 'bottom': 1190, 'score': 0.99},
+  {'text': '②花生批注：415份数法', 'left': 120, 'right': 460, 'top': 1180, 'bottom': 1215, 'score': 0.98},
+]
+ordered_l = mod.order_ocr_lines(left_sidebar_lines, W, H)
+texts_l = [x['text'] for x in ordered_l]
+assert texts_l[:5] == [
+  '1. 2021年全国发电量约多少：',
+  'A. 6570',
+  '【参考答案】C',
+  '【实战解析】定位材料第一段，求得A≈7710，选C。',
+  '2. 2022年用电量增长多少：',
+]
+assert texts_l[5] == '①花生批注：'
+
+# 场景2：右侧批注栏（x: 1500..1880）+ 左侧主解析栏（x: 150..1360）
+right_sidebar_lines = [
+  {'text': '1. 某高校有甲乙丙三个专业，男女人数之比是？', 'left': 150, 'right': 1340, 'top': 350, 'bottom': 390, 'score': 0.99},
+  {'text': '①花生批注：', 'left': 1520, 'right': 1760, 'top': 370, 'bottom': 405, 'score': 0.98},
+  {'text': '【参考答案】D', 'left': 150, 'right': 520, 'top': 500, 'bottom': 535, 'score': 0.99},
+  {'text': '赋值法使用时机：', 'left': 1520, 'right': 1860, 'top': 520, 'bottom': 555, 'score': 0.98},
+  {'text': '【实战解析】根据比例赋值总人数200人，得17:8。', 'left': 150, 'right': 1350, 'top': 620, 'bottom': 660, 'score': 0.99},
+  {'text': '①只有比例关系', 'left': 1520, 'right': 1850, 'top': 640, 'bottom': 675, 'score': 0.98},
+  {'text': '2. 第二题题干内容测试长度足够长', 'left': 150, 'right': 1200, 'top': 1150, 'bottom': 1190, 'score': 0.99},
+  {'text': '②无具体数字', 'left': 1520, 'right': 1820, 'top': 1170, 'bottom': 1205, 'score': 0.98},
+]
+ordered_r = mod.order_ocr_lines(right_sidebar_lines, W, H)
+assert [x['text'] for x in ordered_r[:4]] == [
+  '1. 某高校有甲乙丙三个专业，男女人数之比是？',
+  '【参考答案】D',
+  '【实战解析】根据比例赋值总人数200人，得17:8。',
+  '2. 第二题题干内容测试长度足够长',
+]
+
+# 场景3：普通单栏题本（题干横跨全宽 + 2x2 选项）绝不误切
+single_col = [
+  {'text': '1. 下列关于经济发展的说法正确的一项是哪一项？', 'left': 150, 'right': 1800, 'top': 350, 'bottom': 390, 'score': 0.99},
+  {'text': 'A. 10%', 'left': 180, 'right': 400, 'top': 420, 'bottom': 455, 'score': 0.99},
+  {'text': 'B. 20%', 'left': 1050, 'right': 1280, 'top': 420, 'bottom': 455, 'score': 0.99},
+  {'text': 'C. 30%', 'left': 180, 'right': 400, 'top': 480, 'bottom': 515, 'score': 0.99},
+  {'text': 'D. 40%', 'left': 1050, 'right': 1280, 'top': 480, 'bottom': 515, 'score': 0.99},
+  {'text': '2. 下列关于社会治理的表述不正确的是哪一项？', 'left': 150, 'right': 1780, 'top': 600, 'bottom': 640, 'score': 0.99},
+  {'text': 'A. 选项甲', 'left': 180, 'right': 420, 'top': 680, 'bottom': 715, 'score': 0.99},
+  {'text': 'B. 选项乙', 'left': 1050, 'right': 1300, 'top': 680, 'bottom': 715, 'score': 0.99},
+  {'text': 'C. 选项丙', 'left': 180, 'right': 420, 'top': 740, 'bottom': 775, 'score': 0.99},
+  {'text': 'D. 选项丁', 'left': 1050, 'right': 1300, 'top': 740, 'bottom': 775, 'score': 0.99},
+]
+assert [x['text'] for x in mod.order_ocr_lines(single_col, W, H)] == [x['text'] for x in single_col]
+
+# 场景4：高频【参考答案】B 等解析结构标签跨 ≥50% 页出现时绝不可被 filter_lines 当作页眉误删
+sol_pages = [
+  [
+    {'text': '花生十三言语理解解析', 'left': 700, 'right': 1200, 'top': 40, 'bottom': 75, 'score': 0.99},
+    {'text': f'{i + 1}. 某题干示例文本用于测试解析过滤逻辑。', 'left': 150, 'right': 1300, 'top': 300, 'bottom': 340, 'score': 0.99},
+    {'text': '【参考答案】B', 'left': 150, 'right': 480, 'top': 380, 'bottom': 420, 'score': 0.99},
+    {'text': '【题型与文段类型】中心理解，总分结构', 'left': 150, 'right': 850, 'top': 430, 'bottom': 470, 'score': 0.99},
+    {'text': '【实战解析】文段开篇提出核心观点，对应 B 项。', 'left': 150, 'right': 1200, 'top': 490, 'bottom': 530, 'score': 0.99},
+  ]
+  for i in range(6)
+]
+kept_sol, _ = mod.filter_lines(sol_pages, [H] * 6, ['ocr'] * 6)
+assert all('【参考答案】B' in p for p in kept_sol), f'lost answer line: {kept_sol}'
+assert all('花生十三言语理解解析' not in p for p in kept_sol), f'header not removed: {kept_sol}'
+`
+    execFileSync(VENV_PYTHON, ['-c', script], { timeout: 30000 })
+  })
 })

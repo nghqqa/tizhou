@@ -45,6 +45,7 @@ import {
   directSignature,
   mergeDirectQuestions,
   parseAnswerGroups,
+  parseAnswerGroupsDetailed,
   parseEssayBook,
   parseQuestionBook,
   parseSolutionBook,
@@ -296,13 +297,12 @@ function classifyDirectFile(params: {
   const { collector, job, file, raw, rawPath, useStructured, subject, subjectLabel } = params
   const ocrQuality = file.ocrQuality
   const imagesDir = join(dirname(rawPath), 'images')
-  let pageManifest: PageManifest | undefined
+  // 优先读取严格行对齐的 _pages.json（新版结构解析与逐页 OCR 均会产出）；
+  // 仅当命中历史结构缓存缺少 _pages.json 时，才回退到按块派生的 manifestFromRegions
+  let pageManifest = parsePageManifest(readFileSyncSafe(join(imagesDir, '_pages.json')))
   const structuredRegions = loadStructuredRegions(imagesDir)
-  if (useStructured && structuredRegions) {
+  if (!pageManifest && useStructured && structuredRegions) {
     pageManifest = manifestFromRegions(structuredRegions.regions)
-  }
-  if (!pageManifest) {
-    pageManifest = parsePageManifest(readFileSyncSafe(join(imagesDir, '_pages.json')))
   }
   const { lines: directLines, pageMap: fileLinePageMap } = toLinesWithPageMap(raw, pageManifest)
   const solutionMarks = (raw.match(/【参考答案(及正确率)?】/g) ?? []).length
@@ -312,6 +312,9 @@ function classifyDirectFile(params: {
     ...(numeric.count ? [`数字异常 ${numeric.count} 处，请人工核对`] : []),
     ...(tables.tables && tables.ragged
       ? [`表格列数不一致 ${tables.ragged}/${tables.tables}，请对照原图`]
+      : []),
+    ...(tables.mergedRowSuspects
+      ? [`表格疑似行粘连/错位 ${tables.mergedRowSuspects} 处，请对照原图`]
       : []),
     ...(ocrQuality?.removedNoiseLines
       ? [`已剥离页眉/水印文本 ${ocrQuality.removedNoiseLines} 处`]
@@ -413,6 +416,18 @@ function classifyDirectFile(params: {
   }
 
   if (questions.length === 0 && fileTrainingMarks === 0) {
+    // 独立答案册（如四海参考答案 PDF：无【参考答案】解析块，但含成批分组答案格）：
+    // 汇入批次级答案池，供同批次题本按段名/套号自动配对，不再误落入不支持结构化分支
+    const standaloneAnswers = parseAnswerGroupsDetailed(directLines)
+    if (standaloneAnswers.count >= 3) {
+      for (const [key, value] of standaloneAnswers.bySet)
+        collector.directAnswerGroups.set(key, value)
+      for (const [key, value] of standaloneAnswers.bySection)
+        collector.directSectionAnswers.set(key, value)
+      file.state = 'ready'
+      file.message = `答案册：提取 ${standaloneAnswers.count} 条分组参考答案`
+      return
+    }
     const figureImages = regions?.regions.filter((r) => r.type === 'image' && r.imgPath).length ?? 0
     const capability: ImportCapability =
       useStructured && figureImages >= 5 ? 'image-only-review' : 'unsupported-auto-structure'
@@ -466,11 +481,13 @@ function classifyDirectFile(params: {
     solutionMarks
   })
   const binding = regions ? bindGraphicOptionsByGeometry(questions, regions) : undefined
+  const parsedGroups = parseAnswerGroupsDetailed(directLines)
   collector.directBooks.push({
     sourceId: file.sourceId,
     relativePath: file.relativePath,
     questions,
-    groups: parseAnswerGroups(directLines),
+    groups: parsedGroups.bySet,
+    sectionGroups: parsedGroups.bySection,
     qualityWarnings,
     graphicNotes: binding?.notes,
     capability,
@@ -601,12 +618,21 @@ async function finalizeDirectBatch(
       continue
     }
 
-    let merged = mergeDirectQuestions(book.questions, collector.directSolutions, book.groups, {
+    const combinedGroups = new Map<string, string>([
+      ...collector.directAnswerGroups,
+      ...book.groups
+    ])
+    const combinedSectionAnswers = new Map<string, string>([
+      ...collector.directSectionAnswers,
+      ...(book.sectionGroups ?? [])
+    ])
+    let merged = mergeDirectQuestions(book.questions, collector.directSolutions, combinedGroups, {
       subject,
       category: `${subjectLabel}-直导题库`,
       sourceFile: book.relativePath,
       tags: job.options.tags,
-      solutionSourceOf: collector.solutionSourceOf
+      solutionSourceOf: collector.solutionSourceOf,
+      sectionAnswers: combinedSectionAnswers
     })
     if ((merged.aborted || merged.items.length === 0) && collector.directSolutions.size > 0) {
       const sequential = mergeByDocumentOrder(book.questions, collector.directSolutions, {
@@ -983,6 +1009,8 @@ export async function executeJobPipeline(host: JobPipelineHost, id: string): Pro
       directPreservation: [],
       directEssays: [],
       directSolutions: new Map(),
+      directAnswerGroups: new Map(),
+      directSectionAnswers: new Map(),
       solutionPageMaps: new Map(),
       solutionSourceOf: new Map(),
       trainingMarkers: 0

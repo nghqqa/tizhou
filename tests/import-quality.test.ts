@@ -113,6 +113,33 @@ describe('HTML 表格一致性（RapidDoc 还原形态）', () => {
     expect(result.ragged).toBe(1)
     expect(result.confidence).toBe(0.5)
   })
+
+  it('带 rowspan/colspan 多级合并表头的正确表格不误报 ragged', () => {
+    const complexHeaderTable =
+      '<table>' +
+      '<tr><td rowspan=2 colspan=1>指标</td><td rowspan=1 colspan=2>全市居民</td><td rowspan=1 colspan=2>城镇居民</td></tr>' +
+      '<tr><td>绝对量</td><td>增长(%)</td><td>绝对量</td><td>增长(%)</td></tr>' +
+      '<tr><td>工资性收入</td><td>18138</td><td>9.8</td><td>25396</td><td>8.7</td></tr>' +
+      '</table>'
+    const result = scanTableQuality(complexHeaderTable)
+    expect(result.tables).toBe(1)
+    expect(result.ragged).toBe(0)
+    expect(result.mergedRowSuspects).toBeUndefined()
+    expect(result.confidence).toBe(1)
+  })
+
+  it('检出单元格内双数值行粘连（如两市数据合并进同一行）', () => {
+    const mergedRowTable =
+      '<table>' +
+      '<tr><td>城市</td><td>合同数</td><td>同比(%)</td><td>成交额</td></tr>' +
+      '<tr><td>广州市</td><td>22843</td><td>1.42</td><td>2256.53</td></tr>' +
+      '<tr><td>中山市江门市</td><td>415 350</td><td>87.78 -40.68</td><td>7.84 5.63</td></tr>' +
+      '</table>'
+    const result = scanTableQuality(mergedRowTable)
+    expect(result.tables).toBe(1)
+    expect(result.ragged).toBe(0)
+    expect(result.mergedRowSuspects).toBe(1)
+  })
 })
 
 describe('cleanExplanation（解析清洗阶段）', () => {
