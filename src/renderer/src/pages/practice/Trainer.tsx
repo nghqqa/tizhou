@@ -25,7 +25,7 @@ import type {
   Subject
 } from '@shared/contracts'
 import { FEATURE_PROMPTS, taskDataEnvelope } from '@shared/prompts'
-import { isAnswerCorrect } from '@shared/study-constants'
+import { expandCategoryAliases, isAnswerCorrect } from '@shared/study-constants'
 import { invoke } from '../../api'
 import { HighlightableMaterial } from '../../components/HighlightableMaterial'
 import { MarkdownContent } from '../../components/MarkdownContent'
@@ -183,7 +183,15 @@ export function Trainer({
       method: 'vault.categories',
       params: { subject: review ? undefined : subjectFilter }
     })
-      .then(setCategories)
+      .then((nextCats) => {
+        setCategories(nextCats)
+        setCategory((currentCat) => {
+          if (!currentCat || nextCats.some((item) => item.name === currentCat)) return currentCat
+          const aliases = expandCategoryAliases(currentCat)
+          const matched = nextCats.find((item) => aliases.includes(item.name))
+          return matched ? matched.name : currentCat
+        })
+      })
       .catch(() => setCategories([]))
     void invoke<QuestionFacets>({
       method: 'vault.facets',
@@ -304,6 +312,8 @@ export function Trainer({
         !current ||
         loading ||
         hasOpenModal() ||
+        targetEl?.isContentEditable ||
+        Boolean(targetEl?.closest('.scratchpad-drawer')) ||
         event.target instanceof HTMLInputElement ||
         event.target instanceof HTMLTextAreaElement ||
         event.target instanceof HTMLSelectElement ||
@@ -385,6 +395,7 @@ export function Trainer({
     const restored = active.questionIds
       .map((id) => active.questionSnapshots[id])
       .filter((question): question is Question => Boolean(question))
+    activeSessionIdRef.current = active.id
     setSession(active)
     setFeedbackMode(active.feedbackMode)
     setQuestions(restored)
@@ -450,6 +461,8 @@ export function Trainer({
         isDataAnalysisCategory(category) &&
         !onlyWrong &&
         !onlyFavorite &&
+        !onlyUnattempted &&
+        !difficulty &&
         !keyword.trim()
           ? snapDataAnalysisCount(count)
           : count
@@ -649,6 +662,8 @@ export function Trainer({
     setReviewFeedback('normal')
     setSimilar([])
     setAiExplanation('')
+    setNote('')
+    setFavorite(false)
     setError('')
     startedAt.current = Date.now()
     setElapsedSeconds(0)
@@ -714,6 +729,10 @@ export function Trainer({
 
   async function rateReview(feedback: 'forgot' | 'hard' | 'normal' | 'easy'): Promise<void> {
     if (!current || !result) return
+    const targetQuestionId = current.id
+    const baseResult = result
+    window.clearTimeout(rapidAdvanceTimerRef.current)
+    setRapidAdvancePending(false)
     setReviewFeedback(feedback)
     try {
       const rated = await invoke<{
@@ -724,22 +743,24 @@ export function Trainer({
       }>({
         method: 'review.rate',
         params: {
-          questionId: current.id,
+          questionId: targetQuestionId,
           feedback,
-          baselineStreak: result.reviewBaseline?.streak,
-          baselineStage: result.reviewBaseline?.stage
+          baselineStreak: baseResult.reviewBaseline?.streak,
+          baselineStage: baseResult.reviewBaseline?.stage
         }
       })
       const updatedResult: AttemptResult = {
-        ...result,
+        ...baseResult,
         nextReviewAt: rated.nextReviewAt,
         mastered: rated.mastered,
         intervalDays: rated.intervalDays
       }
-      setResult(updatedResult)
+      if (currentQuestionIdRef.current === targetQuestionId) {
+        setResult(updatedResult)
+      }
       setSessionResults((prev) =>
         prev.map((item) =>
-          item.questionId === current.id ? { ...item, result: updatedResult } : item
+          item.questionId === targetQuestionId ? { ...item, result: updatedResult } : item
         )
       )
       void refreshDashboard()
@@ -755,7 +776,9 @@ export function Trainer({
       }
       showToast(labelMap[feedback])
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : '记忆评级更新失败')
+      if (currentQuestionIdRef.current === targetQuestionId) {
+        setError(cause instanceof Error ? cause.message : '记忆评级更新失败')
+      }
     }
   }
 
@@ -865,16 +888,12 @@ export function Trainer({
         onRetryWrong={(wrongQuestions) => {
           setSummaryComplete(false)
           setSummaryOnlyWrong(false)
-          setQuestions(wrongQuestions)
-          setIndex(0)
-          setSelected([])
-          setResult(undefined)
-          setSessionResults([])
-          setEliminatedByQuestion({})
-          setAiExplanation('')
-          setSession(undefined)
-          startedAt.current = Date.now()
-          setElapsedSeconds(0)
+          void startSession({
+            mode: 'sequence',
+            count: wrongQuestions.length,
+            feedbackMode,
+            questionIds: wrongQuestions.map((q) => q.id)
+          })
         }}
         onBackToConfig={() => {
           setSummaryComplete(false)
@@ -944,6 +963,8 @@ export function Trainer({
             isDataAnalysisCategory(nextCategory) &&
             !onlyWrong &&
             !onlyFavorite &&
+            !onlyUnattempted &&
+            !difficulty &&
             !keyword.trim()
           ) {
             setCount((prev) => snapDataAnalysisCount(prev))

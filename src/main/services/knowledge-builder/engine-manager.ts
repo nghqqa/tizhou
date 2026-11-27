@@ -203,18 +203,22 @@ export class KnowledgeEngineManager {
   async installGpuAccelerator(host: EngineManagerHost): Promise<KnowledgeEngineStatus> {
     if (this.installing) throw new Error('转换引擎正在安装，请稍候')
     if (host.hasRunningJob()) throw new Error('知识构建任务运行时不能更新转换引擎')
-    const current = await this.engineStatus()
-    if (!current.available || !current.ocrAvailable || !current.pythonPath)
-      throw new Error('请先安装转换引擎与 OCR 组件，再启用 GPU 加速')
     this.installing = true
+    let pythonPathForRollback = ''
+    let uninstalledCpu = false
     try {
+      const current = await this.engineStatus()
+      if (!current.available || !current.ocrAvailable || !current.pythonPath)
+        throw new Error('请先安装转换引擎与 OCR 组件，再启用 GPU 加速')
       const pythonPath = current.pythonPath
+      pythonPathForRollback = pythonPath
       this.installProgress = { phase: '卸载 CPU 推理后端 onnxruntime', percent: 8 }
       await execFileAsync(pythonPath, ['-m', 'pip', 'uninstall', '-y', 'onnxruntime'], {
         timeout: 180_000,
         windowsHide: true,
         maxBuffer: 1024 * 1024
       })
+      uninstalledCpu = true
       await host.pipInstallWithProgress(
         pythonPath,
         DIRECTML_PACKAGE,
@@ -239,17 +243,35 @@ export class KnowledgeEngineManager {
           3,
           '回退安装 CPU 推理后端 onnxruntime'
         )
+        uninstalledCpu = false
         this.setRapidocrDml(false)
         this.engineCache = undefined
         throw new Error(
           '本机显卡不支持 DirectML 加速，已自动回退 CPU 后端（识别质量与速度不受影响）'
         )
       }
+      uninstalledCpu = false
       this.engineCache = undefined
       this.installProgress = { phase: 'GPU 加速已启用', percent: 100 }
       return await this.engineStatus()
     } catch (error) {
+      if (uninstalledCpu && pythonPathForRollback) {
+        try {
+          await host.pipInstallWithProgress(
+            pythonPathForRollback,
+            CPU_ONNXRUNTIME_SPEC,
+            90,
+            8,
+            '安装失败，正在恢复 CPU 推理后端 onnxruntime'
+          )
+        } catch {
+          // 恢复尽力而为，不掩盖原始失败原因
+        }
+        this.setRapidocrDml(false)
+      }
+      this.engineCache = undefined
       if (error instanceof Error && error.message.startsWith('本机显卡不支持')) throw error
+      if (error instanceof Error && error.message.startsWith('请先安装转换引擎')) throw error
       throw new Error(
         `GPU 加速组件安装失败：${error instanceof Error ? error.message : '未知错误'}`
       )
@@ -261,12 +283,12 @@ export class KnowledgeEngineManager {
   async removeGpuAccelerator(host: EngineManagerHost): Promise<KnowledgeEngineStatus> {
     if (this.installing) throw new Error('转换引擎正在安装，请稍候')
     if (host.hasRunningJob()) throw new Error('知识构建任务运行时不能更新转换引擎')
-    const current = await this.engineStatus()
-    if (!current.available || !current.pythonPath)
-      throw new Error('转换引擎尚未安装，无需移除 GPU 加速')
-    if (!this.dmlInstalled()) throw new Error('当前未启用 GPU 加速')
     this.installing = true
     try {
+      const current = await this.engineStatus()
+      if (!current.available || !current.pythonPath)
+        throw new Error('转换引擎尚未安装，无需移除 GPU 加速')
+      if (!this.dmlInstalled()) throw new Error('当前未启用 GPU 加速')
       const pythonPath = current.pythonPath
       this.installProgress = { phase: '卸载 DirectML 推理后端', percent: 15 }
       await execFileAsync(pythonPath, ['-m', 'pip', 'uninstall', '-y', 'onnxruntime-directml'], {
@@ -288,6 +310,13 @@ export class KnowledgeEngineManager {
       this.installProgress = { phase: '已恢复 CPU 推理', percent: 100 }
       return await this.engineStatus()
     } catch (error) {
+      this.engineCache = undefined
+      if (
+        error instanceof Error &&
+        (error.message.startsWith('转换引擎尚未安装') || error.message.startsWith('当前未启用'))
+      ) {
+        throw error
+      }
       throw new Error(
         `GPU 加速组件移除失败：${error instanceof Error ? error.message : '未知错误'}`
       )
@@ -489,20 +518,24 @@ export class KnowledgeEngineManager {
       setRunningChild(child)
       let done = false
       let quality: OcrQualityReport | undefined
+      let stdoutBuffer = ''
+      const handleLine = (line: string): void => {
+        const parsed = parseOcrWorkerLine(line)
+        if (parsed?.type === 'quality') {
+          done = true
+          quality = parsed
+        }
+      }
       const finish = (ok: boolean): void => {
         setRunningChild(undefined)
         resolvePromise({ ok, quality })
       }
       child.stdout.setEncoding('utf8')
       child.stdout.on('data', (chunk: string) => {
-        for (const line of chunk.split('\n')) {
-          const parsed = parseOcrWorkerLine(line)
-          if (parsed?.type === 'quality') {
-            done = true
-            quality = parsed
-            break
-          }
-        }
+        stdoutBuffer += chunk
+        const lines = stdoutBuffer.split('\n')
+        stdoutBuffer = lines.pop() ?? ''
+        for (const line of lines) handleLine(line)
       })
       child.stderr.on('data', (chunk: string) => {
         void chunk
@@ -514,6 +547,7 @@ export class KnowledgeEngineManager {
       })
       child.once('close', (code) => {
         clearTimeout(timer)
+        if (stdoutBuffer.trim()) handleLine(stdoutBuffer)
         finish(done && code === 0)
       })
     })

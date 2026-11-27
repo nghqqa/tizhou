@@ -117,6 +117,9 @@ export function ShenlunSolutionPage(): React.JSX.Element {
   const pendingDraftRef = useRef<{ promptId: string; title: string; content: string } | null>(null)
   const questionCacheRef = useRef(new Map<string, Question>())
   const evalStreamCancelRef = useRef<(() => void) | null>(null)
+  const consumedPromptIdRef = useRef('')
+  const promptsReqSeqRef = useRef(0)
+  const detailReqSeqRef = useRef(0)
 
   // 按题汇总已评估状态（最新得分与提交次数）
   const statusByPrompt = useMemo(() => {
@@ -262,9 +265,14 @@ export function ShenlunSolutionPage(): React.JSX.Element {
     if (view !== 'write') setView('write')
   }
 
-  // 响应 URL 参数跳转（例如从学习报告「申论作答记录」点进复盘），评估进行中忽略外部切题
+  // 响应 URL 参数跳转（例如从学习报告「申论作答记录」点进复盘），评估进行中忽略外部切题，且同一参数仅消费一次
   useEffect(() => {
-    if (!requestedPromptId || evaluating) return
+    if (!requestedPromptId) {
+      consumedPromptIdRef.current = ''
+      return
+    }
+    if (evaluating || consumedPromptIdRef.current === requestedPromptId) return
+    consumedPromptIdRef.current = requestedPromptId
     void flushPendingDraft(false).then(() => {
       setRegion('')
       search.clear()
@@ -278,6 +286,7 @@ export function ShenlunSolutionPage(): React.JSX.Element {
   // 地区/关键词查询（输入防抖与中文 IME 合成态由 useImeSearchInput 统一处理，首次加载与切地区立即执行）
   useEffect(() => {
     let cancelled = false
+    const reqSeq = ++promptsReqSeqRef.current
     setLoadingPrompts(true)
     setError('')
     void invoke<QuestionSummary[]>({
@@ -291,7 +300,7 @@ export function ShenlunSolutionPage(): React.JSX.Element {
       }
     })
       .then(async (items) => {
-        if (cancelled) return
+        if (cancelled || promptsReqSeqRef.current !== reqSeq) return
         const previous = activePromptIdRef.current
         const nextId =
           requestedPromptId && items.some((item) => item.id === requestedPromptId)
@@ -301,7 +310,7 @@ export function ShenlunSolutionPage(): React.JSX.Element {
               : (items[0]?.id ?? '')
         if (nextId !== previous) {
           await flushPendingDraft(false)
-          if (cancelled) return
+          if (cancelled || promptsReqSeqRef.current !== reqSeq) return
         }
         setPrompts(items)
         setAppliedFilter({ region, query: activeQuery })
@@ -314,7 +323,7 @@ export function ShenlunSolutionPage(): React.JSX.Element {
         setLoadingPrompts(false)
       })
       .catch((cause) => {
-        if (!cancelled) {
+        if (!cancelled && promptsReqSeqRef.current === reqSeq) {
           setError(cause instanceof Error ? cause.message : '申论题目读取失败')
           setLoadingPrompts(false)
         }
@@ -350,6 +359,7 @@ export function ShenlunSolutionPage(): React.JSX.Element {
       return
     }
     let cancelled = false
+    const reqSeq = ++detailReqSeqRef.current
     const cachedQuestion = questionCacheRef.current.get(promptId)
     if (cachedQuestion) setCurrentDetail(cachedQuestion)
     setContent('')
@@ -374,7 +384,7 @@ export function ShenlunSolutionPage(): React.JSX.Element {
       }).catch(() => [] as ConstructedAttemptRecord[])
     ])
       .then(([questionDetail, draft, history]) => {
-        if (cancelled) return
+        if (cancelled || detailReqSeqRef.current !== reqSeq) return
         if (questionDetail) {
           questionCacheRef.current.set(promptId, questionDetail)
           setCurrentDetail(questionDetail)
@@ -400,7 +410,7 @@ export function ShenlunSolutionPage(): React.JSX.Element {
         setLoadedPromptId(promptId)
       })
       .catch(() => {
-        if (!cancelled) setLoadedPromptId(promptId)
+        if (!cancelled && detailReqSeqRef.current === reqSeq) setLoadedPromptId(promptId)
       })
     return () => {
       cancelled = true
@@ -967,6 +977,7 @@ export function ShenlunSolutionPage(): React.JSX.Element {
                 {view === 'write' ? (
                   sheetMode === 'sheet' ? (
                     <ShenlunAnswerSheet
+                      key={current?.id ?? promptId}
                       value={content}
                       onChange={updateDraftContent}
                       limit={currentLimit}

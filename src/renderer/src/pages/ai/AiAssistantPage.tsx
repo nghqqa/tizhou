@@ -101,6 +101,7 @@ export function AiPage(): React.JSX.Element {
         setConversations(list)
         if (!requestedQuestionId && list[0]) {
           const latest = list[0]
+          activeConvIdRef.current = latest.id
           setActiveConvId(latest.id)
           setActiveTitle(latest.title)
           setMessages(latest.messages)
@@ -110,10 +111,14 @@ export function AiPage(): React.JSX.Element {
               params: { id: latest.questionId }
             })
               .then((q) => {
-                if (!cancelled) setContextQuestion(q ?? null)
+                if (!cancelled && activeConvIdRef.current === latest.id) {
+                  setContextQuestion(q ?? null)
+                }
               })
               .catch(() => {
-                if (!cancelled) setContextQuestion(null)
+                if (!cancelled && activeConvIdRef.current === latest.id) {
+                  setContextQuestion(null)
+                }
               })
           }
         }
@@ -273,9 +278,12 @@ export function AiPage(): React.JSX.Element {
         }
       })
       if (activeConvIdRef.current === targetMeta.id) {
+        messagesRefData.current = updated
         setMessages(updated)
       }
-      await persistUpdatedMessages(updated, targetMeta)
+      await persistUpdatedMessages(updated, targetMeta).catch(() => {
+        showToast('操作已执行生效，但同步对话历史失败')
+      })
       showToast(res.message)
       void refreshDashboard()
       if (res.savedMemory) {
@@ -295,6 +303,7 @@ export function AiPage(): React.JSX.Element {
         }
       })
       if (activeConvIdRef.current === targetMeta.id) {
+        messagesRefData.current = updated
         setMessages(updated)
       }
       await persistUpdatedMessages(updated, targetMeta).catch(() => {})
@@ -314,17 +323,23 @@ export function AiPage(): React.JSX.Element {
       title: activeTitle,
       questionId: contextQuestion?.id
     }
-    const updated = messagesRefData.current.map((msg, idx) => {
-      if (idx !== messageIndex || !msg.proposals) return msg
-      return {
-        ...msg,
-        proposals: msg.proposals.map((p) =>
-          p.id === proposal.id ? { ...p, status: 'rejected' as const } : p
-        )
-      }
-    })
-    setMessages(updated)
-    await persistUpdatedMessages(updated, targetMeta).catch(() => {})
+    setProposalBusyId(proposal.id)
+    try {
+      const updated = messagesRefData.current.map((msg, idx) => {
+        if (idx !== messageIndex || !msg.proposals) return msg
+        return {
+          ...msg,
+          proposals: msg.proposals.map((p) =>
+            p.id === proposal.id ? { ...p, status: 'rejected' as const } : p
+          )
+        }
+      })
+      messagesRefData.current = updated
+      setMessages(updated)
+      await persistUpdatedMessages(updated, targetMeta).catch(() => {})
+    } finally {
+      setProposalBusyId(null)
+    }
   }
 
   async function send(): Promise<void> {
@@ -463,6 +478,8 @@ export function AiPage(): React.JSX.Element {
         }
       }
     } catch (cause) {
+      setMessages(prevMessages)
+      setInput(content)
       setError(cause instanceof Error ? cause.message : 'AI 请求失败')
     } finally {
       streamCancelRef.current = null
@@ -838,11 +855,6 @@ export function AiPage(): React.JSX.Element {
               </div>
             </Section>
           </div>
-          <LearnerMemoryDrawer
-            open={memoryDrawerOpen}
-            onClose={() => setMemoryDrawerOpen(false)}
-            onChanged={(list) => setMemoryCount(list.filter((m) => m.enabled).length)}
-          />
           <ConfirmDialog
             open={Boolean(pendingDeleteConv)}
             title="删除历史对话？"
@@ -855,6 +867,11 @@ export function AiPage(): React.JSX.Element {
           />
         </>
       )}
+      <LearnerMemoryDrawer
+        open={memoryDrawerOpen}
+        onClose={() => setMemoryDrawerOpen(false)}
+        onChanged={(list) => setMemoryCount(list.filter((m) => m.enabled).length)}
+      />
     </div>
   )
 }

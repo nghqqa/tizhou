@@ -35,14 +35,31 @@ export function getAppSettings(db: DatabaseSync): AppSettings {
 
 export function saveAppSettings(db: DatabaseSync, patch: Partial<AppSettings>): AppSettings {
   const settings = { ...getAppSettings(db), ...patch }
-  settings.uiScale = clampUiScale(settings.uiScale)
-  settings.dailyTarget = Math.max(1, Math.min(500, Math.round(settings.dailyTarget)))
+  const finiteOr = (value: unknown, fallback: number): number =>
+    typeof value === 'number' && Number.isFinite(value) ? value : fallback
+  settings.uiScale = clampUiScale(finiteOr(settings.uiScale, DEFAULT_SETTINGS.uiScale))
+  settings.dailyTarget = Math.max(
+    1,
+    Math.min(500, Math.round(finiteOr(settings.dailyTarget, DEFAULT_SETTINGS.dailyTarget)))
+  )
   settings.defaultPracticeCount = Math.max(
     1,
-    Math.min(100, Math.round(settings.defaultPracticeCount))
+    Math.min(
+      100,
+      Math.round(finiteOr(settings.defaultPracticeCount, DEFAULT_SETTINGS.defaultPracticeCount))
+    )
   )
-  settings.defaultExamMinutes = Math.max(10, Math.min(300, Math.round(settings.defaultExamMinutes)))
-  settings.backupRetention = Math.max(1, Math.min(100, Math.round(settings.backupRetention)))
+  settings.defaultExamMinutes = Math.max(
+    10,
+    Math.min(
+      300,
+      Math.round(finiteOr(settings.defaultExamMinutes, DEFAULT_SETTINGS.defaultExamMinutes))
+    )
+  )
+  settings.backupRetention = Math.max(
+    1,
+    Math.min(100, Math.round(finiteOr(settings.backupRetention, DEFAULT_SETTINGS.backupRetention)))
+  )
   settings.examGoalName =
     typeof settings.examGoalName === 'string' ? settings.examGoalName.trim().slice(0, 40) : ''
   const rawGoalDate = typeof settings.examGoalDate === 'string' ? settings.examGoalDate.trim() : ''
@@ -63,21 +80,23 @@ export function saveAiRecord(
   encryptedKey: string | null,
   verified: boolean,
   lastCheckedAt?: string,
-  lastError?: string
+  lastError?: string,
+  clearKey = false
 ): void {
   db.prepare(
     `INSERT INTO ai_config(id,payload_json,encrypted_key,verified,last_checked_at,last_error,updated_at)
     VALUES(1,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET
     payload_json=excluded.payload_json,
-    encrypted_key=COALESCE(excluded.encrypted_key,ai_config.encrypted_key),
+    encrypted_key=CASE WHEN ?=1 THEN NULL ELSE COALESCE(excluded.encrypted_key,ai_config.encrypted_key) END,
     verified=excluded.verified,last_checked_at=excluded.last_checked_at,last_error=excluded.last_error,updated_at=excluded.updated_at`
   ).run(
     payloadJson,
-    encryptedKey,
+    clearKey ? null : encryptedKey,
     verified ? 1 : 0,
     lastCheckedAt ?? null,
     lastError ?? null,
-    now()
+    now(),
+    clearKey ? 1 : 0
   )
 }
 
@@ -97,21 +116,23 @@ export function saveVlmRecord(
   encryptedKey: string | null,
   verified: boolean,
   lastCheckedAt?: string,
-  lastError?: string
+  lastError?: string,
+  clearKey = false
 ): void {
   db.prepare(
     `INSERT INTO vlm_config(id,payload_json,encrypted_key,verified,last_checked_at,last_error,updated_at)
     VALUES(1,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET
     payload_json=excluded.payload_json,
-    encrypted_key=COALESCE(excluded.encrypted_key,vlm_config.encrypted_key),
+    encrypted_key=CASE WHEN ?=1 THEN NULL ELSE COALESCE(excluded.encrypted_key,vlm_config.encrypted_key) END,
     verified=excluded.verified,last_checked_at=excluded.last_checked_at,last_error=excluded.last_error,updated_at=excluded.updated_at`
   ).run(
     payloadJson,
-    encryptedKey,
+    clearKey ? null : encryptedKey,
     verified ? 1 : 0,
     lastCheckedAt ?? null,
     lastError ?? null,
-    now()
+    now(),
+    clearKey ? 1 : 0
   )
 }
 
@@ -380,15 +401,21 @@ export function listBackups(backupDirectory: string): BackupInfo[] {
   if (!existsSync(backupDirectory)) return []
   return readdirSync(backupDirectory)
     .filter((name) => name.endsWith('.sqlite'))
-    .map((name) => {
+    .flatMap((name) => {
       const path = join(backupDirectory, name)
-      const stat = statSync(path)
-      const reason: BackupInfo['reason'] = name.includes('-pre-restore-')
-        ? 'pre-restore'
-        : name.includes('-automatic-')
-          ? 'automatic'
-          : 'manual'
-      return { id: name, path, createdAt: stat.birthtime.toISOString(), size: stat.size, reason }
+      try {
+        const stat = statSync(path)
+        const reason: BackupInfo['reason'] = name.includes('-pre-restore-')
+          ? 'pre-restore'
+          : name.includes('-automatic-')
+            ? 'automatic'
+            : 'manual'
+        return [
+          { id: name, path, createdAt: stat.birthtime.toISOString(), size: stat.size, reason }
+        ]
+      } catch {
+        return []
+      }
     })
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
 }

@@ -19,11 +19,15 @@ export function ScoreEstimatorSection({
 }): React.JSX.Element {
   const navigate = useNavigate()
   const [prefs, setPrefs] = useState(() => loadScoreEstimatorPrefs())
+  const [targetInput, setTargetInput] = useState(() =>
+    String(loadScoreEstimatorPrefs().targetScore)
+  )
 
   const estimate = useMemo(
     () => estimateXingceScore(categoryStats, prefs.templateId, prefs.targetScore),
     [categoryStats, prefs.templateId, prefs.targetScore]
   )
+  const hasAnySample = useMemo(() => estimate.modules.some((m) => m.hasData), [estimate.modules])
 
   function updatePrefs(patch: Partial<typeof prefs>): void {
     setPrefs((prev) => {
@@ -31,6 +35,17 @@ export function ScoreEstimatorSection({
       saveScoreEstimatorPrefs(next)
       return next
     })
+  }
+
+  function commitTargetInput(raw: string): void {
+    const parsed = Number(raw.trim())
+    const nextScore = Number.isFinite(parsed)
+      ? Math.min(95, Math.max(50, Math.round(parsed)))
+      : prefs.targetScore
+    setTargetInput(String(nextScore))
+    if (nextScore !== prefs.targetScore) {
+      updatePrefs({ targetScore: nextScore })
+    }
   }
 
   return (
@@ -58,11 +73,18 @@ export function ScoreEstimatorSection({
               min={50}
               max={95}
               step={1}
-              value={String(prefs.targetScore)}
+              value={targetInput}
               onChange={(_, data) => {
-                const parsed = Number(data.value)
-                if (Number.isFinite(parsed)) {
-                  updatePrefs({ targetScore: Math.min(95, Math.max(50, Math.round(parsed))) })
+                setTargetInput(data.value)
+                const parsed = Number(data.value.trim())
+                if (data.value.trim() && Number.isFinite(parsed) && parsed >= 50 && parsed <= 95) {
+                  updatePrefs({ targetScore: Math.round(parsed) })
+                }
+              }}
+              onBlur={() => commitTargetInput(targetInput)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  commitTargetInput(targetInput)
                 }
               }}
             />
@@ -70,6 +92,14 @@ export function ScoreEstimatorSection({
         </div>
       }
     >
+      {!hasAnySample && (
+        <div className="answer-panel" style={{ marginBottom: 12 }}>
+          <p className="muted" style={{ margin: 0 }}>
+            当前时间周期内暂无行测刷题样本，以下预估分按各模块 50%
+            基准正确率模拟展示；完成首批专项或模考后将自动更新为真实估分。
+          </p>
+        </div>
+      )}
       <div className="score-estimator-summary">
         <div className="score-summary-metrics">
           <div className="score-metric-box">

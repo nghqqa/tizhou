@@ -49,11 +49,15 @@ export function createInsightsAiHandlers(
     'reports.get': (params) => database.getReport(params.range),
     'reports.exportMarkdown': async (params) => {
       const report = database.getReport(params.range)
-      const selected = await dialog.showSaveDialog(ctx.getMainWindow()!, {
+      const win = ctx.getMainWindow()
+      const options = {
         title: '导出学习报告',
         defaultPath: reportFileName(params.range),
         filters: [{ name: 'Markdown', extensions: ['md'] }]
-      })
+      }
+      const selected = win
+        ? await dialog.showSaveDialog(win, options)
+        : await dialog.showSaveDialog(options)
       if (selected.canceled || !selected.filePath) return undefined
       writeFileSync(selected.filePath, renderReportMarkdown(report), 'utf8')
       return selected.filePath

@@ -743,6 +743,7 @@ export interface QuestionLibraryExportParams {
   category?: string
   wrongCause?: string
   query?: string
+  minWrongCount?: number
   includeAnswers: boolean
   includeNotes: boolean
   format: 'markdown' | 'html' | 'pdf'
@@ -753,6 +754,7 @@ export interface QuestionLibraryExportParams {
 export interface AiAskInput {
   messages: AiMessage[]
   purpose: 'chat' | 'explain' | 'evaluate' | 'variant' | 'plan' | 'knowledge'
+  requestId?: string
 }
 
 export interface AiAskResult {
@@ -760,6 +762,8 @@ export interface AiAskResult {
   provider: string
   model: string
   usage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number }
+  finishReason?: string
+  aborted?: boolean
 }
 
 export interface AiStreamEvent {

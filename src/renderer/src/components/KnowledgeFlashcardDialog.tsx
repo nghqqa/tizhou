@@ -64,18 +64,33 @@ export function KnowledgeFlashcardDialog({
   useEffect(() => {
     const dialog = dialogRef.current
     if (!dialog) return
+    let cancelled = false
     if (open) {
       const initialMode = selectedDocument ? 'current' : 'all'
       setSourceMode(initialMode)
       buildDeck(initialMode)
       void invoke<StudySnippet[]>({ method: 'snippets.list', params: {} })
-        .then(setSnippets)
-        .catch(() => setSnippets([]))
+        .then((loaded) => {
+          if (cancelled) return
+          setSnippets(loaded)
+        })
+        .catch(() => {
+          if (!cancelled) setSnippets([])
+        })
       if (!dialog.open) dialog.showModal()
     } else if (dialog.open) {
       dialog.close()
     }
+    return () => {
+      cancelled = true
+    }
   }, [open, selectedDocument?.id])
+
+  useEffect(() => {
+    if (open && sourceMode === 'snippets') {
+      buildDeck('snippets', snippets)
+    }
+  }, [open, sourceMode, snippets])
 
   const finished = deck.length > 0 && index >= deck.length
   const current = !finished ? deck[index] : undefined

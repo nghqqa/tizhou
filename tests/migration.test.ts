@@ -192,4 +192,91 @@ describe('跨机迁移导入安全', () => {
     writePackage(pkg, validManifest({ names }), { vaultDirs: names })
     expect(() => service.importFrom(pkg, join(workspace, 't10'))).toThrow(/上限/)
   })
+
+  it('完整迁移导入：拷贝中文知识库目录并重映射题号前缀、路径与用户学习记录', () => {
+    const pkg = join(workspace, 'pkg-full-copy')
+    const targetRoot = join(workspace, 'target-vaults')
+    const oldVaultPath = join(workspace, 'old-machine', '甲库')
+    const oldVaultId = vaultIdForPath(oldVaultPath)
+    const oldFilePath = join(oldVaultPath, '题库', 'q1.md')
+
+    writePackage(
+      pkg,
+      {
+        app: 'tizhou',
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        vaults: [{ name: '甲库', path: oldVaultPath }]
+      },
+      { skipDb: true, vaultDirs: ['甲库'] }
+    )
+    mkdirSync(join(pkg, 'vaults', '甲库', '题库'), { recursive: true })
+    writeFileSync(join(pkg, 'vaults', '甲库', '题库', 'q1.md'), '# 测试题', 'utf8')
+
+    const db: DatabaseSyncType = new DatabaseSync(join(pkg, 'workbench.sqlite'))
+    db.exec(`
+      CREATE TABLE vault_registry (id TEXT PRIMARY KEY, name TEXT, path TEXT NOT NULL);
+      CREATE TABLE questions (id TEXT PRIMARY KEY, vault_id TEXT NOT NULL, file_path TEXT NOT NULL);
+      CREATE TABLE documents (id TEXT PRIMARY KEY, vault_id TEXT NOT NULL, file_path TEXT NOT NULL);
+      CREATE TABLE vault_snapshots (id TEXT PRIMARY KEY, vault_id TEXT NOT NULL);
+      CREATE TABLE favorites (question_id TEXT PRIMARY KEY, created_at TEXT);
+      CREATE TABLE user_notes (question_id TEXT PRIMARY KEY, content TEXT, updated_at TEXT);
+    `)
+    db.prepare('INSERT INTO vault_registry(id, name, path) VALUES (?, ?, ?)').run(
+      oldVaultId,
+      '甲库',
+      oldVaultPath
+    )
+    db.prepare('INSERT INTO questions(id, vault_id, file_path) VALUES (?, ?, ?)').run(
+      `${oldVaultId}:q1`,
+      oldVaultId,
+      oldFilePath
+    )
+    db.prepare('INSERT INTO favorites(question_id, created_at) VALUES (?, ?)').run(
+      `${oldVaultId}:q1`,
+      new Date().toISOString()
+    )
+    db.prepare('INSERT INTO user_notes(question_id, content, updated_at) VALUES (?, ?, ?)').run(
+      `${oldVaultId}:q1`,
+      '迁移保留笔记',
+      new Date().toISOString()
+    )
+    db.close()
+
+    const result = service.importFrom(pkg, targetRoot)
+    expect(result.restartRequired).toBe(true)
+    expect(existsSync(join(targetRoot, '甲库', '题库', 'q1.md'))).toBe(true)
+
+    const importedDb: DatabaseSyncType = new DatabaseSync(join(dataDirectory, 'pending-import.db'))
+    const vRow = importedDb.prepare('SELECT id, path FROM vault_registry LIMIT 1').get() as {
+      id: string
+      path: string
+    }
+    const qRow = importedDb
+      .prepare('SELECT id, vault_id, file_path FROM questions LIMIT 1')
+      .get() as {
+      id: string
+      vault_id: string
+      file_path: string
+    }
+    const fRow = importedDb.prepare('SELECT question_id FROM favorites LIMIT 1').get() as {
+      question_id: string
+    }
+    const nRow = importedDb
+      .prepare('SELECT question_id, content FROM user_notes LIMIT 1')
+      .get() as {
+      question_id: string
+      content: string
+    }
+    importedDb.close()
+
+    expect(vRow.id).not.toBe(oldVaultId)
+    expect(vRow.path).toBe(join(targetRoot, '甲库'))
+    expect(qRow.vault_id).toBe(vRow.id)
+    expect(qRow.id).toBe(`${vRow.id}:q1`)
+    expect(qRow.file_path).toBe(join(targetRoot, '甲库', '题库', 'q1.md'))
+    expect(fRow.question_id).toBe(qRow.id)
+    expect(nRow.question_id).toBe(qRow.id)
+    expect(nRow.content).toBe('迁移保留笔记')
+  })
 })

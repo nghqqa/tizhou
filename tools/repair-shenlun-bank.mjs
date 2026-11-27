@@ -7,7 +7,7 @@
 
 import { createHash } from 'node:crypto'
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { argv, exit } from 'node:process'
 import { DatabaseSync } from 'node:sqlite'
 import matter from 'gray-matter'
@@ -263,8 +263,23 @@ if (!opts.dryRun && opts.sqlite && sqliteUpdates.length > 0) {
       const db = new DatabaseSync(opts.sqlite)
       db.exec('PRAGMA busy_timeout = 5000;')
       const nowIso = new Date().toISOString()
-      const vaultRow = db.prepare('SELECT id FROM vault_registry WHERE active = 1 LIMIT 1').get()
-      const vaultId = vaultRow ? String(vaultRow.id) : 'vault-6afa97e45dd90c3d45f0'
+      const normPath = (p) => (process.platform === 'win32' ? resolve(p).toLowerCase() : resolve(p))
+      const targetVaultNorm = normPath(opts.vault)
+      const allVaults = db.prepare('SELECT id, path, active FROM vault_registry').all()
+      const vaultRow =
+        allVaults.find((row) => {
+          const vp = normPath(String(row.path))
+          return (
+            targetVaultNorm === vp ||
+            targetVaultNorm.startsWith(`${vp}\\`) ||
+            targetVaultNorm.startsWith(`${vp}/`)
+          )
+        }) ?? allVaults.find((row) => Number(row.active) === 1)
+      if (!vaultRow) {
+        db.close()
+        throw new Error(`workbench.sqlite 中未找到匹配 ${opts.vault} 的 vault_registry 记录`)
+      }
+      const vaultId = String(vaultRow.id)
       const stmt = db.prepare(
         `UPDATE questions
          SET stem = ?, material = ?, explanation = ?, content_hash = ?,

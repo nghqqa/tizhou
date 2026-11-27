@@ -74,7 +74,13 @@ export function PracticeFilterPanel({
 }: PracticeFilterPanelProps): React.JSX.Element {
   const [warmupOpen, setWarmupOpen] = useState(false)
   const isDataAnalysis = category === '资料分析' || category.startsWith('资料分析')
-  const lockStep5 = isDataAnalysis && !onlyWrong && !onlyFavorite && !keyword.trim()
+  const lockStep5 =
+    isDataAnalysis &&
+    !onlyWrong &&
+    !onlyFavorite &&
+    !onlyUnattempted &&
+    !difficulty &&
+    !keyword.trim()
   return (
     <>
       <Section

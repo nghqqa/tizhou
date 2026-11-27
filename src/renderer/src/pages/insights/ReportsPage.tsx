@@ -62,6 +62,7 @@ export function ReportsPage(): React.JSX.Element {
   }
 
   useEffect(() => {
+    let cancelled = false
     setReport(undefined)
     setEssayRecordsFailed(false)
     setError('')
@@ -75,11 +76,17 @@ export function ReportsPage(): React.JSX.Element {
         .catch(() => ({ rows: [] as ConstructedAttemptRecord[], failed: true }))
     ])
       .then(([reportData, historyResult]) => {
+        if (cancelled) return
         setReport(reportData)
         setEssayRecords(historyResult.rows)
         setEssayRecordsFailed(historyResult.failed)
       })
-      .catch((cause) => setError(cause instanceof Error ? cause.message : '报告生成失败'))
+      .catch((cause) => {
+        if (!cancelled) setError(cause instanceof Error ? cause.message : '报告生成失败')
+      })
+    return () => {
+      cancelled = true
+    }
   }, [range])
 
   const essaySummary = useMemo(() => {

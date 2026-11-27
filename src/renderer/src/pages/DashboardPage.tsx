@@ -109,7 +109,12 @@ function StatStrip({ dashboard }: { dashboard: DashboardData }): React.JSX.Eleme
       value: dashboard.accuracy,
       suffix: '%',
       progress: dashboard.accuracy / 100,
-      detail: dashboard.todayAttempts > 0 ? '全部有效作答' : '暂无数据'
+      detail:
+        dashboard.todayAttempts > 0 ||
+        dashboard.accuracy > 0 ||
+        dashboard.subjectMastery.some((item) => item.attempts > 0)
+          ? '全部有效作答'
+          : '暂无数据'
     },
     {
       label: '到期复习',
@@ -480,33 +485,40 @@ export function DashboardPage(): React.JSX.Element {
       <div className="grid two">
         <Section title="继续进行">
           {dashboard.activeExam ? (
-            <div>
-              <div className="data-row">
+            (() => {
+              const activeAnsweredCount = Object.values(dashboard.activeExam.answers).filter(
+                (entry) => entry.answer.some((value) => value.trim())
+              ).length
+              return (
                 <div>
-                  <strong>{dashboard.activeExam.title}</strong>
-                  <span>
-                    已答 {Object.keys(dashboard.activeExam.answers).length} /{' '}
-                    {dashboard.activeExam.questionIds.length} 题
-                  </span>
+                  <div className="data-row">
+                    <div>
+                      <strong>{dashboard.activeExam.title}</strong>
+                      <span>
+                        已答 {activeAnsweredCount} / {dashboard.activeExam.questionIds.length} 题
+                      </span>
+                    </div>
+                    <ExamIcon size={20} className="accent" />
+                  </div>
+                  <ProgressBar
+                    value={
+                      dashboard.activeExam.questionIds.length > 0
+                        ? activeAnsweredCount / dashboard.activeExam.questionIds.length
+                        : 0
+                    }
+                    style={{ marginTop: 10 }}
+                  />
+                  <button
+                    type="button"
+                    className="mastery-action"
+                    style={{ marginTop: 10 }}
+                    onClick={() => navigate('/exam/run')}
+                  >
+                    继续模考 <ArrowRightIcon size={12} />
+                  </button>
                 </div>
-                <ExamIcon size={20} className="accent" />
-              </div>
-              <ProgressBar
-                value={
-                  Object.keys(dashboard.activeExam.answers).length /
-                  dashboard.activeExam.questionIds.length
-                }
-                style={{ marginTop: 10 }}
-              />
-              <button
-                type="button"
-                className="mastery-action"
-                style={{ marginTop: 10 }}
-                onClick={() => navigate('/exam/run')}
-              >
-                继续模考 <ArrowRightIcon size={12} />
-              </button>
-            </div>
+              )
+            })()
           ) : dashboard.activePlan ? (
             (() => {
               const plan = dashboard.activePlan!

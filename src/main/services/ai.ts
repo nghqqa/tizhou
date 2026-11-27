@@ -236,11 +236,41 @@ function normalizeHostname(hostname: string): string {
   return hostname.replace(/^\[/, '').replace(/\]$/, '').toLowerCase()
 }
 
+function hostnameOf(baseUrl: string): string {
+  try {
+    return normalizeHostname(new URL(baseUrl).hostname)
+  } catch {
+    return ''
+  }
+}
+
+async function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), ms)
+      })
+    ])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
 function isPrivateAddress(address: string): boolean {
   const normalized = normalizeHostname(address)
   if (normalized === '::' || normalized === '::1') return true
   if (/^(fc|fd)/i.test(normalized) || /^fe[89ab]/i.test(normalized)) return true
-  const mapped = normalized.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/i)?.[1]
+  let mapped = normalized.match(/^(?:0+:){0,5}(?:::)?ffff:(\d+\.\d+\.\d+\.\d+)$/i)?.[1]
+  if (!mapped) {
+    const hexMapped = normalized.match(/^(?:0+:){0,5}(?:::)?ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i)
+    if (hexMapped) {
+      const hi = Number.parseInt(hexMapped[1]!, 16)
+      const lo = Number.parseInt(hexMapped[2]!, 16)
+      mapped = `${(hi >> 8) & 0xff}.${hi & 0xff}.${(lo >> 8) & 0xff}.${lo & 0xff}`
+    }
+  }
   const ipv4 = mapped ?? (isIP(normalized) === 4 ? normalized : '')
   if (!ipv4) return false
   const [a = -1, b = -1] = ipv4.split('.').map(Number)
@@ -284,7 +314,11 @@ function parseBaseUrl(value: string, provider: AiProvider): URL {
 async function verifyNetworkTarget(value: string, provider: AiProvider): Promise<void> {
   const parsed = parseBaseUrl(value, provider)
   if (providerInfo(provider).local) return
-  const results = await lookup(parsed.hostname, { all: true, verbatim: true })
+  const results = await withTimeout(
+    lookup(parsed.hostname, { all: true, verbatim: true }),
+    8_000,
+    '域名解析超时，请检查网络连接'
+  )
   if (!results.length || results.some((result) => isPrivateAddress(result.address)))
     throw new Error('模型域名解析到了不可访问的私有或保留地址')
 }
@@ -448,7 +482,9 @@ export function requestSpec(
               }))
             : sanitizePlainMessages(messages),
           temperature: config.temperature,
-          max_tokens: config.maxTokens,
+          max_tokens: isDeepSeekEndpoint(config.baseUrl)
+            ? Math.min(config.maxTokens, 8192)
+            : config.maxTokens,
           stream,
           // DeepSeek V4 系列默认开启思考模式，推理会占用输出预算导致内容为空或 JSON 截断，按官方参数关闭
           ...(isDeepSeekEndpoint(config.baseUrl) ? { thinking: { type: 'disabled' } } : {})
@@ -474,13 +510,18 @@ function textFromResponse(protocol: AiProtocol, payload: Record<string, unknown>
     const output = Array.isArray(payload.output) ? payload.output : []
     return output
       .flatMap((item) =>
-        item && typeof item === 'object' && Array.isArray((item as Record<string, unknown>).content)
+        item &&
+        typeof item === 'object' &&
+        (item as Record<string, unknown>).type !== 'reasoning' &&
+        Array.isArray((item as Record<string, unknown>).content)
           ? ((item as Record<string, unknown>).content as unknown[])
           : []
       )
       .flatMap((part) =>
         part &&
         typeof part === 'object' &&
+        (part as Record<string, unknown>).type !== 'reasoning_text' &&
+        (part as Record<string, unknown>).type !== 'thinking' &&
         typeof (part as Record<string, unknown>).text === 'string'
           ? [(part as Record<string, unknown>).text as string]
           : []
@@ -489,14 +530,14 @@ function textFromResponse(protocol: AiProtocol, payload: Record<string, unknown>
   }
   if (protocol === 'anthropic-messages') {
     return (Array.isArray(payload.content) ? payload.content : [])
-      .flatMap((part) =>
-        part &&
-        typeof part === 'object' &&
-        (part as Record<string, unknown>).type !== 'thinking' &&
-        typeof (part as Record<string, unknown>).text === 'string'
+      .flatMap((part) => {
+        if (!part || typeof part !== 'object') return []
+        const type = (part as Record<string, unknown>).type
+        if (type === 'thinking' || type === 'redacted_thinking') return []
+        return typeof (part as Record<string, unknown>).text === 'string'
           ? [(part as Record<string, unknown>).text as string]
           : []
-      )
+      })
       .join('\n')
   }
   if (protocol === 'google-generate-content') {
@@ -713,10 +754,9 @@ export async function consumeSseStream(
   let sawReasoning = false
   let streamFinished = false
 
-  const handleLine = (rawLine: string): boolean => {
-    const line = rawLine.trimEnd()
-    if (!line || line.startsWith(':') || !line.startsWith('data:')) return false
-    const data = line.slice(5).trimStart()
+  let eventDataBuffer = ''
+
+  const processDataString = (data: string): boolean => {
     if (!data) return false
     if (data === '[DONE]') {
       streamFinished = true
@@ -724,8 +764,15 @@ export async function consumeSseStream(
     }
     const payload = safeParse<Record<string, unknown> | null>(data, null)
     if (!payload) return false
-    if (payload.error) {
-      throw new Error(`模型服务返回错误：${responseError(payload, data)}`)
+    if (payload.error || payload.type === 'error' || payload.type === 'response.failed') {
+      const errorSource =
+        payload.type === 'response.failed' &&
+        payload.response &&
+        typeof payload.response === 'object'
+          ? (payload.response as Record<string, unknown>)
+          : payload
+      const fallbackMsg = typeof payload.message === 'string' ? payload.message : data
+      throw new Error(`模型服务返回错误：${responseError(errorSource, fallbackMsg)}`)
     }
     const {
       delta,
@@ -749,6 +796,42 @@ export async function consumeSseStream(
     return false
   }
 
+  const handleSseLine = (rawLine: string): boolean => {
+    const line = rawLine.trimEnd()
+    if (!line) {
+      if (!eventDataBuffer) return false
+      const buffered = eventDataBuffer
+      eventDataBuffer = ''
+      return processDataString(buffered)
+    }
+    if (line.startsWith(':') || !line.startsWith('data:')) return false
+    const chunk = line.slice(5).trimStart()
+    if (!chunk) return false
+    if (chunk === '[DONE]') {
+      eventDataBuffer = ''
+      return processDataString('[DONE]')
+    }
+    if (safeParse<Record<string, unknown> | null>(chunk, null)) {
+      // 新 chunk 本身已构成合法 JSON：丢弃残留非完整缓冲并立即分发
+      eventDataBuffer = ''
+      return processDataString(chunk)
+    }
+    if (!eventDataBuffer) {
+      // 仅对以 { 或 [ 开头但被换行拆分的 JSON 分片启用多行拼接，防非 JSON 心跳污染缓冲
+      if (chunk.startsWith('{') || chunk.startsWith('[')) {
+        eventDataBuffer = chunk
+      }
+      return false
+    }
+    const candidate = `${eventDataBuffer}\n${chunk}`
+    if (safeParse<Record<string, unknown> | null>(candidate, null)) {
+      eventDataBuffer = ''
+      return processDataString(candidate)
+    }
+    eventDataBuffer = candidate
+    return false
+  }
+
   try {
     while (true) {
       const { value, done } = await reader.read()
@@ -764,7 +847,7 @@ export async function consumeSseStream(
       while (newlineIndex >= 0) {
         const line = buffer.slice(0, newlineIndex)
         buffer = buffer.slice(newlineIndex + 1)
-        if (handleLine(line)) {
+        if (handleSseLine(line)) {
           await reader.cancel().catch(() => {})
           return {
             content,
@@ -778,10 +861,15 @@ export async function consumeSseStream(
     }
     buffer += decoder.decode().replace(/\r\n/g, '\n')
     for (const line of buffer.split('\n')) {
-      if (handleLine(line)) {
+      if (handleSseLine(line)) {
         await reader.cancel().catch(() => {})
         break
       }
+    }
+    if (eventDataBuffer) {
+      const rest = eventDataBuffer
+      eventDataBuffer = ''
+      processDataString(rest)
     }
   } finally {
     if (!streamFinished) {
@@ -800,6 +888,7 @@ export async function consumeSseStream(
 export class AiService {
   private readonly activeStreams = new Map<string, AbortController>()
   private readonly userCancelled = new Set<string>()
+  private readonly cancelExpiryTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
   constructor(private readonly database: DatabaseService) {}
 
@@ -831,6 +920,7 @@ export class AiService {
   }
 
   saveConfig(input: AiConfigInput): AiConfigView {
+    const previous = this.getConfig()
     const baseUrl = parseBaseUrl(input.baseUrl, input.provider).toString().replace(/\/$/, '')
     const config: StoredAiConfig = {
       provider: input.provider,
@@ -842,7 +932,17 @@ export class AiService {
     }
     if (!config.model) throw new Error('模型名称不能为空')
     const encryptedKey = this.encryptApiKey(input.apiKey)
-    this.database.saveAiRecord(JSON.stringify(config), encryptedKey, false)
+    const targetSwitched =
+      previous.provider !== config.provider || hostnameOf(previous.baseUrl) !== hostnameOf(baseUrl)
+    const clearKey = !encryptedKey && targetSwitched
+    this.database.saveAiRecord(
+      JSON.stringify(config),
+      encryptedKey,
+      false,
+      undefined,
+      undefined,
+      clearKey
+    )
     return this.getConfig()
   }
 
@@ -874,10 +974,8 @@ export class AiService {
   }
 
   saveVlmConfig(input: VlmConfigInput): VlmConfigView {
-    const previous = safeParse<Partial<StoredVlmMeta>>(
-      this.database.getVlmRecord()?.payload_json ?? '',
-      {}
-    )
+    const prevRecord = this.database.getVlmRecord()
+    const previous = safeParse<Partial<StoredVlmMeta>>(prevRecord?.payload_json ?? '', {})
     const mode: VlmModelMode = input.mode === 'custom' ? 'custom' : 'reuse-main'
     const meta: StoredVlmMeta = { enabled: Boolean(input.enabled), mode }
     if (mode === 'custom') {
@@ -900,7 +998,33 @@ export class AiService {
       meta.model = previous.model
     }
     const encryptedKey = this.encryptApiKey(input.apiKey)
-    this.database.saveVlmRecord(JSON.stringify(meta), encryptedKey, false)
+    const customTargetSwitched =
+      mode === 'custom' &&
+      ((Boolean(previous.provider) && previous.provider !== meta.provider) ||
+        (Boolean(previous.baseUrl) && hostnameOf(previous.baseUrl!) !== hostnameOf(meta.baseUrl!)))
+    const clearKey = !encryptedKey && customTargetSwitched
+    const unchangedModel =
+      !encryptedKey &&
+      !clearKey &&
+      mode === (previous.mode ?? 'reuse-main') &&
+      (mode === 'reuse-main' ||
+        (meta.provider === previous.provider &&
+          meta.protocol === previous.protocol &&
+          meta.baseUrl === previous.baseUrl &&
+          meta.model === previous.model))
+    const verified = unchangedModel ? Boolean(prevRecord?.verified) : false
+    const lastCheckedAt =
+      unchangedModel && prevRecord?.last_checked_at ? String(prevRecord.last_checked_at) : undefined
+    const lastError =
+      unchangedModel && prevRecord?.last_error ? String(prevRecord.last_error) : undefined
+    this.database.saveVlmRecord(
+      JSON.stringify(meta),
+      encryptedKey,
+      verified,
+      lastCheckedAt,
+      lastError,
+      clearKey
+    )
     return this.getVlmConfig()
   }
 
@@ -1041,25 +1165,39 @@ export class AiService {
     const apiKey = this.readApiKey()
     if (providerInfo(config.provider).apiKeyRequired && !apiKey) throw new Error('请先保存 API Key')
     await verifyNetworkTarget(config.baseUrl, config.provider)
+    const cleanBase = config.baseUrl.replace(
+      /\/(?:chat\/completions|responses|messages|models)$/i,
+      ''
+    )
     let endpoint: string
     const headers: Record<string, string> = { Accept: 'application/json' }
     if (config.protocol === 'google-generate-content') {
-      const root = /\/v1beta$/i.test(config.baseUrl)
-        ? config.baseUrl
-        : appendEndpoint(config.baseUrl, 'v1beta')
+      const root = /\/v1beta$/i.test(cleanBase) ? cleanBase : appendEndpoint(cleanBase, 'v1beta')
       endpoint = appendEndpoint(root, 'models')
       headers['x-goog-api-key'] = apiKey
     } else {
       endpoint = appendEndpoint(
-        config.baseUrl,
-        /\/(v1|v3|v4)$/i.test(config.baseUrl) ? 'models' : 'v1/models'
+        cleanBase,
+        /\/(v1|v3|v4)$/i.test(cleanBase) ? 'models' : 'v1/models'
       )
       if (config.protocol === 'anthropic-messages') {
         headers['x-api-key'] = apiKey
         headers['anthropic-version'] = '2023-06-01'
       } else if (apiKey) headers.Authorization = `Bearer ${apiKey}`
     }
-    const response = await fetch(endpoint, { headers, redirect: 'error' })
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 15_000)
+    let response: Response
+    try {
+      response = await fetch(endpoint, { headers, signal: controller.signal, redirect: 'error' })
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw new Error('获取模型列表超时，请检查网络或服务地址')
+      }
+      throw error
+    } finally {
+      clearTimeout(timer)
+    }
     const raw = await response.text()
     const payload = safeParse<Record<string, unknown>>(raw, {})
     if (!response.ok)
@@ -1137,10 +1275,25 @@ export class AiService {
     return { config: effective, apiKey, messages }
   }
 
+  private clearCancelExpiry(requestId: string): void {
+    const expiry = this.cancelExpiryTimers.get(requestId)
+    if (expiry) {
+      clearTimeout(expiry)
+      this.cancelExpiryTimers.delete(requestId)
+    }
+  }
+
   cancelStream(requestId: string): boolean {
     const controller = this.activeStreams.get(requestId)
-    if (!controller) return false
     this.userCancelled.add(requestId)
+    this.clearCancelExpiry(requestId)
+    const expiry = setTimeout(() => {
+      this.userCancelled.delete(requestId)
+      this.cancelExpiryTimers.delete(requestId)
+    }, 60_000)
+    expiry.unref?.()
+    this.cancelExpiryTimers.set(requestId, expiry)
+    if (!controller) return false
     controller.abort()
     this.activeStreams.delete(requestId)
     return true
@@ -1148,7 +1301,7 @@ export class AiService {
 
   async ask(input: AiAskInput, timeoutMs = 60_000): Promise<AiAskResult> {
     const { config, apiKey, messages } = this.prepareAskContext(input)
-    return this.executeRequest(config, messages, apiKey, { timeoutMs })
+    return this.executeRequest(config, messages, apiKey, { timeoutMs, requestId: input.requestId })
   }
 
   async askStream(
@@ -1157,6 +1310,11 @@ export class AiService {
     timeoutMs = 120_000
   ): Promise<AiAskResult & { aborted?: boolean }> {
     const { config, apiKey, messages } = this.prepareAskContext(input)
+    if (this.userCancelled.has(input.requestId)) {
+      this.userCancelled.delete(input.requestId)
+      this.clearCancelExpiry(input.requestId)
+      return { content: '', provider: config.provider, model: config.model, aborted: true }
+    }
     const controller = new AbortController()
     this.activeStreams.set(input.requestId, controller)
     let idleTimer: ReturnType<typeof setTimeout> | undefined
@@ -1167,6 +1325,7 @@ export class AiService {
     resetIdleTimer()
     const hardCapTimer = setTimeout(() => controller.abort(), Math.max(timeoutMs * 2, 240_000))
     let accumulated = ''
+    let finishReason: string | undefined
     const emitDelta = (delta: string): void => {
       if (!delta) return
       accumulated += delta
@@ -1201,7 +1360,6 @@ export class AiService {
       }
       const contentType = (response.headers.get('content-type') ?? '').toLowerCase()
       let usage: AiAskResult['usage']
-      let finishReason: string | undefined
       let sawReasoning = false
       if (contentType.includes('text/event-stream') && response.body) {
         const streamed = await consumeSseStream(config.protocol, response.body, emitDelta, {
@@ -1261,6 +1419,7 @@ export class AiService {
         provider: config.provider,
         model: config.model,
         usage,
+        ...(finishReason ? { finishReason } : {}),
         ...(this.userCancelled.has(input.requestId) ? { aborted: true } : {})
       }
     } catch (error) {
@@ -1273,6 +1432,7 @@ export class AiService {
             content: accumulated,
             provider: config.provider,
             model: config.model,
+            ...(finishReason ? { finishReason } : {}),
             aborted: true
           }
         }
@@ -1284,6 +1444,7 @@ export class AiService {
       clearTimeout(hardCapTimer)
       this.activeStreams.delete(input.requestId)
       this.userCancelled.delete(input.requestId)
+      this.clearCancelExpiry(input.requestId)
     }
   }
 
@@ -1291,13 +1452,29 @@ export class AiService {
     config: StoredAiConfig,
     messages: AiMessage[],
     apiKey: string,
-    options: { timeoutMs: number; visionMode?: boolean }
+    options: { timeoutMs: number; visionMode?: boolean; requestId?: string }
   ): Promise<AiAskResult> {
-    await verifyNetworkTarget(config.baseUrl, config.provider)
-    const request = requestSpec(config, messages, apiKey)
     const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), options.timeoutMs)
+    let timedOut = false
+    const timer = setTimeout(() => {
+      timedOut = true
+      controller.abort()
+    }, options.timeoutMs)
+    if (options.requestId) {
+      if (this.userCancelled.has(options.requestId)) {
+        clearTimeout(timer)
+        this.userCancelled.delete(options.requestId)
+        this.clearCancelExpiry(options.requestId)
+        return { content: '', provider: config.provider, model: config.model, aborted: true }
+      }
+      this.activeStreams.set(options.requestId, controller)
+    }
     try {
+      await verifyNetworkTarget(config.baseUrl, config.provider)
+      if (options.requestId && this.userCancelled.has(options.requestId)) {
+        return { content: '', provider: config.provider, model: config.model, aborted: true }
+      }
+      const request = requestSpec(config, messages, apiKey)
       const response = await fetch(request.endpoint, {
         method: 'POST',
         headers: request.headers,
@@ -1315,17 +1492,18 @@ export class AiService {
         throw new Error(`模型服务返回 ${response.status}：${detail}`)
       }
       const content = textFromResponse(config.protocol, payload)
+      const choices = Array.isArray(payload.choices)
+        ? (payload.choices as Array<Record<string, unknown>>)
+        : []
+      const candidates = Array.isArray(payload.candidates)
+        ? (payload.candidates as Array<Record<string, unknown>>)
+        : []
+      let finishReason =
+        (choices[0]?.finish_reason as string | undefined) ??
+        (candidates[0]?.finishReason as string | undefined) ??
+        (typeof payload.stop_reason === 'string' ? payload.stop_reason : undefined)
+      if (!finishReason && payload.status === 'incomplete') finishReason = 'length'
       if (!content.trim()) {
-        const choices = Array.isArray(payload.choices)
-          ? (payload.choices as Array<Record<string, unknown>>)
-          : []
-        const candidates = Array.isArray(payload.candidates)
-          ? (payload.candidates as Array<Record<string, unknown>>)
-          : []
-        const finishReason =
-          (choices[0]?.finish_reason as string | undefined) ??
-          (candidates[0]?.finishReason as string | undefined) ??
-          (typeof payload.stop_reason === 'string' ? payload.stop_reason : undefined)
         if (
           finishReason === 'length' ||
           finishReason === 'MAX_TOKENS' ||
@@ -1341,14 +1519,24 @@ export class AiService {
         content,
         provider: config.provider,
         model: config.model,
+        ...(finishReason ? { finishReason } : {}),
         usage: usageFromResponse(config.protocol, payload)
       }
     } catch (error) {
-      if (error instanceof Error && error.name === 'AbortError')
+      if (options.requestId && this.userCancelled.has(options.requestId)) {
+        return { content: '', provider: config.provider, model: config.model, aborted: true }
+      }
+      if (timedOut || (error instanceof Error && error.name === 'AbortError')) {
         throw new Error('模型请求超时，请检查网络或服务地址')
+      }
       throw error
     } finally {
       clearTimeout(timer)
+      if (options.requestId) {
+        this.activeStreams.delete(options.requestId)
+        this.userCancelled.delete(options.requestId)
+        this.clearCancelExpiry(options.requestId)
+      }
     }
   }
 
@@ -1382,11 +1570,15 @@ export class AiService {
     }
 
     let timedOut = false
-    let timer: ReturnType<typeof setTimeout> | undefined
+    const timer = setTimeout(() => {
+      timedOut = true
+      controller.abort()
+    }, timeoutMs)
     try {
       await verifyNetworkTarget(config.baseUrl, config.provider)
       if (requestId && (this.userCancelled.has(requestId) || controller.signal.aborted)) {
         this.userCancelled.delete(requestId)
+        this.clearCancelExpiry(requestId)
         return {
           content: '',
           toolCalls: [],
@@ -1403,10 +1595,6 @@ export class AiService {
         tools,
         options?.toolChoice ? { toolChoice: options.toolChoice } : undefined
       )
-      timer = setTimeout(() => {
-        timedOut = true
-        controller.abort()
-      }, timeoutMs)
 
       const response = await fetch(spec.endpoint, {
         method: 'POST',
@@ -1417,14 +1605,18 @@ export class AiService {
       })
       const raw = await response.text()
       const payload = safeParse<Record<string, unknown>>(raw, {})
-      if (!response.ok) {
+      if (!response.ok || payload.error) {
         const message = responseError(payload, raw)
         if (tools.length > 0 && isToolsUnsupportedError(response.status, `${message}\n${raw}`)) {
           throw new ToolsUnsupportedError(
             `当前模型端点不支持原生工具调用（${response.status}）：${message}`
           )
         }
-        throw new Error(`模型服务返回 ${response.status}：${message}`)
+        throw new Error(
+          response.ok
+            ? `模型服务返回错误：${message}`
+            : `模型服务返回 ${response.status}：${message}`
+        )
       }
       const parsed = parseToolTurnResponse(config.protocol, payload)
       return {
@@ -1464,6 +1656,7 @@ export class AiService {
       if (requestId) {
         this.activeStreams.delete(requestId)
         this.userCancelled.delete(requestId)
+        this.clearCancelExpiry(requestId)
       }
     }
   }
@@ -1500,6 +1693,7 @@ export interface ParsedToolCall {
 export interface ToolTurnMessage {
   role: 'system' | 'user' | 'assistant' | 'tool'
   content: string
+  reasoningContent?: string
   toolCalls?: ParsedToolCall[]
   toolCallId?: string
   toolName?: string
@@ -1511,6 +1705,8 @@ export interface ToolTurnResult {
   provider: AiProvider
   model: string
   usage?: AiAskResult['usage']
+  reasoningContent?: string
+  fromFallback?: boolean
   aborted?: boolean
 }
 
@@ -1567,8 +1763,8 @@ export function extractFallbackToolCalls(rawText: string): {
     calls.push({
       id:
         typeof parsed.id === 'string' && parsed.id.trim()
-          ? parsed.id.trim()
-          : `fallback_${randomUUID()}`,
+          ? parsed.id.trim().slice(0, 40)
+          : `fc_${randomUUID().replace(/-/g, '').slice(0, 24)}`,
       name: parsed.name.trim(),
       arguments: asArgsRecord(argsSource)
     })
@@ -1811,6 +2007,7 @@ export function toolRequestSpec(
       return {
         role: 'assistant',
         content: msg.content || null,
+        ...(msg.reasoningContent !== undefined ? { reasoning_content: msg.reasoningContent } : {}),
         tool_calls: msg.toolCalls.map((call) => ({
           id: call.id,
           type: 'function',
@@ -1839,7 +2036,7 @@ export function toolRequestSpec(
     stream: false,
     ...(isDeepSeekEndpoint(config.baseUrl) ? { thinking: { type: 'disabled' } } : {})
   }
-  if (tools.length > 0) {
+  if (tools.length > 0 && !(config.protocol === 'ollama-openai' && toolChoice === 'none')) {
     body.tools = tools.map((t) => ({
       type: 'function',
       function: {
@@ -1966,17 +2163,37 @@ export function parseToolTurnResponse(
   }
 
   let content = textFromResponse(protocol, payload)
+  let fromFallback = false
   if (toolCalls.length === 0 && content) {
     const fallback = extractFallbackToolCalls(content)
     if (fallback.calls.length > 0) {
       toolCalls.push(...fallback.calls)
       content = fallback.cleanContent
+      fromFallback = true
+    }
+  }
+
+  let reasoningContent: string | undefined
+  if (protocol === 'openai-chat' || protocol === 'ollama-openai') {
+    const choices = Array.isArray(payload.choices)
+      ? (payload.choices as Array<Record<string, unknown>>)
+      : []
+    const msg =
+      choices[0]?.message && typeof choices[0].message === 'object'
+        ? (choices[0].message as Record<string, unknown>)
+        : undefined
+    if (typeof msg?.reasoning_content === 'string' && msg.reasoning_content) {
+      reasoningContent = msg.reasoning_content
+    } else if (typeof msg?.reasoning === 'string' && msg.reasoning) {
+      reasoningContent = msg.reasoning
     }
   }
 
   return {
     content,
     toolCalls,
-    usage: usageFromResponse(protocol, payload)
+    usage: usageFromResponse(protocol, payload),
+    ...(reasoningContent ? { reasoningContent } : {}),
+    ...(fromFallback ? { fromFallback: true } : {})
   }
 }

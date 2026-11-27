@@ -85,6 +85,42 @@ function unescapeJsonString(raw: string): string {
   })
 }
 
+function stripDimensionsArray(text: string): string {
+  const match = text.match(/"dimensions"\s*:\s*\[/)
+  if (!match || match.index === undefined) return text
+  const start = match.index
+  let i = start + match[0].length
+  let depth = 1
+  let inString = false
+  let escaped = false
+  while (i < text.length && depth > 0) {
+    const ch = text[i]!
+    if (inString) {
+      if (escaped) {
+        escaped = false
+      } else if (ch === '\\') {
+        escaped = true
+      } else if (ch === '"') {
+        inString = false
+      }
+      i += 1
+      continue
+    }
+    if (ch === '"') {
+      inString = true
+    } else if (ch === '[') {
+      depth += 1
+    } else if (ch === ']') {
+      depth -= 1
+    }
+    i += 1
+  }
+  while (i < text.length && /[\s,]/.test(text[i]!)) {
+    i += 1
+  }
+  return text.slice(0, start) + text.slice(i)
+}
+
 /** 从申论批改模型正在流式吐出的 JSON 文本中提取可读摘要与得分，避免直接闪现原始花括号与思考过程 */
 export function extractShenlunStreamPreview(raw: string): {
   chars: number
@@ -105,10 +141,7 @@ export function extractShenlunStreamPreview(raw: string): {
       snippet: '模型正在分析材料与采分点，稍后输出批改结果…'
     }
   }
-  const withoutDimensions = visibleRaw.replace(
-    /"dimensions"\s*:\s*\[[\s\S]*?(?:\]\s*(?=[,}])|$)/,
-    ''
-  )
+  const withoutDimensions = stripDimensionsArray(visibleRaw)
   const scoreMatch = withoutDimensions.match(/"score"\s*:\s*(\d{1,3}(?:\.\d+)?)/)
   const score = scoreMatch ? Number(scoreMatch[1]) : undefined
   const summaryMatch = visibleRaw.match(/"summary"\s*:\s*"((?:[^"\\]|\\.)*)/)

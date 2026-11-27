@@ -340,4 +340,22 @@ describe('shenlun normalization, quality inspection & cross-paper stitching', ()
     expect(forced.allowWrite).toBe(true)
     expect(forced.filtered).toHaveLength(2)
   })
+
+  it('buildShenlunSheetGrid does not add a ghost blank row after full-row newline and handles surrogate pairs', () => {
+    const fullRow = '一'.repeat(25)
+    const grid = buildShenlunSheetGrid(`${fullRow}\n二`, 100, 27)
+    // 第一行占 25 格，紧接换行不应多出第 2 行空白，故“二”应直接落在第 2 行第 1 格（第 26 格）
+    expect(grid.rows[1]?.cells[0]?.char).toBe('二')
+    expect(grid.lastFilledCellNumber).toBe(26)
+
+    // 连续两个换行才构成真正的段落空行
+    const withBlankLine = buildShenlunSheetGrid(`${fullRow}\n\n二`, 100, 28)
+    expect(withBlankLine.rows[1]?.cells[0]?.char).toBe('')
+    expect(withBlankLine.rows[2]?.cells[0]?.char).toBe('二')
+
+    // 代理对字符（UTF-16 length=2 但单字形）不应触发 compactLevel=2
+    const surrogateGrid = buildShenlunSheetGrid('𠮷字', 100, 3)
+    expect(surrogateGrid.rows[0]?.cells[0]?.char).toBe('𠮷')
+    expect(surrogateGrid.rows[0]?.cells[0]?.compactLevel).toBe(0)
+  })
 })

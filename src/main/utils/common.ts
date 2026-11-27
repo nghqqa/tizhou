@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
-import { isAbsolute, relative } from 'node:path'
+import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, realpathSync } from 'node:fs'
+import { isAbsolute, join, relative } from 'node:path'
 
 export function now(): string {
   return new Date().toISOString()
@@ -50,4 +51,50 @@ export function yamlQuote(value: unknown): string {
   return JSON.stringify(
     String(value ?? '').replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, '')
   )
+}
+
+/** 递归安全复制目录：避免 Node Windows cpSync 对中文路径崩溃，并拦截符号链接与过深嵌套 */
+export function copyDirectorySafe(
+  source: string,
+  target: string,
+  options?: { errorOnExist?: boolean; skipSymlinks?: boolean; maxDepth?: number }
+): void {
+  const maxDepth = options?.maxDepth ?? 64
+  if (options?.errorOnExist && existsSync(target)) {
+    throw new Error(`目标目录已存在：${target}`)
+  }
+  const sourceStat = lstatSync(source)
+  if (sourceStat.isSymbolicLink()) {
+    if (options?.skipSymlinks) return
+    throw new Error(`源目录存在符号链接，已拒绝复制：${source}`)
+  }
+  if (!sourceStat.isDirectory()) {
+    throw new Error(`源路径不是目录：${source}`)
+  }
+  const realRoot = realpathSync(source)
+  const copyRecursive = (srcDir: string, dstDir: string, depth: number): void => {
+    if (depth > maxDepth) {
+      throw new Error(`目录嵌套超过最大深度（${maxDepth}）：${srcDir}`)
+    }
+    mkdirSync(dstDir, { recursive: true })
+    for (const entry of readdirSync(srcDir, { withFileTypes: true })) {
+      const srcPath = join(srcDir, entry.name)
+      const dstPath = join(dstDir, entry.name)
+      const stat = lstatSync(srcPath)
+      if (stat.isSymbolicLink()) {
+        if (options?.skipSymlinks) continue
+        throw new Error(`目录包含符号链接，已拒绝复制：${srcPath}`)
+      }
+      if (stat.isDirectory()) {
+        const realSub = realpathSync(srcPath)
+        if (!isWithin(realRoot, realSub)) {
+          throw new Error(`目录存在符号链接逃逸，已拒绝复制：${srcPath}`)
+        }
+        copyRecursive(srcPath, dstPath, depth + 1)
+      } else if (stat.isFile()) {
+        copyFileSync(srcPath, dstPath)
+      }
+    }
+  }
+  copyRecursive(source, target, 0)
 }

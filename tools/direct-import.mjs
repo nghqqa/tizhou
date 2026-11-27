@@ -418,7 +418,8 @@ function buildOpenExam(dbPath, outDir, assetsSourceDir) {
 function buildKaogong(dbPath, outDir, qimgDir, primaryDir, gateOpts = {}) {
   const includeAll = argv.includes('--all')
   const backfillEnabled = argv.includes('--backfill-papers')
-  const primary = primaryDir ? loadPrimaryIndex(primaryDir) : null
+  const cleanPrimaryDir = primaryDir && !primaryDir.startsWith('--') ? primaryDir : ''
+  const primary = cleanPrimaryDir ? loadPrimaryIndex(cleanPrimaryDir) : null
   const db = new DatabaseSync(dbPath, { readOnly: true })
   const source = `本地资料/${basename(dirname(dbPath))}`
 
@@ -1702,6 +1703,11 @@ function parseShenlunGateFlags(rawArgs) {
       }
     } else if (arg === '--json') {
       gateOpts.jsonOut = rawArgs[++i] ?? ''
+    } else if (arg === '--all' || arg === '--backfill-papers') {
+      continue
+    } else if (arg === '--material-db') {
+      i += 1
+      continue
     } else {
       positional.push(arg)
     }

@@ -156,15 +156,28 @@ export function getDashboard(db: DatabaseSync): DashboardData {
     .get() as Row
   const due = db
     .prepare(
-      `SELECT COUNT(*) AS count FROM review_tasks r JOIN wrong_questions w ON w.question_id=r.question_id
+      `SELECT COUNT(*) AS count FROM review_tasks r
+      JOIN wrong_questions w ON w.question_id=r.question_id
+      JOIN questions q ON q.id=w.question_id
+      JOIN vault_registry v ON v.id=q.vault_id AND v.active=1
       WHERE r.completed_at IS NULL AND r.due_at <= ? AND w.mastered=0`
     )
     .get(now()) as Row
   const wrong = db
-    .prepare('SELECT COUNT(*) AS count FROM wrong_questions WHERE mastered=0')
+    .prepare(
+      `SELECT COUNT(*) AS count FROM wrong_questions w
+      JOIN questions q ON q.id=w.question_id
+      JOIN vault_registry v ON v.id=q.vault_id AND v.active=1
+      WHERE w.mastered=0`
+    )
     .get() as Row
   const mastered = db
-    .prepare('SELECT COUNT(*) AS count FROM wrong_questions WHERE mastered=1')
+    .prepare(
+      `SELECT COUNT(*) AS count FROM wrong_questions w
+      JOIN questions q ON q.id=w.question_id
+      JOIN vault_registry v ON v.id=q.vault_id AND v.active=1
+      WHERE w.mastered=1`
+    )
     .get() as Row
   const total = db
     .prepare(
@@ -251,7 +264,7 @@ export function getReport(db: DatabaseSync, range: ReportData['range']): ReportD
     .get(cutoff) as Row
   const categoryRows = db
     .prepare(
-      `SELECT json_extract(a.question_snapshot_json, '$.category') AS category,
+      `SELECT CASE WHEN json_valid(a.question_snapshot_json) THEN COALESCE(NULLIF(json_extract(a.question_snapshot_json, '$.category'), ''), '未分类') ELSE '未分类' END AS category,
       COUNT(*) AS attempts, SUM(a.correct) AS correct, AVG(a.duration_seconds) AS duration
       FROM attempts a WHERE a.created_at >= ? GROUP BY category ORDER BY attempts DESC`
     )

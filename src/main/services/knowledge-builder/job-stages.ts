@@ -1,4 +1,12 @@
-import { copyFileSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs'
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync
+} from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 import type {
   ImportCapability,
@@ -195,13 +203,14 @@ async function convertAndCacheSourceFile(
         ? 'OCR 结果超过 20 MB，请先拆分原文件'
         : '转换结果超过 20 MB，请先拆分原文件'
     )
+  const imagesDir = join(dirname(rawPath), 'images')
   if (!cached)
     await conversionCache.store(
       source,
       effectiveConverter,
       rawPath,
       ocrQuality,
-      useStructured && structuredOk ? join(dirname(rawPath), 'images') : undefined
+      existsSync(imagesDir) ? imagesDir : undefined
     )
 
   if (useStructured) {
@@ -212,10 +221,26 @@ async function convertAndCacheSourceFile(
       const ocrCached = await conversionCache.fetch(source, ocrConverterKey)
       if (ocrCached) {
         copyFileSync(ocrCached.markdownPath, rawPath)
+        if (ocrCached.imagesDir) {
+          try {
+            mkdirSync(imagesDir, { recursive: true })
+            for (const name of readdirSync(ocrCached.imagesDir)) {
+              copyFileSync(join(ocrCached.imagesDir, name), join(imagesDir, name))
+            }
+          } catch {
+            // 图片/页码清单恢复失败不阻塞文本切块
+          }
+        }
         ocrQuality = ocrCached.ocrQuality
       } else {
         ocrQuality = await host.ocrConvert(job, file, engine.pythonPath, source, rawPath)
-        await conversionCache.store(source, ocrConverterKey, rawPath, ocrQuality)
+        await conversionCache.store(
+          source,
+          ocrConverterKey,
+          rawPath,
+          ocrQuality,
+          existsSync(imagesDir) ? imagesDir : undefined
+        )
       }
       job.cancelRequested ||= host.loadJob(job.id).cancelRequested
       if (job.cancelRequested) throw new Error('任务已取消')
@@ -1013,10 +1038,17 @@ export async function executeJobPipeline(host: JobPipelineHost, id: string): Pro
             if (!job.artifactIds.includes(artifact.id)) job.artifactIds.push(artifact.id)
           }
           file.artifactCount = artifacts.length
-          file.state = 'ready'
-          file.message = artifacts.length
-            ? `生成 ${artifacts.length} 个待审核产物`
-            : '未发现足够完整、可入库的内容'
+          if (job.cancelRequested) {
+            file.state = 'cancelled'
+            file.message = artifacts.length
+              ? `任务已取消（保留已生成的 ${artifacts.length} 个产物）`
+              : '任务已取消'
+          } else {
+            file.state = 'ready'
+            file.message = artifacts.length
+              ? `生成 ${artifacts.length} 个待审核产物`
+              : '未发现足够完整、可入库的内容'
+          }
         }
       } catch (error) {
         job.cancelRequested ||= host.loadJob(id).cancelRequested

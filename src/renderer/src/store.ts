@@ -38,41 +38,40 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
   async refreshDashboard() {
-    const current = get().data
-    if (!current) return get().initialize()
+    if (!get().data) return get().initialize()
     try {
       const dashboard = await invoke<BootstrapData['dashboard']>({ method: 'dashboard.get' })
-      set({ data: { ...current, dashboard } })
+      set((state) => (state.data ? { data: { ...state.data, dashboard } } : state))
     } catch (error) {
       set({ error: error instanceof Error ? error.message : '刷新失败' })
     }
   },
   // 磁盘监听在主进程自动重索引后不推送事件，窗口重新获得焦点时拉一次活动库状态即可对齐计数
   async refreshVault() {
-    const current = get().data
-    if (!current) return
+    if (!get().data) return
     try {
       const vault = await invoke<BootstrapData['vault'] | undefined>({ method: 'vault.active' })
-      if (vault && vault.lastIndexedAt !== current.vault.lastIndexedAt)
-        set({ data: { ...current, vault } })
+      if (!vault) return
+      set((state) =>
+        state.data && vault.lastIndexedAt !== state.data.vault.lastIndexedAt
+          ? { data: { ...state.data, vault } }
+          : state
+      )
     } catch {
       // 焦点刷新失败不打扰用户，下次焦点再试
     }
   },
   async updateSettings(patch) {
-    const current = get().data
-    if (!current) return
+    if (!get().data) return
     try {
       const settings = await invoke<AppSettings>({ method: 'settings.save', params: patch })
-      set({ data: { ...current, settings } })
+      set((state) => (state.data ? { data: { ...state.data, settings } } : state))
     } catch (error) {
       set({ error: error instanceof Error ? error.message : '设置保存失败' })
     }
   },
   syncSettings(settings) {
-    const current = get().data
-    if (!current) return
-    set({ data: { ...current, settings } })
+    set((state) => (state.data ? { data: { ...state.data, settings } } : state))
   },
   toggleZenMode() {
     set((state) => ({ zenMode: !state.zenMode }))

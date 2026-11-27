@@ -24,7 +24,13 @@ console.log(`[smoke] 清理 ${SMOKE_DIST}`)
 const outDir = join(ROOT, 'out')
 if (!existsSync(join(outDir, 'main', 'index.js'))) {
   console.log('[smoke] out/ 不存在，先执行 build...')
-  execFileSync('npm', ['run', 'build'], { cwd: ROOT, stdio: 'inherit', timeout: 120000 })
+  const npmBin = process.platform === 'win32' ? 'npm.cmd' : 'npm'
+  execFileSync(npmBin, ['run', 'build'], {
+    cwd: ROOT,
+    stdio: 'inherit',
+    timeout: 120000,
+    shell: process.platform === 'win32'
+  })
 }
 
 // 3. 打包到 dist-smoke（不影响 dist/）

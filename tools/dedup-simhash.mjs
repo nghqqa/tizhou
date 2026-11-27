@@ -84,7 +84,8 @@ function questionTextOf(data, content) {
 
 // ---- 主流程 ----
 
-const vaultDir = resolve(argv[2] ?? '')
+const rawVaultArg = argv[2]?.trim()
+const vaultDir = rawVaultArg ? resolve(rawVaultArg) : ''
 if (!vaultDir || !existsSync(vaultDir) || !statSync(vaultDir).isDirectory()) {
   console.error(
     '用法: node tools/dedup-simhash.mjs <库目录> [--out <报告目录>] [--threshold 0.72] [--max-bucket 500]'

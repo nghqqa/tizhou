@@ -88,6 +88,8 @@ export class UpdateManager {
         ...this.updateStatus,
         checking: false,
         available: true,
+        downloaded: false,
+        progress: undefined,
         version: info.version,
         error: undefined
       }
@@ -97,6 +99,8 @@ export class UpdateManager {
         ...this.updateStatus,
         checking: false,
         available: false,
+        downloaded: false,
+        progress: undefined,
         error: undefined
       }
     })
@@ -120,6 +124,7 @@ export class UpdateManager {
         ...this.updateStatus,
         checking: false,
         downloading: false,
+        downloaded: false,
         error: error.message
       }
     })
@@ -131,19 +136,31 @@ export class UpdateManager {
 
   async check(): Promise<AppUpdateStatus> {
     try {
-      // 防重入：检查进行中直接返回当前状态（渲染层与主进程双保险）
+      // 防重入：在异步网络探测前立即加锁（渲染层与主进程双保险）
       if (this.updateStatus.checking) return this.getStatus()
-      // 网络自动探测：cnb 可达且版本不落后 → 从国内镜像检查；否则回退 GitHub
-      // （E2E 模式下跳过真实探测：检查结果由 mock updater 决定）
-      const feed = await resolveUpdateFeed(fetch, { probeDisabled: this.options.isE2EMode })
-      if (feed.provider === 'generic' && feed.url) {
-        this.autoUpdater.setFeedURL({ provider: 'generic', url: feed.url })
-      }
       this.updateStatus = {
         ...this.updateStatus,
         checking: true,
-        source: feed.source,
+        error: undefined,
         releaseNotes: undefined
+      }
+      // 网络自动探测：cnb 可达且版本不落后 → 从国内镜像检查；否则回退 GitHub
+      // （E2E 模式下跳过真实探测：检查结果由 mock updater 决定）
+      const feed = await resolveUpdateFeed(fetch, { probeDisabled: this.options.isE2EMode })
+      if (!this.options.isE2EMode && typeof this.autoUpdater.setFeedURL === 'function') {
+        if (feed.provider === 'generic' && feed.url) {
+          this.autoUpdater.setFeedURL({ provider: 'generic', url: feed.url })
+        } else {
+          this.autoUpdater.setFeedURL({
+            provider: 'github',
+            owner: 'nghqqa',
+            repo: 'tizhou'
+          })
+        }
+      }
+      this.updateStatus = {
+        ...this.updateStatus,
+        source: feed.source
       }
       await this.autoUpdater.checkForUpdates()
       if (this.updateStatus.available && this.updateStatus.version) {

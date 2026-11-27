@@ -65,8 +65,6 @@ export function migrateDatabase(db: DatabaseSync): void {
     );
     CREATE INDEX IF NOT EXISTS idx_questions_subject_category ON questions(subject, category);
     CREATE INDEX IF NOT EXISTS idx_questions_vault ON questions(vault_id);
-    CREATE INDEX IF NOT EXISTS idx_questions_vault_subject_region_year ON questions(vault_id, subject, region, year);
-    CREATE INDEX IF NOT EXISTS idx_questions_vault_subject_paper ON questions(vault_id, subject, paper);
     CREATE TABLE IF NOT EXISTS documents (
       id TEXT PRIMARY KEY,
       vault_id TEXT NOT NULL,
@@ -267,5 +265,9 @@ export function migrateDatabase(db: DatabaseSync): void {
     if (!questionColumns.some((column) => String(column.name) === name))
       db.exec(`ALTER TABLE questions ADD COLUMN ${name} ${type}`)
   }
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_questions_vault_subject_region_year ON questions(vault_id, subject, region, year);
+    CREATE INDEX IF NOT EXISTS idx_questions_vault_subject_paper ON questions(vault_id, subject, paper);
+  `)
   db.prepare('INSERT OR IGNORE INTO app_meta(key, value) VALUES (?, ?)').run('schema_version', '1')
 }

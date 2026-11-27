@@ -55,8 +55,9 @@ export function KnowledgePage({ subject, kind }: KnowledgePageProps): React.JSX.
     if (requestedDocId) {
       setSelectedId(requestedDocId)
       setCategoryFilter('all')
+      search.clear()
     }
-  }, [requestedDocId])
+  }, [requestedDocId, search.clear])
 
   useEffect(() => {
     setDocuments(undefined)

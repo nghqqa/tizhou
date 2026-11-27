@@ -19,6 +19,12 @@ import { VaultManagementSection } from './VaultManagementSection'
 export function SettingsPage(): React.JSX.Element {
   const { data, updateSettings, initialize, showToast } = useAppStore()
   const [settings, setSettings] = useState<AppSettings>(data!.settings)
+  const [numDrafts, setNumDrafts] = useState(() => ({
+    dailyTarget: String(data!.settings.dailyTarget),
+    defaultPracticeCount: String(data!.settings.defaultPracticeCount),
+    defaultExamMinutes: String(data!.settings.defaultExamMinutes),
+    backupRetention: String(data!.settings.backupRetention)
+  }))
   const [backups, setBackups] = useState<BackupInfo[]>()
   const [vaults, setVaults] = useState<VaultInfo[]>([])
   const [snapshots, setSnapshots] = useState<VaultSnapshotInfo[]>([])
@@ -40,14 +46,20 @@ export function SettingsPage(): React.JSX.Element {
     [settings, data]
   )
 
-  // 快捷键（Ctrl +/-/0）在主进程修改界面缩放时同步表单显示
+  // 侧栏切换主题或快捷键修改缩放时同步表单显示
   useEffect(() => {
-    if (data?.settings.uiScale !== undefined) {
-      setSettings((prev) =>
-        prev.uiScale === data.settings.uiScale ? prev : { ...prev, uiScale: data.settings.uiScale }
-      )
-    }
-  }, [data?.settings.uiScale])
+    if (!data?.settings) return
+    setSettings((prev) => {
+      if (prev.uiScale === data.settings.uiScale && prev.theme === data.settings.theme) {
+        return prev
+      }
+      return {
+        ...prev,
+        uiScale: data.settings.uiScale,
+        theme: data.settings.theme
+      }
+    })
+  }, [data?.settings.uiScale, data?.settings.theme])
 
   useEffect(() => {
     void invoke<BackupInfo[]>({ method: 'backup.list' }).then(setBackups)
@@ -297,6 +309,33 @@ export function SettingsPage(): React.JSX.Element {
     try {
       await invoke({ method: 'backup.restore', params: { path } })
       await initialize()
+      const latest = useAppStore.getState().data
+      if (latest) {
+        setSettings(latest.settings)
+        setNumDrafts({
+          dailyTarget: String(latest.settings.dailyTarget),
+          defaultPracticeCount: String(latest.settings.defaultPracticeCount),
+          defaultExamMinutes: String(latest.settings.defaultExamMinutes),
+          backupRetention: String(latest.settings.backupRetention)
+        })
+        await Promise.all([
+          invoke<BackupInfo[]>({ method: 'backup.list' })
+            .then(setBackups)
+            .catch(() => {}),
+          invoke<VaultInfo[]>({ method: 'vault.list' })
+            .then(setVaults)
+            .catch(() => {}),
+          invoke<VaultSnapshotInfo[]>({
+            method: 'vault.snapshots',
+            params: { vaultId: latest.vault.id }
+          })
+            .then(setSnapshots)
+            .catch(() => {}),
+          invoke<QuestionFacets>({ method: 'vault.facets' })
+            .then(setFacets)
+            .catch(() => setFacets({ years: [], regions: [], papers: [] }))
+        ])
+      }
       setMessage('备份恢复完成。')
       setPendingConfirm(null)
     } catch (cause) {
@@ -381,10 +420,27 @@ export function SettingsPage(): React.JSX.Element {
                 type="number"
                 min={1}
                 max={500}
-                value={String(settings.dailyTarget)}
-                onChange={(_, value) =>
-                  setSettings({ ...settings, dailyTarget: Number(value.value) || 1 })
-                }
+                value={numDrafts.dailyTarget}
+                onChange={(_, value) => {
+                  setNumDrafts((prev) => ({ ...prev, dailyTarget: value.value }))
+                  const parsed = Number(value.value.trim())
+                  if (
+                    value.value.trim() &&
+                    Number.isFinite(parsed) &&
+                    parsed >= 1 &&
+                    parsed <= 500
+                  ) {
+                    setSettings((prev) => ({ ...prev, dailyTarget: Math.round(parsed) }))
+                  }
+                }}
+                onBlur={() => {
+                  const parsed = Number(numDrafts.dailyTarget.trim())
+                  const clamped = Number.isFinite(parsed)
+                    ? Math.min(500, Math.max(1, Math.round(parsed)))
+                    : settings.dailyTarget
+                  setNumDrafts((prev) => ({ ...prev, dailyTarget: String(clamped) }))
+                  setSettings((prev) => ({ ...prev, dailyTarget: clamped }))
+                }}
               />
             </Field>
             <Field label="默认练习题数">
@@ -392,10 +448,27 @@ export function SettingsPage(): React.JSX.Element {
                 type="number"
                 min={1}
                 max={100}
-                value={String(settings.defaultPracticeCount)}
-                onChange={(_, value) =>
-                  setSettings({ ...settings, defaultPracticeCount: Number(value.value) || 1 })
-                }
+                value={numDrafts.defaultPracticeCount}
+                onChange={(_, value) => {
+                  setNumDrafts((prev) => ({ ...prev, defaultPracticeCount: value.value }))
+                  const parsed = Number(value.value.trim())
+                  if (
+                    value.value.trim() &&
+                    Number.isFinite(parsed) &&
+                    parsed >= 1 &&
+                    parsed <= 100
+                  ) {
+                    setSettings((prev) => ({ ...prev, defaultPracticeCount: Math.round(parsed) }))
+                  }
+                }}
+                onBlur={() => {
+                  const parsed = Number(numDrafts.defaultPracticeCount.trim())
+                  const clamped = Number.isFinite(parsed)
+                    ? Math.min(100, Math.max(1, Math.round(parsed)))
+                    : settings.defaultPracticeCount
+                  setNumDrafts((prev) => ({ ...prev, defaultPracticeCount: String(clamped) }))
+                  setSettings((prev) => ({ ...prev, defaultPracticeCount: clamped }))
+                }}
               />
             </Field>
             <Field label="默认模考分钟">
@@ -403,10 +476,27 @@ export function SettingsPage(): React.JSX.Element {
                 type="number"
                 min={10}
                 max={300}
-                value={String(settings.defaultExamMinutes)}
-                onChange={(_, value) =>
-                  setSettings({ ...settings, defaultExamMinutes: Number(value.value) || 10 })
-                }
+                value={numDrafts.defaultExamMinutes}
+                onChange={(_, value) => {
+                  setNumDrafts((prev) => ({ ...prev, defaultExamMinutes: value.value }))
+                  const parsed = Number(value.value.trim())
+                  if (
+                    value.value.trim() &&
+                    Number.isFinite(parsed) &&
+                    parsed >= 10 &&
+                    parsed <= 300
+                  ) {
+                    setSettings((prev) => ({ ...prev, defaultExamMinutes: Math.round(parsed) }))
+                  }
+                }}
+                onBlur={() => {
+                  const parsed = Number(numDrafts.defaultExamMinutes.trim())
+                  const clamped = Number.isFinite(parsed)
+                    ? Math.min(300, Math.max(10, Math.round(parsed)))
+                    : settings.defaultExamMinutes
+                  setNumDrafts((prev) => ({ ...prev, defaultExamMinutes: String(clamped) }))
+                  setSettings((prev) => ({ ...prev, defaultExamMinutes: clamped }))
+                }}
               />
             </Field>
             <Field label="保留备份数量">
@@ -414,10 +504,27 @@ export function SettingsPage(): React.JSX.Element {
                 type="number"
                 min={1}
                 max={100}
-                value={String(settings.backupRetention)}
-                onChange={(_, value) =>
-                  setSettings({ ...settings, backupRetention: Number(value.value) || 1 })
-                }
+                value={numDrafts.backupRetention}
+                onChange={(_, value) => {
+                  setNumDrafts((prev) => ({ ...prev, backupRetention: value.value }))
+                  const parsed = Number(value.value.trim())
+                  if (
+                    value.value.trim() &&
+                    Number.isFinite(parsed) &&
+                    parsed >= 1 &&
+                    parsed <= 100
+                  ) {
+                    setSettings((prev) => ({ ...prev, backupRetention: Math.round(parsed) }))
+                  }
+                }}
+                onBlur={() => {
+                  const parsed = Number(numDrafts.backupRetention.trim())
+                  const clamped = Number.isFinite(parsed)
+                    ? Math.min(100, Math.max(1, Math.round(parsed)))
+                    : settings.backupRetention
+                  setNumDrafts((prev) => ({ ...prev, backupRetention: String(clamped) }))
+                  setSettings((prev) => ({ ...prev, backupRetention: clamped }))
+                }}
               />
             </Field>
             <Field label="目标考试名称">

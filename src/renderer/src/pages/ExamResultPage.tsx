@@ -101,13 +101,17 @@ export function ExamResultPage(): React.JSX.Element {
       const answerRec = exam.answers[questionId]
       const userAnswer = answerRec?.answer ?? []
       const answered = userAnswer.some((v) => v.trim())
+      const isEssay = snapshot.type === 'essay' || exam.subject === 'shenlun'
       return [
         {
           index: index + 1,
           question: snapshot,
           userAnswer,
           answered,
-          correct: isAnswerCorrect(snapshot.answer, userAnswer, { requireNonEmpty: true }),
+          isEssay,
+          correct: isEssay
+            ? false
+            : isAnswerCorrect(snapshot.answer, userAnswer, { requireNonEmpty: true }),
           durationSeconds: Math.max(0, Math.round(answerRec?.durationSeconds ?? 0))
         }
       ]
@@ -151,14 +155,16 @@ export function ExamResultPage(): React.JSX.Element {
     () =>
       exam?.subject === 'shenlun'
         ? []
-        : reviewItems.filter((item) => !item.correct).map((item) => item.question.id),
+        : reviewItems
+            .filter((item) => !item.isEssay && !item.correct)
+            .map((item) => item.question.id),
     [reviewItems, exam?.subject]
   )
   const uncertainCorrectIds = useMemo(() => {
     const uIds = exam?.uncertainIds ?? []
     if (!uIds.length || exam?.subject === 'shenlun') return []
     return reviewItems
-      .filter((item) => item.correct && uIds.includes(item.question.id))
+      .filter((item) => !item.isEssay && item.correct && uIds.includes(item.question.id))
       .map((item) => item.question.id)
   }, [reviewItems, exam?.uncertainIds, exam?.subject])
 
@@ -178,7 +184,9 @@ export function ExamResultPage(): React.JSX.Element {
   }, [exam?.subject, reviewItems])
 
   const filteredItems =
-    filter === 'wrong-unanswered' ? reviewItems.filter((item) => !item.correct) : reviewItems
+    filter === 'wrong-unanswered'
+      ? reviewItems.filter((item) => !item.isEssay && !item.correct)
+      : reviewItems
 
   async function toggleFavorite(questionId: string): Promise<void> {
     const currentFav = userMeta[questionId]?.favorite ?? false
@@ -621,16 +629,30 @@ export function ExamResultPage(): React.JSX.Element {
       {reviewItems.length > 0 && (
         <Section
           title="题号快速定位"
-          description="绿底为答对、红底为答错、灰底为未作答；点击题号直接定位到对应解析。"
+          description={
+            isShenlunExam
+              ? '深色为已作答大题、灰底为未作答；点击题号直接定位到对应复盘。'
+              : '绿底为答对、红底为答错、灰底为未作答；点击题号直接定位到对应解析。'
+          }
         >
           <div className="exam-review-jumpbar">
             {reviewItems.map((item) => (
               <button
                 key={item.question.id}
                 type="button"
-                className={`exam-jump-btn ${item.correct ? 'is-correct' : item.answered ? 'is-wrong' : 'is-unanswered'}`}
+                className={`exam-jump-btn ${
+                  item.isEssay
+                    ? item.answered
+                      ? ''
+                      : 'is-unanswered'
+                    : item.correct
+                      ? 'is-correct'
+                      : item.answered
+                        ? 'is-wrong'
+                        : 'is-unanswered'
+                }`.trim()}
                 title={`第 ${item.index} 题 · ${item.question.category}${item.durationSeconds > 0 ? ` · 用时 ${item.durationSeconds} 秒` : ''}`}
-                onClick={() => jumpToQuestion(item.question.id, item.correct)}
+                onClick={() => jumpToQuestion(item.question.id, item.isEssay || item.correct)}
               >
                 {item.index}
               </button>
@@ -650,17 +672,19 @@ export function ExamResultPage(): React.JSX.Element {
               onStepScale={reading.stepScale}
               onResetScale={reading.resetScale}
             />
-            <Select
-              value={filter}
-              onChange={(_, data) => {
-                setFilter(data.value as ReviewFilter)
-                setReviewPage(1)
-              }}
-              aria-label="复盘筛选"
-            >
-              <option value="all">全部题目（{reviewItems.length}）</option>
-              <option value="wrong-unanswered">仅看错题与未答（{wrongIds.length}）</option>
-            </Select>
+            {!isShenlunExam && (
+              <Select
+                value={filter}
+                onChange={(_, data) => {
+                  setFilter(data.value as ReviewFilter)
+                  setReviewPage(1)
+                }}
+                aria-label="复盘筛选"
+              >
+                <option value="all">全部题目（{reviewItems.length}）</option>
+                <option value="wrong-unanswered">仅看错题与未答（{wrongIds.length}）</option>
+              </Select>
+            )}
           </div>
         }
       >
@@ -674,7 +698,7 @@ export function ExamResultPage(): React.JSX.Element {
             >
               {pagedItems.map((item) => {
                 const meta = userMeta[item.question.id] ?? { favorite: false, note: '' }
-                const noteOpen = Boolean(openNoteIds[item.question.id] || meta.note)
+                const noteOpen = openNoteIds[item.question.id] ?? Boolean(meta.note)
                 return (
                   <div
                     className="answer-panel exam-review-card"
@@ -682,9 +706,21 @@ export function ExamResultPage(): React.JSX.Element {
                     key={item.question.id}
                   >
                     <div className="exam-review-card-head">
-                      <h3 className={`exam-review-title ${item.correct ? 'positive' : 'negative'}`}>
+                      <h3
+                        className={`exam-review-title${
+                          item.isEssay ? '' : item.correct ? ' positive' : ' negative'
+                        }`}
+                      >
                         第 {item.index} 题：
-                        {item.answered ? (item.correct ? '正确' : '错误') : '未作答'}
+                        {item.isEssay
+                          ? item.answered
+                            ? '已作答（主观题）'
+                            : '未作答'
+                          : item.answered
+                            ? item.correct
+                              ? '正确'
+                              : '错误'
+                            : '未作答'}
                         <span className="muted exam-review-meta">
                           {item.question.category}
                           {item.durationSeconds > 0
@@ -693,7 +729,7 @@ export function ExamResultPage(): React.JSX.Element {
                         </span>
                       </h3>
                       <div className="button-row">
-                        {!item.correct && (
+                        {!item.isEssay && !item.correct && (
                           <Select
                             size="small"
                             aria-label={`第 ${item.index} 题错因标注`}

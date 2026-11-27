@@ -113,6 +113,22 @@ export class EssaySaveController {
     return 'idle'
   }
 
+  hasPendingFor(questionId: string): boolean {
+    return this.pending?.questionId === questionId
+  }
+
+  /** 仅当该题无待落盘草稿时提交一次保存，用于切题或交卷时同步单题停留耗时而不覆盖未落盘输入 */
+  enqueueIfIdle(examId: string, questionId: string, answer: string[]): void {
+    if (!this.active || this.pending?.questionId === questionId) return
+    this.revisionCounter += 1
+    void this.enqueueSave({
+      examId,
+      questionId,
+      answer: [...answer],
+      revision: this.revisionCounter
+    })
+  }
+
   /**
    * 组件卸载：先 flush pending（不丢数据），然后停止接收新输入。
    * 已进入队列的保存继续完成。

@@ -431,14 +431,16 @@ export class VaultService {
     if (this.watchTimer) clearTimeout(this.watchTimer)
     this.watchTimer = setTimeout(() => {
       this.watchTimer = undefined
+      if (!this.watcher) return
       try {
         this.lastAutoIndex = this.reindex()
+        // 索引期间活动库可能被切换，重新对准监听目标
+        this.startWatching(this.watchDebounceMs)
       } catch {
-        // 写入进行中（半写文件、目录暂空）会解析失败，等下一次变更事件再试
+        // 写入进行中（半写文件、目录暂空）或退出关库时会失败，静默忽略
       }
-      // 索引期间活动库可能被切换，重新对准监听目标
-      this.startWatching(this.watchDebounceMs)
     }, this.watchDebounceMs)
+    this.watchTimer.unref?.()
   }
 
   ensureBuiltinVault(): VaultInfo {
@@ -579,9 +581,11 @@ export class VaultService {
     }
     if (questions.length === 0 && documents.length === 0)
       throw new Error('没有解析出题目或知识文档，请检查 Markdown frontmatter')
+    const samePath = (left: string, right: string): boolean =>
+      process.platform === 'win32' ? left.toLowerCase() === right.toLowerCase() : left === right
     const existingVault = this.database
       .listVaults()
-      .find((candidate) => candidate.path === realRoot)
+      .find((candidate) => samePath(candidate.path, realRoot))
     const connectedAt = existingVault?.connectedAt ?? timestamp()
     const vault: VaultInfo = {
       id: vaultId,
@@ -601,7 +605,13 @@ export class VaultService {
   /** 目标目录对应知识库的既有题目去重签名集合（目录未注册时为空集） */
   questionSignatures(directory: string): Set<string> {
     const root = realpathSync(resolve(directory))
-    const vault = this.database.listVaults().find((item) => item.path === root)
+    const vault = this.database
+      .listVaults()
+      .find((item) =>
+        process.platform === 'win32'
+          ? item.path.toLowerCase() === root.toLowerCase()
+          : item.path === root
+      )
     return new Set(vault ? this.database.listQuestionSignatures(vault.id) : [])
   }
 
@@ -691,7 +701,13 @@ export class VaultService {
     if (!normalizeText(nextData.id || nextData.uid || aliases[0])) {
       nextData.id = existingRawId
     }
-    if (!normalizeText(nextData.questionType || nextData.type)) {
+    if (existing.type === 'single' && answer.length > 1) {
+      nextData.questionType = 'multiple'
+      delete nextData.type
+    } else if (existing.type === 'multiple' && answer.length === 1) {
+      nextData.questionType = 'single'
+      delete nextData.type
+    } else if (!normalizeText(nextData.questionType || nextData.type)) {
       nextData.questionType = existing.type
     }
     delete nextData.question

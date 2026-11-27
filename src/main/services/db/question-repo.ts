@@ -184,6 +184,7 @@ export function replaceVaultContent(
   const previousDocuments = db
     .prepare('SELECT * FROM documents WHERE vault_id=? ORDER BY id')
     .all(vault.id) as Row[]
+  const previousVault = getVaultById(db, vault.id) ?? vault
   runInTransaction(db, () => {
     upsertVault(db, vault)
     if (
@@ -194,7 +195,7 @@ export function replaceVaultContent(
       const snapshotId = randomUUID()
       const payload = gzipSync(
         JSON.stringify({
-          vault: getVaultById(db, vault.id) ?? vault,
+          vault: previousVault,
           // 整库一次查询取快照，逐题 getQuestion 在 2 万题级别会把重索引拖慢数十秒
           questions: listVaultQuestions(db, vault.id),
           documents: previousDocuments.map((row) => mapDocument(row))
@@ -402,7 +403,8 @@ export function listQuestionSummaries(
   filter: QuestionListFilter = {}
 ): QuestionSummary[] {
   const { where, values } = buildQuestionFilter(filter)
-  const limit = Math.max(1, Math.min(5000, filter.limit ?? 500))
+  const rawLimit = Number.isFinite(filter.limit) ? Number(filter.limit) : 500
+  const limit = Math.max(1, Math.min(5000, Math.round(rawLimit)))
   const rows = db
     .prepare(
       `SELECT q.id, q.subject, q.category, q.type, q.difficulty, q.source,
@@ -442,7 +444,8 @@ export function listQuestionSummaries(
 
 export function listQuestions(db: DatabaseSync, filter: QuestionListFilter = {}): Question[] {
   const { where, values } = buildQuestionFilter(filter)
-  const limit = Math.max(1, Math.min(5000, filter.limit ?? 500))
+  const rawLimit = Number.isFinite(filter.limit) ? Number(filter.limit) : 500
+  const limit = Math.max(1, Math.min(5000, Math.round(rawLimit)))
   const rows = db
     .prepare(
       `SELECT q.* FROM questions q JOIN vault_registry v ON v.id = q.vault_id
@@ -457,7 +460,7 @@ export function listQuestionsForPool(
   filter: QuestionListFilter = {}
 ): Question[] {
   const { where, values } = buildQuestionFilter(filter)
-  const hasExplicitLimit = filter.limit !== undefined
+  const hasExplicitLimit = typeof filter.limit === 'number' && Number.isFinite(filter.limit)
   const sql =
     `SELECT q.* FROM questions q JOIN vault_registry v ON v.id = q.vault_id ` +
     `WHERE ${where.join(' AND ')} ORDER BY q.year DESC, q.category, q.id` +
@@ -475,8 +478,9 @@ export function listQuestionsByPaper(db: DatabaseSync, paper: string): Question[
       `SELECT q.*, json_extract(ref.value, '$.order') AS paper_order
       FROM questions q
       JOIN vault_registry v ON v.id = q.vault_id AND v.active = 1
-      JOIN json_each(CASE WHEN q.papers_json IS NULL THEN '[]' ELSE q.papers_json END) ref
+      JOIN json_each(CASE WHEN json_valid(q.papers_json) AND json_type(q.papers_json) = 'array' THEN q.papers_json ELSE '[]' END) ref
         ON json_extract(ref.value, '$.paper') = ?
+      WHERE q.subject = 'xingce'
       ORDER BY paper_order, q.id`
     )
     .all(paper) as Row[]
@@ -737,7 +741,7 @@ export function listShenlunQuestionsByPaper(db: DatabaseSync, paper: string): Qu
       JOIN vault_registry v ON v.id = q.vault_id AND v.active = 1
       WHERE q.subject = 'shenlun'
         AND (q.paper = ? OR EXISTS (
-          SELECT 1 FROM json_each(CASE WHEN q.papers_json IS NULL THEN '[]' ELSE q.papers_json END) ref
+          SELECT 1 FROM json_each(CASE WHEN json_valid(q.papers_json) AND json_type(q.papers_json) = 'array' THEN q.papers_json ELSE '[]' END) ref
           WHERE json_extract(ref.value, '$.paper') = ?
         ))
       ORDER BY COALESCE(q.group_order, 999), q.id`
@@ -954,10 +958,19 @@ export function rollbackVaultSnapshot(
   const row = db.prepare('SELECT * FROM vault_snapshots WHERE id=?').get(snapshotId) as
     Row | undefined
   if (!row || !(row.payload instanceof Uint8Array)) throw new Error('索引快照不存在或已经清理')
-  const decoded = JSON.parse(gunzipSync(row.payload).toString('utf8')) as {
+  let decoded: {
     vault: VaultInfo
     questions: Question[]
     documents: KnowledgeDocument[]
+  }
+  try {
+    decoded = JSON.parse(gunzipSync(row.payload).toString('utf8')) as {
+      vault: VaultInfo
+      questions: Question[]
+      documents: KnowledgeDocument[]
+    }
+  } catch {
+    throw new Error('索引快照已损坏，无法回滚')
   }
   const vault: VaultInfo = {
     ...decoded.vault,
@@ -1107,6 +1120,6 @@ export function findSimilarQuestions(db: DatabaseSync, questionId: string, limit
     }))
     .filter((item) => item.score > 0)
     .sort((a, b) => b.score - a.score || a.question.id.localeCompare(b.question.id))
-    .slice(0, Math.max(1, Math.min(20, limit)))
+    .slice(0, Math.max(1, Math.min(20, Number.isFinite(limit) ? Math.round(limit) : 5)))
     .map((item) => item.question)
 }

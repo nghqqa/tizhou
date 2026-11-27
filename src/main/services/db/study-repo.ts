@@ -31,9 +31,10 @@ import {
 import { getQuestion, getQuestionsByIds } from './question-repo'
 
 export function getRecentAttemptQuestionIds(db: DatabaseSync, limit = 100): string[] {
+  const safeLimit = Number.isFinite(limit) ? Math.max(1, Math.min(1000, Math.round(limit))) : 100
   const rows = db
     .prepare('SELECT question_id FROM attempts ORDER BY created_at DESC LIMIT ?')
-    .all(Math.max(1, Math.min(1000, limit))) as Row[]
+    .all(safeLimit) as Row[]
   return [...new Set(rows.map((row) => String(row.question_id)))]
 }
 
@@ -191,7 +192,7 @@ export function recordAttempt(
     question.id,
     JSON.stringify(input.answer),
     correct ? 1 : 0,
-    Math.max(0, Math.round(input.durationSeconds)),
+    Math.max(0, Number.isFinite(input.durationSeconds) ? Math.round(input.durationSeconds) : 0),
     input.mode,
     input.sessionId ?? null,
     input.wrongCause?.trim() || null,
@@ -438,7 +439,10 @@ export function getDueReviews(db: DatabaseSync, limit = 100): ReviewItem[] {
       WHERE r.completed_at IS NULL AND r.due_at <= ? AND w.mastered = 0
       ORDER BY r.due_at LIMIT ?`
     )
-    .all(now(), Math.max(1, Math.min(500, limit))) as Row[]
+    .all(
+      now(),
+      Math.max(1, Math.min(500, Number.isFinite(limit) ? Math.round(limit) : 100))
+    ) as Row[]
   return rows.map((row) => ({
     question: mapQuestion(row),
     dueAt: String(row.due_at),
@@ -456,33 +460,41 @@ export function createExam(
 ): ExamSession {
   if (questions.length === 0) throw new Error('当前筛选条件下没有可用题目')
   const timestamp = now()
+  const safeMinutes = Number.isFinite(config.durationMinutes)
+    ? Math.max(10, Math.min(300, Math.round(config.durationMinutes)))
+    : 120
   const exam: ExamSession = {
     id: randomUUID(),
     title: config.title.trim() || '自定义模考',
     subject: config.subject,
     startedAt: timestamp,
     updatedAt: timestamp,
-    durationMinutes: Math.max(10, Math.min(300, Math.round(config.durationMinutes))),
+    durationMinutes: safeMinutes,
     questionIds: questions.map((question) => question.id),
     questionSnapshots: Object.fromEntries(questions.map((question) => [question.id, question])),
     answers: {},
     status: 'active'
   }
-  db.prepare(
-    `INSERT INTO exam_sessions(
-      id, title, subject, started_at, updated_at, duration_minutes,
-      question_ids_json, question_snapshots_json, answers_json, status
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, '{}', 'active')`
-  ).run(
-    exam.id,
-    exam.title,
-    exam.subject,
-    exam.startedAt,
-    exam.updatedAt,
-    exam.durationMinutes,
-    JSON.stringify(exam.questionIds),
-    JSON.stringify(exam.questionSnapshots)
-  )
+  runInTransaction(db, () => {
+    db.prepare(
+      `UPDATE exam_sessions SET status='abandoned', updated_at=? WHERE status='active'`
+    ).run(timestamp)
+    db.prepare(
+      `INSERT INTO exam_sessions(
+        id, title, subject, started_at, updated_at, duration_minutes,
+        question_ids_json, question_snapshots_json, answers_json, status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, '{}', 'active')`
+    ).run(
+      exam.id,
+      exam.title,
+      exam.subject,
+      exam.startedAt,
+      exam.updatedAt,
+      exam.durationMinutes,
+      JSON.stringify(exam.questionIds),
+      JSON.stringify(exam.questionSnapshots)
+    )
+  })
   return exam
 }
 
@@ -645,7 +657,8 @@ export function listConstructedAttempts(
     values.push(cutoff)
   }
   const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''
-  const limit = Math.max(1, Math.min(500, params?.limit ?? 100))
+  const rawLimit = params?.limit ?? 100
+  const limit = Math.max(1, Math.min(500, Number.isFinite(rawLimit) ? Math.round(rawLimit) : 100))
   const rows = db
     .prepare(`SELECT * FROM constructed_attempts ${where} ORDER BY created_at DESC LIMIT ?`)
     .all(...values, limit) as Row[]
@@ -755,7 +768,9 @@ export function saveStudySnippet(
   const content = input.content.trim().slice(0, 4000)
   if (!title || !content) throw new Error('标题和正文内容不能为空')
   const id = input.id?.trim() || randomUUID()
-  const createdAt = now()
+  const existingRow = db.prepare('SELECT created_at FROM study_snippets WHERE id = ?').get(id) as
+    Row | undefined
+  const createdAt = existingRow?.created_at ? String(existingRow.created_at) : now()
   const tags = (input.tags ?? [])
     .map((t) => t.trim())
     .filter(Boolean)

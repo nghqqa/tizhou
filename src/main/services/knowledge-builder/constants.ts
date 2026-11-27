@@ -152,6 +152,7 @@ export interface StoredJob {
   message?: string
   cancelRequested: boolean
   outputPath: string
+  publishedVaultPath?: string
 }
 
 export interface DirectBookEntry {

@@ -115,12 +115,21 @@ function applyDomHighlights(container: HTMLElement, highlights: MaterialHighligh
   for (const hl of highlights) {
     if (!hl.text) continue
     const { fullText, segments } = collectTextSegments(container)
-    let matchStart = findNthOccurrence(fullText, hl.text, hl.occurrence)
+    let targetText = hl.text
+    let matchStart = findNthOccurrence(fullText, targetText, hl.occurrence)
     if (matchStart === -1) {
-      matchStart = fullText.indexOf(hl.text)
+      matchStart = fullText.indexOf(targetText)
+    }
+    if (matchStart === -1 && /[\r\n]/.test(targetText)) {
+      const compact = targetText.replace(/[\r\n]+/g, '')
+      if (compact.length >= 2) {
+        targetText = compact
+        matchStart = findNthOccurrence(fullText, targetText, hl.occurrence)
+        if (matchStart === -1) matchStart = fullText.indexOf(targetText)
+      }
     }
     if (matchStart === -1) continue
-    const matchEnd = matchStart + hl.text.length
+    const matchEnd = matchStart + targetText.length
 
     // 逆序切片，避免拆分前方 Text 节点影响后续偏移
     for (let i = segments.length - 1; i >= 0; i -= 1) {
@@ -268,28 +277,48 @@ export function HighlightableMaterial({
       setPopover(null)
       return
     }
-    const selectedText = sel.toString().trim()
-    if (selectedText.length < 2) {
+    // 从可见文本节点段直接提取选区文本与前置文本（跨段选区也能与 applyDomHighlights 100% 对齐）
+    const { fullText, segments } = collectTextSegments(host)
+    let beforeText = ''
+    let rawSelected = ''
+    for (const seg of segments) {
+      const node = seg.node
+      const len = node.data.length
+      const startCmp = range.comparePoint(node, 0)
+      const endCmp = range.comparePoint(node, len)
+      if (node === range.startContainer && node === range.endContainer) {
+        beforeText += node.data.slice(0, range.startOffset)
+        rawSelected += node.data.slice(range.startOffset, range.endOffset)
+        break
+      }
+      if (node === range.startContainer) {
+        beforeText += node.data.slice(0, range.startOffset)
+        rawSelected += node.data.slice(range.startOffset)
+        continue
+      }
+      if (node === range.endContainer) {
+        rawSelected += node.data.slice(0, range.endOffset)
+        break
+      }
+      if (endCmp < 0) {
+        beforeText += node.data
+      } else if (startCmp === 0 && endCmp === 0) {
+        rawSelected += node.data
+      } else if (startCmp > 0) {
+        break
+      }
+    }
+
+    const leadingWs = rawSelected.length - rawSelected.trimStart().length
+    const selectedText = rawSelected.trim()
+    if (selectedText.length < 2 || !fullText.includes(selectedText)) {
       setPopover(null)
       return
     }
+    beforeText += rawSelected.slice(0, leadingWs)
 
-    // 计算选区在当前材料可见文本中的第 N 次出现（忽略 KaTeX 与代码块，保持与 applyDomHighlights 坐标一致）
-    const { fullText, segments } = collectTextSegments(host)
     let occurrence = 0
     if (fullText) {
-      let beforeText = ''
-      for (const seg of segments) {
-        if (seg.node === range.startContainer) {
-          beforeText += seg.node.data.slice(0, range.startOffset)
-          break
-        }
-        if (range.comparePoint(seg.node, 0) < 0) {
-          beforeText += seg.node.data
-        } else {
-          break
-        }
-      }
       let pos = 0
       while (true) {
         const idx = beforeText.indexOf(selectedText, pos)

@@ -44,6 +44,7 @@ export function SpeedCalcWarmupDialog({
   onClose
 }: SpeedCalcWarmupDialogProps): React.JSX.Element {
   const dialogRef = useRef<HTMLDialogElement>(null)
+  const autoAdvanceTimerRef = useRef<number | undefined>(undefined)
   const [category, setCategory] = useState<SpeedCalcCategory>('all')
   const [deck, setDeck] = useState<SpeedCalcQuestion[]>([])
   const [index, setIndex] = useState(0)
@@ -60,7 +61,15 @@ export function SpeedCalcWarmupDialog({
     BEST_SCORE_CODEC
   )
 
+  function clearAutoAdvance(): void {
+    if (autoAdvanceTimerRef.current !== undefined) {
+      window.clearTimeout(autoAdvanceTimerRef.current)
+      autoAdvanceTimerRef.current = undefined
+    }
+  }
+
   function restart(nextCategory: SpeedCalcCategory = category): void {
+    clearAutoAdvance()
     setCategory(nextCategory)
     setDeck(generateSpeedCalcDeck(nextCategory, 20))
     setIndex(0)
@@ -74,13 +83,18 @@ export function SpeedCalcWarmupDialog({
   }
 
   useEffect(() => {
+    return () => clearAutoAdvance()
+  }, [])
+
+  useEffect(() => {
     const dialog = dialogRef.current
     if (!dialog) return
     if (open) {
       restart(category)
       if (!dialog.open) dialog.showModal()
-    } else if (dialog.open) {
-      dialog.close()
+    } else {
+      clearAutoAdvance()
+      if (dialog.open) dialog.close()
     }
   }, [open])
 
@@ -118,11 +132,14 @@ export function SpeedCalcWarmupDialog({
         setMaxStreak((m) => Math.max(m, next))
         return next
       })
-      window.setTimeout(() => {
-        if (index + 1 >= deck.length) {
+      clearAutoAdvance()
+      const currentIdxSnapshot = index
+      autoAdvanceTimerRef.current = window.setTimeout(() => {
+        autoAdvanceTimerRef.current = undefined
+        if (currentIdxSnapshot + 1 >= deck.length) {
           setFinished(true)
         } else {
-          setIndex((i) => i + 1)
+          setIndex((i) => (i === currentIdxSnapshot ? i + 1 : i))
           setPickedKey(null)
         }
       }, 420)
@@ -148,6 +165,7 @@ export function SpeedCalcWarmupDialog({
         chooseOption(opt)
       } else if ((event.key === 'Enter' || event.key === ' ') && pickedKey) {
         event.preventDefault()
+        clearAutoAdvance()
         if (index + 1 >= deck.length) setFinished(true)
         else {
           setIndex((i) => i + 1)

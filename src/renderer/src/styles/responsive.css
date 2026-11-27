@@ -31,13 +31,6 @@
     min-width: 24px;
   }
 }
-@media (max-width: 640px) {
-  .builder-options,
-  .warmup-options,
-  .exam-preset-grid {
-    grid-template-columns: 1fr;
-  }
-}
 @media (max-width: 720px) {
   .builder-start-row {
     align-items: stretch;
@@ -192,6 +185,14 @@
   .material-split-left {
     position: static;
     max-height: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .builder-options,
+  .warmup-options,
+  .exam-preset-grid {
+    grid-template-columns: 1fr;
   }
 }
 

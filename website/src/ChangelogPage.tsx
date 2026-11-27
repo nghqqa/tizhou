@@ -11,6 +11,7 @@ import {
 import { renderInline } from './markdown-inline'
 
 const GITHUB_CHANGELOG_URL = 'https://github.com/nghqqa/tizhou/blob/master/CHANGELOG.md'
+const GITHUB_REPO_BLOB_BASE = 'https://github.com/nghqqa/tizhou/blob/master/'
 const GITHUB_RELEASES_BASE = 'https://github.com/nghqqa/tizhou/releases/tag/v'
 const RECENT_VISIBLE_COUNT = 5
 
@@ -22,7 +23,7 @@ function renderReleaseBody(entry: ChangelogRelease): React.JSX.Element {
           {section.heading && <h3>{section.heading}</h3>}
           {section.paragraphs.map((para, pIndex) => (
             <p key={pIndex} className="cl-para">
-              {renderInline(para)}
+              {renderInline(para, { relativeLinkBase: GITHUB_REPO_BLOB_BASE })}
             </p>
           ))}
           {section.items.length > 0 && (
@@ -32,7 +33,7 @@ function renderReleaseBody(entry: ChangelogRelease): React.JSX.Element {
                   {item.split('\n').map((line, lineIndex) => (
                     <Fragment key={lineIndex}>
                       {lineIndex > 0 && <br />}
-                      {renderInline(line)}
+                      {renderInline(line, { relativeLinkBase: GITHUB_REPO_BLOB_BASE })}
                     </Fragment>
                   ))}
                 </li>

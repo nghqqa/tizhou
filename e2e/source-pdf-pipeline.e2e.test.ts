@@ -5,12 +5,21 @@ import { afterAll, beforeAll, describe, expect, it, onTestFailed } from 'vitest'
 import type { Page } from 'playwright'
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { closeApp, launchApp, type AppHandle } from './helpers'
 
 const ENGINE_PYTHON =
-  'C:/Users/ngh/AppData/Roaming/tizhou/knowledge-builder/engine/.venv/Scripts/python.exe'
+  process.env.WORKBENCH_MARKITDOWN_PYTHON ??
+  join(
+    process.env.APPDATA ?? join(homedir(), 'AppData', 'Roaming'),
+    'tizhou',
+    'knowledge-builder',
+    'engine',
+    '.venv',
+    'Scripts',
+    'python.exe'
+  )
 const engineAvailable = (() => {
   try {
     execFileSync(ENGINE_PYTHON, ['-c', 'import pypdfium2'], { stdio: 'ignore' })
@@ -67,7 +76,6 @@ describe('来源证据预览 UI E2E（真实 PDF·正式管线）', () => {
       rmSync(dataDir, { recursive: true, force: true })
     }
     rmSync(fixtureDir, { recursive: true, force: true })
-    rmSync('e2e-artifacts', { recursive: true, force: true })
   })
 
   it.skipIf(!engineAvailable)(

@@ -240,10 +240,22 @@ export class StudyService {
     if (selection.mode === 'review')
       return this.database.getDueReviews(count).map((item) => item.question)
     // 抽题池走专用查询：万题级题库全库采样不受列表查询的 5000 截断（旧题也要能抽到）
-    const pool = this.database.listQuestionsForPool({ ...selection.filter })
+    let pool = this.database.listQuestionsForPool({ ...selection.filter })
+    if (pool.length === 0 && selection.filter?.category && !selection.filter.categories?.length) {
+      const aliases = expandCategoryAliases(selection.filter.category)
+      if (aliases.length > 1) {
+        pool = this.database.listQuestionsForPool({
+          ...selection.filter,
+          category: undefined,
+          categories: aliases
+        })
+      }
+    }
     const strictDataAnalysis =
       !selection.filter?.onlyWrong &&
       !selection.filter?.onlyFavorite &&
+      !selection.filter?.onlyUnattempted &&
+      !selection.filter?.difficulty &&
       !selection.filter?.query?.trim()
     // 严禁在 buildQuestionUnits 之前对 pool 洗牌，确保组内 1→2→3→4→5 顺序不被打乱
     const units = normalizeDataAnalysisUnits(buildQuestionUnits(pool), strictDataAnalysis)
@@ -397,7 +409,9 @@ export class StudyService {
         route:
           category === '综合能力'
             ? `/practice?mode=adaptive&count=${practiceTarget}`
-            : `/practice?mode=adaptive&count=${practiceTarget}&category=${encodeURIComponent(category)}`
+            : /申论|公文|写作|概括|对策|贯彻/.test(category)
+              ? `/practice?mode=adaptive&subject=shenlun&count=${practiceTarget}&category=${encodeURIComponent(category)}`
+              : `/practice?mode=adaptive&count=${practiceTarget}&category=${encodeURIComponent(category)}`
       })
       items.push({
         id: randomUUID(),
@@ -496,17 +510,20 @@ export class StudyService {
         const repairReminder =
           attempt > 0 && (lastFailureKind === 'parse' || lastFailureKind === 'truncated')
         const attemptMessages = buildMessages(compactMode, repairReminder)
-        const preferNonStream =
+        const preferNonStream: boolean =
           attempt > 0 && lastFailureKind === 'stream' && typeof this.ai.ask === 'function'
         try {
-          const result =
+          const result: AiAskResult =
             input.requestId && !preferNonStream
               ? await this.ai.askStream(
                   { purpose: 'evaluate', messages: attemptMessages, requestId: input.requestId },
                   { onChunk: options?.onChunk ?? (() => {}) },
                   150_000
                 )
-              : await this.ai.ask({ purpose: 'evaluate', messages: attemptMessages }, 150_000)
+              : await this.ai.ask(
+                  { purpose: 'evaluate', messages: attemptMessages, requestId: input.requestId },
+                  150_000
+                )
           if ('aborted' in result && result.aborted) {
             streamAborted = true
             break
@@ -514,8 +531,12 @@ export class StudyService {
           lastRawResult = result
           const parsed = parseConstructedEvaluationJson(result.content)
           if (!parsed) {
-            lastFailureKind = 'parse'
-            aiFailureReason = 'AI 返回结果未能解析为有效 JSON 评分结构'
+            const finish = (result.finishReason ?? '').toLowerCase()
+            lastFailureKind = finish === 'length' || finish === 'max_tokens' ? 'truncated' : 'parse'
+            aiFailureReason =
+              lastFailureKind === 'truncated'
+                ? 'AI 返回内容触发最大长度截断，未能生成完整 JSON 评分结构'
+                : 'AI 返回结果未能解析为有效 JSON 评分结构'
             continue
           }
           evaluation = {
@@ -530,6 +551,10 @@ export class StudyService {
           }
         } catch (cause) {
           const msg = cause instanceof Error ? cause.message : String(cause || '未知错误')
+          if (msg.includes('已停止')) {
+            streamAborted = true
+            break
+          }
           aiFailureReason = msg
           evaluation = undefined
           if (isNonRetryableAiError(msg)) {

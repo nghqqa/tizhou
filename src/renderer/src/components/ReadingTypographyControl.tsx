@@ -63,15 +63,15 @@ export function useReadingTypography(): {
   }, [commit, typography])
 
   useEffect(() => {
-    const element = surfaceRef.current
-    if (!element) return
     const handleWheel = (event: WheelEvent): void => {
       if (!event.ctrlKey && !event.metaKey) return
+      const element = surfaceRef.current
+      if (!element || !(event.target instanceof Node) || !element.contains(event.target)) return
       event.preventDefault()
       stepScale(event.deltaY < 0 ? READING_SCALE_STEP : -READING_SCALE_STEP)
     }
-    element.addEventListener('wheel', handleWheel, { passive: false })
-    return () => element.removeEventListener('wheel', handleWheel)
+    window.addEventListener('wheel', handleWheel, { passive: false })
+    return () => window.removeEventListener('wheel', handleWheel)
   }, [stepScale])
 
   const fontFamily = resolveReadingFontFamily(typography)

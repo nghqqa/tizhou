@@ -94,11 +94,17 @@ export function ShenlunHistoryPanel({
                   <span className="muted">基准稿</span>
                   <Select
                     value={baseRecord.id}
-                    onChange={(_, data) => setBaseId(data.value)}
+                    onChange={(_, data) => {
+                      const nextBase = data.value
+                      if (nextBase === targetRecord.id) {
+                        setTargetId(baseRecord.id)
+                      }
+                      setBaseId(nextBase)
+                    }}
                     aria-label="选择基准稿"
                   >
                     {promptHistory.map((item) => (
-                      <option key={item.id} value={item.id}>
+                      <option key={item.id} value={item.id} disabled={item.id === targetRecord.id}>
                         第 {recordNumberById.get(item.id)} 次 · {item.evaluation.score} 分 ·{' '}
                         {item.content.replace(/\s/g, '').length} 字
                       </option>
@@ -110,11 +116,17 @@ export function ShenlunHistoryPanel({
                   <span className="muted">修订稿</span>
                   <Select
                     value={targetRecord.id}
-                    onChange={(_, data) => setTargetId(data.value)}
+                    onChange={(_, data) => {
+                      const nextTarget = data.value
+                      if (nextTarget === baseRecord.id) {
+                        setBaseId(targetRecord.id)
+                      }
+                      setTargetId(nextTarget)
+                    }}
                     aria-label="选择修订稿"
                   >
                     {promptHistory.map((item) => (
-                      <option key={item.id} value={item.id}>
+                      <option key={item.id} value={item.id} disabled={item.id === baseRecord.id}>
                         第 {recordNumberById.get(item.id)} 次 · {item.evaluation.score} 分 ·{' '}
                         {item.content.replace(/\s/g, '').length} 字
                       </option>

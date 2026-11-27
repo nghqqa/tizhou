@@ -59,4 +59,24 @@ describe('score-estimator（行测目标分拆解与分模块加权估分）', (
     expect(ziliao?.questionsNeeded).toBeGreaterThan(0)
     expect(res.topRecommendation).toContain('资料分析')
   })
+
+  it('目标 95 分时将封顶溢出的分差水填至其余模块，且兼容行测细分子类归并', () => {
+    const res = estimateXingceScore(
+      [
+        { category: '政治常识', attempts: 20, correct: 14, accuracy: 70 },
+        { category: '逻辑填空', attempts: 40, correct: 36, accuracy: 90 },
+        { category: '数学运算', attempts: 10, correct: 7, accuracy: 70 },
+        { category: '图形推理', attempts: 40, correct: 36, accuracy: 90 },
+        { category: '表格资料', attempts: 20, correct: 18, accuracy: 90 }
+      ],
+      'guokao-dishi',
+      95
+    )
+
+    expect(res.modules.every((m) => m.hasData)).toBe(true)
+    const sumTarget = res.modules.reduce((acc, m) => acc + m.targetScore, 0)
+    expect(Math.round(sumTarget * 10) / 10).toBe(95)
+    expect(res.reachedTarget).toBe(false)
+    expect(res.totalQuestionsNeeded).toBeGreaterThan(0)
+  })
 })

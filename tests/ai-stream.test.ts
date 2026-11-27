@@ -600,4 +600,114 @@ describe('AiService.askStream & cancelStream & Shenlun abort', () => {
     expect(result.provider).toBe('local-rubric')
     expect(result.summary).toContain('401')
   })
+
+  it('blocks hex-normalized IPv4-mapped IPv6 SSRF targets', () => {
+    const db = makeDb()
+    const ai = new AiService(db)
+    expect(() =>
+      ai.saveConfig({
+        provider: 'openai-compatible',
+        protocol: 'openai-chat',
+        baseUrl: 'https://[::ffff:127.0.0.1]/v1',
+        model: 'gpt-4o-mini',
+        temperature: 0.2,
+        maxTokens: 1024,
+        apiKey: 'sk-test-ssrf'
+      })
+    ).toThrow(/私有网络/)
+    expect(() =>
+      ai.saveConfig({
+        provider: 'openai-compatible',
+        protocol: 'openai-chat',
+        baseUrl: 'https://[::ffff:a9fe:a9fe]/v1',
+        model: 'gpt-4o-mini',
+        temperature: 0.2,
+        maxTokens: 1024,
+        apiKey: 'sk-test-ssrf'
+      })
+    ).toThrow(/私有网络/)
+  })
+
+  it('clears saved API key when switching provider or host without entering a new key', () => {
+    const db = makeDb()
+    const ai = new AiService(db)
+    ai.saveConfig({
+      provider: 'deepseek',
+      protocol: 'openai-chat',
+      baseUrl: 'https://api.deepseek.com/v1',
+      model: 'deepseek-chat',
+      temperature: 0.2,
+      maxTokens: 4096,
+      apiKey: 'sk-secret-deepseek'
+    })
+    expect(ai.getConfig().hasApiKey).toBe(true)
+
+    const switched = ai.saveConfig({
+      provider: 'openai-compatible',
+      protocol: 'openai-chat',
+      baseUrl: 'https://other-host.example.com/v1',
+      model: 'other-model',
+      temperature: 0.2,
+      maxTokens: 4096
+    })
+    expect(switched.hasApiKey).toBe(false)
+  })
+
+  it('caps DeepSeek requestSpec max_tokens at 8192 even for high maxTokens config', () => {
+    const config: StoredAiConfig = {
+      provider: 'deepseek',
+      protocol: 'openai-chat',
+      baseUrl: 'https://api.deepseek.com/v1',
+      model: 'deepseek-chat',
+      temperature: 0.2,
+      maxTokens: 16384
+    }
+    const spec = requestSpec(config, [{ role: 'user', content: 'hi' }], 'sk-test')
+    expect((spec.body as { max_tokens?: number }).max_tokens).toBe(8192)
+  })
+
+  it('extractShenlunStreamPreview ignores dimension scores even with nested brackets in comments', () => {
+    const partial =
+      '{"dimensions":[{"name":"要点","score":91,"comment":"建议把[措施A], [措施B]合并"}],"score":77,"summary":"整体较稳"}'
+    const preview = extractShenlunStreamPreview(partial)
+    expect(preview.score).toBe(77)
+    expect(preview.summary).toBe('整体较稳')
+  })
+
+  it('StudyService.evaluateConstructed honors abort on fallback non-stream ask retry', async () => {
+    const db = makeDb()
+    const askStream = vi.fn(async () => {
+      throw new Error('SSE stream terminated early')
+    })
+    const ask = vi.fn(async (input: { requestId?: string }) => ({
+      content: '',
+      provider: 'lmstudio',
+      model: 'm-1',
+      aborted: Boolean(input.requestId)
+    }))
+    const study = new StudyService(db, {
+      getConfig: () => ({
+        provider: 'lmstudio',
+        protocol: 'openai-chat',
+        baseUrl: 'http://127.0.0.1:1234',
+        model: 'm-1',
+        temperature: 0.2,
+        maxTokens: 4096,
+        hasApiKey: false,
+        verified: true
+      }),
+      askStream,
+      ask
+    } as unknown as AiService)
+
+    await expect(
+      study.evaluateConstructed({
+        promptId: 'p-abort-retry',
+        title: '取消重试测试',
+        content: '这是一段超过二十个字的申论作答内容用于验证非流式重试可正常中止。',
+        requestId: 'req-abort-fallback'
+      })
+    ).rejects.toThrow('已停止本次 AI 批改')
+    expect(ask).toHaveBeenCalledTimes(1)
+  })
 })

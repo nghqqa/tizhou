@@ -8,7 +8,9 @@ export function PracticePage(): React.JSX.Element {
   const [searchParams] = useSearchParams()
   const recommended = searchParams.get('recommended')
   const mode = searchParams.get('mode') as PracticeSelection['mode'] | null
-  const count = Number(searchParams.get('count')) || undefined
+  const rawCount = Number(searchParams.get('count'))
+  const count =
+    Number.isFinite(rawCount) && rawCount > 0 ? Math.min(100, Math.round(rawCount)) : undefined
   const category = searchParams.get('category') ?? undefined
   const onlyWrong = searchParams.get('onlyWrong') === '1'
   const onlyFavorite = searchParams.get('onlyFavorite') === '1'
@@ -22,6 +24,13 @@ export function PracticePage(): React.JSX.Element {
         ? ''
         : subjectParam
       : undefined
+  const inferredSubject =
+    subject ??
+    (onlyWrong || onlyFavorite
+      ? ''
+      : category && /申论|公文|写作|概括|对策|贯彻/.test(category)
+        ? 'shenlun'
+        : 'xingce')
   const initial: TrainerInitial | undefined =
     mode ||
     count ||
@@ -42,9 +51,10 @@ export function PracticePage(): React.JSX.Element {
           questionId,
           resumeActive,
           feedbackMode: 'immediate',
-          subject: subject ?? (onlyWrong || onlyFavorite ? '' : 'xingce')
+          subject: inferredSubject
         }
       : undefined
+  const trainerKey = searchParams.toString() || 'default'
   return (
     <div className="page">
       <PageHeader
@@ -60,7 +70,7 @@ export function PracticePage(): React.JSX.Element {
           </p>
         </div>
       )}
-      <Trainer key={questionId ?? (resumeActive ? 'resume' : 'default')} initial={initial} />
+      <Trainer key={trainerKey} initial={initial} />
     </div>
   )
 }

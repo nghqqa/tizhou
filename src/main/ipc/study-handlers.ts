@@ -55,12 +55,14 @@ export function createStudyHandlers(ctx: IpcContext): Pick<IpcHandlerMap, StudyH
         category: params.category,
         wrongCause: params.wrongCause,
         query: params.query,
+        minWrongCount: params.minWrongCount,
         limit: 500
       })
       if (!items.length) throw new Error('当前筛选下没有可导出的题目')
       const isPdf = params.format === 'pdf'
       const isHtml = params.format === 'html'
-      const selected = await dialog.showSaveDialog(ctx.getMainWindow()!, {
+      const win = ctx.getMainWindow()
+      const options = {
         title: isPdf
           ? '导出 A4 试卷 PDF'
           : isHtml
@@ -72,24 +74,26 @@ export function createStudyHandlers(ctx: IpcContext): Pick<IpcHandlerMap, StudyH
           : isHtml
             ? [{ name: 'HTML 打印版', extensions: ['html'] }]
             : [{ name: 'Markdown', extensions: ['md'] }]
-      })
+      }
+      const selected = win
+        ? await dialog.showSaveDialog(win, options)
+        : await dialog.showSaveDialog(options)
       if (selected.canceled || !selected.filePath) return undefined
+      const resolveAssetDataUrl = (sourceFilePath: string, assetPath: string): string | null => {
+        try {
+          return sourceFilePath ? ctx.vaults.readAssetDataUrl(sourceFilePath, assetPath) : null
+        } catch {
+          return null
+        }
+      }
       if (isPdf) {
-        const html = renderQuestionLibraryPdfHtml(items, params, {
-          resolveAssetDataUrl: (sourceFilePath, assetPath) => {
-            try {
-              return sourceFilePath ? ctx.vaults.readAssetDataUrl(sourceFilePath, assetPath) : null
-            } catch {
-              return null
-            }
-          }
-        })
+        const html = renderQuestionLibraryPdfHtml(items, params, { resolveAssetDataUrl })
         const pdfBuffer = await renderHtmlToPdfBuffer(html)
         writeFileSync(selected.filePath, pdfBuffer)
         return selected.filePath
       }
       const output = isHtml
-        ? renderQuestionLibraryHtml(items, params)
+        ? renderQuestionLibraryHtml(items, params, new Date(), resolveAssetDataUrl)
         : renderQuestionLibraryMarkdown(items, params)
       writeFileSync(selected.filePath, output, 'utf8')
       return selected.filePath

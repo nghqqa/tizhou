@@ -222,14 +222,47 @@ export function estimateXingceScore(
     byModule.set(mod, entry)
   }
 
-  // 计算基准高分模板下的参考总分，按用户设定的目标总分等比缩放各模块目标正确率
+  // 计算基准高分模板下的参考总分，按用户设定的目标总分等比缩放各模块目标正确率；
+  // 若部分模块触及 95% 上限，将截断差额按比例水填到未触顶模块，确保各模块目标分之和与目标总分一致
   const baselineTotal = template.modules.reduce(
     (sum, mod) => sum + mod.questionCount * mod.pointsPerQuestion * mod.baselineTargetAccuracy,
     0
   )
   const scaleFactor = baselineTotal > 0 ? targetTotalScore / baselineTotal : 1
+  const targetAccuracies = template.modules.map((mod) =>
+    clamp(mod.baselineTargetAccuracy * scaleFactor, 0.35, 0.95)
+  )
+  for (let pass = 0; pass < 6; pass += 1) {
+    const currentTargetSum = template.modules.reduce(
+      (sum, mod, i) => sum + mod.questionCount * mod.pointsPerQuestion * targetAccuracies[i]!,
+      0
+    )
+    const deficit = targetTotalScore - currentTargetSum
+    if (Math.abs(deficit) < 0.05) break
+    const adjustable = template.modules
+      .map((mod, i) => ({
+        i,
+        room:
+          deficit > 0
+            ? (0.95 - targetAccuracies[i]!) * mod.questionCount * mod.pointsPerQuestion
+            : (targetAccuracies[i]! - 0.35) * mod.questionCount * mod.pointsPerQuestion,
+        maxScore: mod.questionCount * mod.pointsPerQuestion
+      }))
+      .filter((item) => item.room > 1e-4)
+    const totalRoom = adjustable.reduce((sum, item) => sum + item.room, 0)
+    if (totalRoom <= 1e-4) break
+    const shareRatio = Math.min(1, Math.abs(deficit) / totalRoom)
+    for (const item of adjustable) {
+      const deltaScore = (deficit > 0 ? 1 : -1) * item.room * shareRatio
+      targetAccuracies[item.i] = clamp(
+        targetAccuracies[item.i]! + deltaScore / item.maxScore,
+        0.35,
+        0.95
+      )
+    }
+  }
 
-  const rawRows = template.modules.map((mod) => {
+  const rawRows = template.modules.map((mod, idx) => {
     const stat = byModule.get(mod.moduleName)
     const attempts = stat?.attempts ?? 0
     const hasData = attempts > 0
@@ -238,7 +271,7 @@ export function estimateXingceScore(
     const maxScore = round1(mod.questionCount * mod.pointsPerQuestion)
     const estimatedScore = round1(maxScore * currentAccuracy)
 
-    const targetAccuracy = clamp(mod.baselineTargetAccuracy * scaleFactor, 0.35, 0.95)
+    const targetAccuracy = targetAccuracies[idx]!
     const targetScore = round1(maxScore * targetAccuracy)
     const rawGap = Math.max(0, targetScore - estimatedScore)
     const questionsNeeded = Math.max(0, Math.ceil(rawGap / mod.pointsPerQuestion))

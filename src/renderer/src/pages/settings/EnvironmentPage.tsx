@@ -133,7 +133,18 @@ export function EnvironmentPage(): React.JSX.Element {
     return (
       <div className="page">
         <PageHeader title="学习环境" />
-        <LoadingState />
+        {error ? (
+          <>
+            <ErrorState message={error} />
+            <div className="button-row" style={{ marginTop: 12 }}>
+              <Button appearance="primary" onClick={() => void load()}>
+                重新加载
+              </Button>
+            </div>
+          </>
+        ) : (
+          <LoadingState />
+        )}
       </div>
     )
   return (

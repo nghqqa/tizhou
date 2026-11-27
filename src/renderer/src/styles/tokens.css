@@ -46,6 +46,7 @@
 
   /* 间距与圆角 */
   --tz-radius: 6px;
+  --tz-radius-md: 6px;
   --tz-radius-sm: 4px;
   --tz-radius-lg: 8px;
   --tz-accent: var(--tz-vermillion);

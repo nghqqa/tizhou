@@ -781,6 +781,11 @@ export function buildShenlunSheetGrid(
 
   for (const token of tokens) {
     if (token.type === 'newline') {
+      if (col === 0 && autoWrappedPrevRow) {
+        charCoordMap[token.start] = { row, col: 0, subOffset: 0 }
+        autoWrappedPrevRow = false
+        continue
+      }
       charCoordMap[token.start] = { row, col, subOffset: 0 }
       lineEndIndex.set(row, token.start)
       row += 1
@@ -843,7 +848,8 @@ export function buildShenlunSheetGrid(
       }
     }
 
-    const compactLevel: 0 | 2 | 3 = token.text.length >= 3 ? 3 : token.text.length === 2 ? 2 : 0
+    const glyphLength = Array.from(token.text).length
+    const compactLevel: 0 | 2 | 3 = glyphLength >= 3 ? 3 : glyphLength === 2 ? 2 : 0
 
     placeCell(row, col, {
       char: token.text,

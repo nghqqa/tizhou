@@ -157,4 +157,60 @@ describe('library-export（错题本/收藏夹/笔记库导出）', () => {
     expect(annotatedPdfHtml).toContain('A4 题解对照版')
     expect(annotatedPdfHtml).toContain('<strong>参考答案：</strong>')
   })
+
+  it('MD/HTML 支持选项配图，无答案试卷 PDF 保留笔记且申论长答案不撑爆速查网格', () => {
+    const fixedDate = new Date(2026, 3, 18)
+    const essayAndImgItems: QuestionLibraryItem[] = [
+      {
+        ...SAMPLE_ITEMS[0]!,
+        question: {
+          ...SAMPLE_ITEMS[0]!.question,
+          filePath: 'E:/vault/img.md',
+          options: [{ key: 'A', text: '图形项', image: 'assets/a.png' }]
+        }
+      },
+      {
+        ...SAMPLE_ITEMS[0]!,
+        note: '二刷必须牢记材料结构',
+        question: {
+          ...SAMPLE_ITEMS[0]!.question,
+          id: 'sl-essay-1',
+          subject: 'shenlun',
+          type: 'essay',
+          category: '归纳概括',
+          options: [],
+          answer: ['要点一完善制度', '要点二强化监管', '要点三群众参与']
+        }
+      }
+    ]
+
+    const md = renderQuestionLibraryMarkdown(
+      essayAndImgItems,
+      { tab: 'wrong', includeAnswers: false, includeNotes: true },
+      fixedDate
+    )
+    expect(md).toContain('![A](assets/a.png)')
+
+    const html = renderQuestionLibraryHtml(
+      essayAndImgItems,
+      { tab: 'wrong', includeAnswers: false, includeNotes: true },
+      fixedDate,
+      (_file, asset) => (asset === 'assets/a.png' ? 'data:image/png;base64,QUFB' : null)
+    )
+    expect(html).toContain('src="data:image/png;base64,QUFB"')
+
+    const noAnsPdf = renderQuestionLibraryPdfHtml(
+      essayAndImgItems,
+      { tab: 'wrong', includeAnswers: false, includeNotes: true, pdfLayout: 'exam' },
+      { generatedAt: fixedDate }
+    )
+    expect(noAnsPdf).toContain('二刷必须牢记材料结构')
+
+    const withAnsPdf = renderQuestionLibraryPdfHtml(
+      essayAndImgItems,
+      { tab: 'wrong', includeAnswers: true, includeNotes: true, pdfLayout: 'exam' },
+      { generatedAt: fixedDate }
+    )
+    expect(withAnsPdf).toContain('<span class="ans-val">主观</span>')
+  })
 })

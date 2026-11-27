@@ -811,7 +811,7 @@
   left: auto;
   right: 0;
   width: max(100%, min(460px, calc(100vw - 48px)));
-  z-index: 1200;
+  z-index: 400;
   background: var(--tz-surface);
   border: 1px solid var(--tz-border-strong);
   border-radius: var(--tz-radius-lg);

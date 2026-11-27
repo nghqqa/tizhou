@@ -116,6 +116,7 @@ export function ExamRunPage(): React.JSX.Element {
   const reading = useReadingTypography()
   const essayTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const mountedRef = useRef(true)
+  const finishingRef = useRef(false)
   // 每题累计耗时（秒）与当前题目进入时间戳：切题、保存答案及交卷前实时累计，支撑复盘页模块耗时分析
   const questionDurationsRef = useRef<Record<string, number>>({})
   const timingAnchorRef = useRef<{ questionId: string; enteredAt: number } | null>(null)
@@ -182,9 +183,13 @@ export function ExamRunPage(): React.JSX.Element {
     return () => {
       mountedRef.current = false
       if (essayTimerRef.current) clearTimeout(essayTimerRef.current)
-      // 组件卸载时把挂起答案保存完成后再停止（异步，不阻塞卸载本身）
-      void answerSaveRef.current?.destroy()
-      void saveControllerRef.current?.destroy()
+      // 组件卸载时把挂起答案保存完成后再停止，并清空 ref 以便 StrictMode/重挂重建活跃控制器
+      const answerCtrl = answerSaveRef.current
+      const essayCtrl = saveControllerRef.current
+      answerSaveRef.current = null
+      saveControllerRef.current = null
+      void answerCtrl?.destroy()
+      void essayCtrl?.destroy()
     }
   }, [])
 
@@ -221,13 +226,16 @@ export function ExamRunPage(): React.JSX.Element {
   }, [])
 
   useEffect(() => {
-    if (!exam) return
-    const timer = window.setInterval(() => setSeconds(remainingSeconds(exam)), 1000)
+    if (!exam?.id) return
+    const timer = window.setInterval(() => {
+      const active = examRef.current
+      if (active) setSeconds(remainingSeconds(active))
+    }, 1000)
     return () => window.clearInterval(timer)
-  }, [exam])
+  }, [exam?.id, exam?.startedAt, exam?.durationMinutes])
 
   useEffect(() => {
-    if (exam && seconds === 0 && !finishing) void finish()
+    if (exam && seconds === 0 && !finishing && !finishingRef.current) void finish()
   }, [seconds, exam?.id])
 
   const answered = exam
@@ -235,7 +243,7 @@ export function ExamRunPage(): React.JSX.Element {
     : 0
   const current = questions[index]
 
-  // 切题时结算上一题停留耗时并切换计时锚点；若上一题已作答且有新增耗时则顺手持久化
+  // 切题时结算上一题停留耗时并切换计时锚点；无论是否作答均落盘耗时，确保沉没成本分析覆盖高耗时未答题
   useEffect(() => {
     const nextId = current?.id
     const prevAnchor = timingAnchorRef.current
@@ -246,13 +254,22 @@ export function ExamRunPage(): React.JSX.Element {
         questionDurationsRef.current[prevAnchor.questionId] =
           (questionDurationsRef.current[prevAnchor.questionId] ?? 0) + delta
         const activeExam = examRef.current
-        const prevAnswer = activeExam?.answers[prevAnchor.questionId]
-        if (activeExam && prevAnswer?.answer.some((v) => v.trim())) {
-          answerSaveRef.current?.save({
-            examId: activeExam.id,
-            questionId: prevAnchor.questionId,
-            answer: prevAnswer.answer
-          })
+        if (activeExam) {
+          const prevQuestion = questions.find((q) => q.id === prevAnchor.questionId)
+          const prevAnswer = activeExam.answers[prevAnchor.questionId]?.answer ?? []
+          if (prevQuestion?.type === 'essay') {
+            saveControllerRef.current?.enqueueIfIdle(
+              activeExam.id,
+              prevAnchor.questionId,
+              prevAnswer
+            )
+          } else {
+            answerSaveRef.current?.save({
+              examId: activeExam.id,
+              questionId: prevAnchor.questionId,
+              answer: prevAnswer
+            })
+          }
         }
       }
     }
@@ -309,10 +326,13 @@ export function ExamRunPage(): React.JSX.Element {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
+      const targetEl = event.target as HTMLElement | null
       if (
         !current ||
         confirmOpen ||
         hasOpenModal() ||
+        targetEl?.isContentEditable ||
+        Boolean(targetEl?.closest('.scratchpad-drawer')) ||
         event.target instanceof HTMLInputElement ||
         event.target instanceof HTMLTextAreaElement ||
         event.target instanceof HTMLSelectElement ||
@@ -392,57 +412,57 @@ export function ExamRunPage(): React.JSX.Element {
   }
 
   async function finish(): Promise<void> {
-    if (!exam) return
-    // 交卷前结算当前题耗时并同步写入已作答记录
-    if (current) {
-      const finalDuration = flushActiveQuestionDuration(current.id)
-      const existingAns = exam.answers[current.id]
-      if (
-        existingAns?.answer.some((v) => v.trim()) &&
-        finalDuration !== existingAns.durationSeconds
-      ) {
-        answerSaveRef.current?.save({
-          examId: exam.id,
-          questionId: current.id,
-          answer: existingAns.answer
-        })
-      }
-    }
-    // 交卷前 flush pending 并检查保存失败
-    if (essayTimerRef.current) {
-      clearTimeout(essayTimerRef.current)
-      essayTimerRef.current = undefined
-    }
-    // 客观题答案：等待全部挂起保存完成；存在失败则阻止交卷并自动重试
-    const answerController = answerSaveRef.current
-    if (answerController) {
-      const failedIds = await answerController.drain()
-      if (failedIds.length > 0) {
-        answerController.retryAll()
-        setSaveBlocked(true)
-        setError(`有 ${failedIds.length} 题答案尚未保存成功，已自动重试；请稍后再次交卷。`)
-        setFinishing(false)
-        setConfirmOpen(false)
-        return
-      }
-    }
-    const controller = saveControllerRef.current
-    if (controller) {
-      await controller.flushPending()
-      const result = await controller.drain()
-      if (result.hasFailure) {
-        setSaveBlocked(true)
-        setError('答案保存失败，暂不能交卷。请点击「重试保存」后再次交卷。')
-        setFinishing(false)
-        setConfirmOpen(false)
-        return
-      }
-    }
-    setSaveBlocked(false)
+    if (!exam || finishingRef.current) return
+    finishingRef.current = true
     setFinishing(true)
-    setConfirmOpen(false)
-    setError('')
     try {
+      // 交卷前结算当前题耗时并同步写入（含未答题耗时）
+      if (current) {
+        const finalDuration = flushActiveQuestionDuration(current.id)
+        const existingAns = exam.answers[current.id]
+        if (finalDuration > 0 && finalDuration !== (existingAns?.durationSeconds ?? 0)) {
+          if (current.type === 'essay') {
+            saveControllerRef.current?.enqueueIfIdle(exam.id, current.id, existingAns?.answer ?? [])
+          } else {
+            answerSaveRef.current?.save({
+              examId: exam.id,
+              questionId: current.id,
+              answer: existingAns?.answer ?? []
+            })
+          }
+        }
+      }
+      // 交卷前 flush pending 并检查保存失败
+      if (essayTimerRef.current) {
+        clearTimeout(essayTimerRef.current)
+        essayTimerRef.current = undefined
+      }
+      // 客观题答案：等待全部挂起保存完成；存在失败则阻止交卷并自动重试
+      const answerController = answerSaveRef.current
+      if (answerController) {
+        const failedIds = await answerController.drain()
+        if (failedIds.length > 0) {
+          answerController.retryAll()
+          setSaveBlocked(true)
+          setError(`有 ${failedIds.length} 题答案尚未保存成功，已自动重试；请稍后再次交卷。`)
+          setConfirmOpen(false)
+          return
+        }
+      }
+      const controller = saveControllerRef.current
+      if (controller) {
+        await controller.flushPending()
+        const result = await controller.drain()
+        if (result.hasFailure) {
+          setSaveBlocked(true)
+          setError('答案保存失败，暂不能交卷。请点击「重试保存」后再次交卷。')
+          setConfirmOpen(false)
+          return
+        }
+      }
+      setSaveBlocked(false)
+      setConfirmOpen(false)
+      setError('')
       await invoke({ method: 'exam.finish', params: { examId: exam.id, uncertainIds } })
       removeLocalStorage(`${EXAM_UNCERTAIN_PREFIX}${exam.id}`)
       await refresh()
@@ -450,21 +470,33 @@ export function ExamRunPage(): React.JSX.Element {
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '交卷失败')
     } finally {
+      finishingRef.current = false
       setFinishing(false)
     }
   }
 
-  /** 重试失败的保存 */
+  /** 重试失败的保存（同时覆盖客观题与主观题两个保存队列） */
   async function retrySave(): Promise<void> {
-    const controller = saveControllerRef.current
-    if (!controller) return
     setError('')
-    const result = await controller.retryAll()
-    if (!result.hasFailure) {
+    let answerFailed = 0
+    const answerController = answerSaveRef.current
+    if (answerController && answerController.failedQuestionIds().length > 0) {
+      answerController.retryAll()
+      const remaining = await answerController.drain()
+      answerFailed = remaining.length
+    }
+    let essayFailed = 0
+    const controller = saveControllerRef.current
+    if (controller && controller.hasFailedSave) {
+      const result = await controller.retryAll()
+      essayFailed = result.failedQuestionIds.length
+    }
+    const totalFailed = answerFailed + essayFailed
+    if (totalFailed === 0) {
       setSaveBlocked(false)
-      setSaveStatus('saved')
+      if (controller) setSaveStatus('saved')
     } else {
-      setError(`仍有 ${result.failedQuestionIds.length} 题保存失败，请再次重试。`)
+      setError(`仍有 ${totalFailed} 题保存失败，请再次重试。`)
     }
   }
 
@@ -481,9 +513,10 @@ export function ExamRunPage(): React.JSX.Element {
     }, 600)
   }
 
-  // 切题时 flush 上一题的未保存内容（controller 已捕获旧题 ID）
+  // 切题时先结算停留耗时，再 flush 上一题未保存主观题内容（controller 已捕获旧题 ID）
   useEffect(() => {
     return () => {
+      flushActiveQuestionDuration()
       if (essayTimerRef.current) {
         clearTimeout(essayTimerRef.current)
         essayTimerRef.current = undefined
@@ -719,6 +752,13 @@ export function ExamRunPage(): React.JSX.Element {
           </div>
         )}
       {error && <ErrorState message={error} />}
+      {saveBlocked && current.type !== 'essay' && (
+        <div className="button-row" style={{ marginBottom: 12 }}>
+          <Button size="small" appearance="secondary" onClick={() => void retrySave()}>
+            重试保存失败答案
+          </Button>
+        </div>
+      )}
       <div className="question-shell">
         <Section className="question-card">
           <div className="progress-text">
@@ -735,7 +775,7 @@ export function ExamRunPage(): React.JSX.Element {
               {current.year && <span className="pill">{current.year}</span>}
               {current.region && <span className="pill">{current.region}</span>}
             </div>
-            <div className="question-tools-group">
+            <div className="question-top-tools">
               {current.material && (
                 <Button
                   size="small"
@@ -880,6 +920,7 @@ export function ExamRunPage(): React.JSX.Element {
                 <div>
                   {shenlunUseSheet ? (
                     <ShenlunAnswerSheet
+                      key={current.id}
                       value={essayText}
                       onChange={scheduleEssaySave}
                       limit={extractWordLimit(current.stem)}

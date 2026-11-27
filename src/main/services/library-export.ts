@@ -89,7 +89,8 @@ export function renderQuestionLibraryMarkdown(
     lines.push(q.stem.trim(), '')
     if (q.options.length > 0) {
       for (const option of q.options) {
-        lines.push(`- **${option.key}.** ${option.text}`)
+        const imageSuffix = option.image ? ` ![${option.key}](${option.image})` : ''
+        lines.push(`- **${option.key}.** ${option.text}${imageSuffix}`.trimEnd())
       }
       lines.push('')
     }
@@ -114,7 +115,8 @@ export function renderQuestionLibraryHtml(
     QuestionLibraryExportParams,
     'tab' | 'category' | 'wrongCause' | 'includeAnswers' | 'includeNotes'
   >,
-  generatedAt = new Date()
+  generatedAt = new Date(),
+  resolveAssetDataUrl?: (sourceFilePath: string, assetPath: string) => string | null
 ): string {
   const tabName = TAB_LABELS[params.tab] ?? '题单'
   const titleParts = [`题舟${tabName}`]
@@ -132,26 +134,35 @@ export function renderQuestionLibraryHtml(
       if (item.lastWrongCause) meta.push(item.lastWrongCause)
 
       const materialHtml = q.material?.trim()
-        ? `<div class="material"><strong>给定材料</strong><p>${escapeHtml(q.material.trim()).replace(/\r?\n/g, '<br>')}</p></div>`
+        ? `<div class="material"><strong>给定材料</strong><p>${renderSafePdfRichText(q.material, q.filePath, resolveAssetDataUrl)}</p></div>`
         : ''
       const optionsHtml =
         q.options.length > 0
           ? `<ul class="options">${q.options
-              .map(
-                (opt) =>
-                  `<li><span class="opt-key">${escapeHtml(opt.key)}</span><span>${escapeHtml(opt.text)}</span></li>`
-              )
+              .map((opt) => {
+                const optImg =
+                  opt.image && q.filePath && resolveAssetDataUrl
+                    ? resolveAssetDataUrl(q.filePath, opt.image)
+                    : null
+                const imgTag =
+                  optImg && /^data:image\//i.test(optImg)
+                    ? `<img class="pdf-opt-img" src="${escapeHtml(optImg)}" alt="${escapeHtml(opt.key)}" />`
+                    : opt.image
+                      ? `<span class="img-placeholder">[附图：${escapeHtml(opt.key)}]</span>`
+                      : ''
+                return `<li><span class="opt-key">${escapeHtml(opt.key)}</span><span>${renderSafePdfRichText(opt.text, q.filePath, resolveAssetDataUrl)}${imgTag}</span></li>`
+              })
               .join('')}</ul>`
           : ''
       const answerHtml = params.includeAnswers
         ? `<div class="answer">
             <div><strong>参考答案：</strong>${escapeHtml(q.answer.length ? q.answer.join('、') : '见参考解析')}</div>
-            ${q.explanation.trim() ? `<div class="explanation">${escapeHtml(q.explanation.trim()).replace(/\r?\n/g, '<br>')}</div>` : ''}
+            ${q.explanation.trim() ? `<div class="explanation">${renderSafePdfRichText(q.explanation, q.filePath, resolveAssetDataUrl)}</div>` : ''}
           </div>`
         : ''
       const noteHtml =
         params.includeNotes && item.note.trim()
-          ? `<div class="note"><strong>我的笔记：</strong>${escapeHtml(item.note.trim()).replace(/\r?\n/g, '<br>')}</div>`
+          ? `<div class="note"><strong>我的笔记：</strong>${renderSafePdfRichText(item.note, q.filePath, resolveAssetDataUrl)}</div>`
           : ''
 
       return `<article class="q-card">
@@ -160,7 +171,7 @@ export function renderQuestionLibraryHtml(
           <span class="meta">${escapeHtml(meta.join(' · '))}</span>
         </header>
         ${materialHtml}
-        <div class="stem">${escapeHtml(q.stem.trim()).replace(/\r?\n/g, '<br>')}</div>
+        <div class="stem">${renderSafePdfRichText(q.stem, q.filePath, resolveAssetDataUrl)}</div>
         ${optionsHtml}
         ${answerHtml}
         ${noteHtml}
@@ -300,7 +311,11 @@ function renderSafePdfRichText(
       parts.push(escapeHtml(text.slice(lastIdx, match.index)).replace(/\r?\n/g, '<br>'))
     }
     const alt = match[1] ?? ''
-    const assetPath = (match[2] ?? '').trim()
+    const assetPath = (match[2] ?? '')
+      .trim()
+      .replace(/\s+["'][^"']*["']\s*$/, '')
+      .replace(/^<|>$/g, '')
+      .trim()
     const resolved =
       assetPath && sourceFilePath && resolveAssetDataUrl
         ? resolveAssetDataUrl(sourceFilePath, assetPath)
@@ -387,7 +402,9 @@ export function renderQuestionLibraryPdfHtml(
           : ''
 
       const inlineNoteHtml =
-        layout === 'annotated' && params.includeNotes && item.note.trim()
+        (layout === 'annotated' || !params.includeAnswers) &&
+        params.includeNotes &&
+        item.note.trim()
           ? `<div class="note"><strong>我的笔记：</strong>${renderSafePdfRichText(item.note, q.filePath, resolveAsset)}</div>`
           : ''
 
@@ -412,7 +429,8 @@ export function renderQuestionLibraryPdfHtml(
   if (layout === 'exam' && params.includeAnswers) {
     const quickGridCells = items
       .map((item, index) => {
-        const ans = item.question.answer.length ? item.question.answer.join('') : '主观'
+        const rawAns = item.question.answer.length ? item.question.answer.join('') : ''
+        const ans = item.question.type === 'essay' || !rawAns || rawAns.length > 6 ? '主观' : rawAns
         return `<div class="ans-cell"><span class="ans-no">${index + 1}</span><span class="ans-val">${escapeHtml(ans)}</span></div>`
       })
       .join('')

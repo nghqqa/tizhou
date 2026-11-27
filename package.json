@@ -1,6 +1,6 @@
 {
   "name": "tizhou",
-  "version": "1.0.51",
+  "version": "1.0.52",
   "private": true,
   "license": "MIT",
   "author": "nghqqa",
@@ -33,11 +33,22 @@
     "release": "node scripts/release.mjs"
   },
   "dependencies": {
+    "electron-updater": "^6.8.9",
+    "gray-matter": "4.0.3"
+  },
+  "devDependencies": {
     "@fluentui/react-components": "9.74.6",
     "@phosphor-icons/react": "2.1.10",
-    "electron-updater": "^6.8.9",
-    "gray-matter": "4.0.3",
+    "@types/node": "26.2.0",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.4",
+    "@vitejs/plugin-react": "5.0.4",
+    "electron": "43.4.0",
+    "electron-builder": "26.15.3",
+    "electron-vite": "5.0.0",
     "katex": "0.18.4",
+    "playwright": "^1.63.0",
+    "prettier": "3.9.6",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "react-markdown": "10.1.0",
@@ -47,21 +58,10 @@
     "rehype-raw": "^7.0.0",
     "rehype-sanitize": "^6.0.0",
     "remark-gfm": "4.0.1",
-    "zustand": "5.0.15"
-  },
-  "devDependencies": {
-    "@types/node": "26.2.0",
-    "@types/react": "19.2.18",
-    "@types/react-dom": "19.2.4",
-    "@vitejs/plugin-react": "5.0.4",
-    "electron": "43.4.0",
-    "electron-builder": "26.15.3",
-    "electron-vite": "5.0.0",
-    "playwright": "^1.63.0",
-    "prettier": "3.9.6",
     "typescript": "7.0.2",
     "vite": "7.3.6",
-    "vitest": "4.1.10"
+    "vitest": "4.1.10",
+    "zustand": "5.0.15"
   },
   "build": {
     "appId": "com.tizhou.app",

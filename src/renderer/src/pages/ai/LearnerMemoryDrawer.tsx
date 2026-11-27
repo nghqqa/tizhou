@@ -65,9 +65,12 @@ export function LearnerMemoryDrawer({ open, onClose, onChanged }: LearnerMemoryD
 
   if (!open) return null
 
-  const syncList = (next: LearnerMemory[]) => {
-    setMemories(next)
-    onChangedRef.current?.(next)
+  const syncList = (updater: (prev: LearnerMemory[]) => LearnerMemory[]) => {
+    setMemories((prev) => {
+      const next = updater(prev)
+      onChangedRef.current?.(next)
+      return next
+    })
   }
 
   const addMemory = async () => {
@@ -85,8 +88,7 @@ export function LearnerMemoryDrawer({ open, onClose, onChanged }: LearnerMemoryD
           source: 'user'
         }
       })
-      const next = [saved, ...memories.filter((item) => item.id !== saved.id)]
-      syncList(next)
+      syncList((prev) => [saved, ...prev.filter((item) => item.id !== saved.id)])
       setContent('')
       setEvidence('')
     } catch (err) {
@@ -102,7 +104,7 @@ export function LearnerMemoryDrawer({ open, onClose, onChanged }: LearnerMemoryD
         method: 'memory.toggle',
         params: { id: item.id, enabled }
       })
-      syncList(memories.map((m) => (m.id === updated.id ? updated : m)))
+      syncList((prev) => prev.map((m) => (m.id === updated.id ? updated : m)))
     } catch (err) {
       setError(err instanceof Error ? err.message : '更新状态失败')
     }
@@ -111,7 +113,7 @@ export function LearnerMemoryDrawer({ open, onClose, onChanged }: LearnerMemoryD
   const handleDelete = async (id: string) => {
     try {
       await invoke<boolean>({ method: 'memory.delete', params: { id } })
-      syncList(memories.filter((m) => m.id !== id))
+      syncList((prev) => prev.filter((m) => m.id !== id))
     } catch (err) {
       setError(err instanceof Error ? err.message : '删除记忆失败')
     }

@@ -93,15 +93,45 @@ export const XINGCE_MODULE_ORDER = [
   '资料分析'
 ] as const
 
-/** 将不同题库的模块名称归并到行测五大核心模块 */
+/** 将不同题库的模块及细分题型名称归并到行测五大核心模块 */
 export function normalizeXingceModule(category: string): string {
   const raw = String(category ?? '').trim()
   if (!raw) return '其他'
-  if (raw === '言语理解' || raw.startsWith('言语理解')) return '言语理解与表达'
-  if (raw === '政治理论' || raw === '常识判断') return '常识判断'
-  if (raw === '数量关系') return '数量关系'
-  if (raw === '判断推理') return '判断推理'
-  if (raw === '资料分析' || raw.startsWith('资料分析')) return '资料分析'
+  if (
+    raw === '言语理解' ||
+    raw.startsWith('言语理解') ||
+    /^(?:逻辑填空|选词填空|片段阅读|语句表达|阅读理解|篇章阅读|主旨概括|意图判断|细节判断|语句排序|语句衔接)/.test(
+      raw
+    )
+  ) {
+    return '言语理解与表达'
+  }
+  if (
+    raw === '政治理论' ||
+    raw === '常识判断' ||
+    /^(?:常识|政治常识|法律常识|经济常识|科技常识|人文常识|地理常识|历史常识|管理常识|公文常识|时事政治|马克思主义|习近平)/.test(
+      raw
+    )
+  ) {
+    return '常识判断'
+  }
+  if (raw === '数量关系' || raw.startsWith('数量关系') || /^(?:数学运算|数字推理)/.test(raw)) {
+    return '数量关系'
+  }
+  if (
+    raw === '判断推理' ||
+    raw.startsWith('判断推理') ||
+    /^(?:图形推理|定义判断|类比推理|逻辑判断|削弱加强|翻译推理|真假推理|科学推理)/.test(raw)
+  ) {
+    return '判断推理'
+  }
+  if (
+    raw === '资料分析' ||
+    raw.startsWith('资料分析') ||
+    /^(?:文字资料|表格资料|图形资料|综合资料)/.test(raw)
+  ) {
+    return '资料分析'
+  }
   return raw
 }
 

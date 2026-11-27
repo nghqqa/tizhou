@@ -216,7 +216,7 @@
   position: absolute;
   top: calc(100% + 6px);
   left: 0;
-  z-index: 1200;
+  z-index: 400;
   width: min(720px, calc(100vw - 64px));
   background: var(--tz-surface);
   border: 1px solid var(--tz-border-strong);

@@ -161,4 +161,39 @@ describe('shenlun-eval-parser', () => {
     expect(JSON.parse(escapeStrayInnerQuotes(valid))).toEqual(JSON.parse(valid))
     expect(repairTruncatedJson('{"score":88,').length).toBeGreaterThan(0)
   })
+
+  it('handles >240-char suggestions, invalid escapes, comment-separated trailing commas, missing dim scores, and markdown newlines', () => {
+    const longSample = `【参考思路/示范作答】${'围绕基层治理精细化与群众参与机制持续发力。'.repeat(16)}`
+    expect(longSample.length).toBeGreaterThan(260)
+    const rawLong = `{
+      "score": 83,
+      "dimensions": [
+        {"name": "要点覆盖", "comment": "写了"50\\%"覆盖率与关键举措"}, /* trailing comment */
+      ],
+      "summary": "要点较完整。",
+      "suggestions": ["补充数据支撑", "${longSample}", /* trailing */ ]
+    }`
+    const parsed = parseConstructedEvaluationJson(rawLong)
+    expect(parsed).toBeDefined()
+    expect(parsed?.score).toBe(83)
+    expect(parsed?.dimensions[0]?.score).toBe(83)
+    expect(parsed?.suggestions).toHaveLength(2)
+    expect(parsed?.suggestions[1]).toBe(longSample)
+
+    // 仅有无分维度且无总分时，不应伪造 0 分通过
+    expect(
+      parseConstructedEvaluationJson(
+        '{"dimensions":[{"name":"要点覆盖","comment":"未打分"}],"summary":"无总分"}'
+      )
+    ).toBeUndefined()
+
+    // 超出 0..100 的非比例纯数字应拒绝
+    expect(
+      parseConstructedEvaluationJson('{"score": 2025, "dimensions": [], "summary": "异常年份"}')
+    ).toBeUndefined()
+
+    // Markdown 兜底：“评分：”后换行接“1. 内容”不应跨行误抓 1 分
+    const mdCrossLine = `## 评分：\n1. 要点覆盖较好，语言通顺。\n2. 建议进一步提炼对策表述。`
+    expect(parseConstructedEvaluationMarkdown(mdCrossLine)).toBeUndefined()
+  })
 })

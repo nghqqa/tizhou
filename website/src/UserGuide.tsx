@@ -9,7 +9,7 @@ function slugify(text: string): string {
     .trim()
     .toLowerCase()
     .replace(/[^\p{L}\p{N}\s-]/gu, '')
-    .replace(/\s+/g, '-')
+    .replace(/\s/g, '-')
 }
 
 type Block =
@@ -103,15 +103,15 @@ function parseMarkdown(md: string): { blocks: Block[]; toc: Array<{ id: string; 
         const cur = lines[i] ?? ''
         const curTrimmed = cur.trim()
         if (!curTrimmed) break
-        if (/^(-|\*)\s+/.test(curTrimmed)) {
+        if (/^\s{2,}(-|\*)\s+/.test(cur)) {
+          const prev = items.pop() ?? ''
+          items.push(`${prev}\n${curTrimmed.replace(/^(-|\*)\s+/, '· ')}`)
+          i++
+        } else if (/^(-|\*)\s+/.test(curTrimmed)) {
           items.push(curTrimmed.replace(/^(-|\*)\s+/, ''))
           i++
         } else if (/^\d+\.\s+/.test(curTrimmed)) {
           items.push(curTrimmed.replace(/^\d+\.\s+/, ''))
-          i++
-        } else if (/^\s{2,}(-|\*)\s+/.test(cur)) {
-          const prev = items.pop() ?? ''
-          items.push(`${prev}\n${curTrimmed.replace(/^(-|\*)\s+/, '· ')}`)
           i++
         } else {
           break

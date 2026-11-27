@@ -67,7 +67,15 @@ async function launchRaw(
       // 复用用户机器已装的 MarkItDown 引擎（与生产引擎同一 venv；E2E 不依赖外部网络）
       WORKBENCH_MARKITDOWN_PYTHON:
         process.env.WORKBENCH_MARKITDOWN_PYTHON ??
-        'C:/Users/ngh/AppData/Roaming/tizhou/knowledge-builder/engine/.venv/Scripts/python.exe',
+        join(
+          process.env.APPDATA ?? join(process.env.USERPROFILE ?? tmpdir(), 'AppData', 'Roaming'),
+          'tizhou',
+          'knowledge-builder',
+          'engine',
+          '.venv',
+          'Scripts',
+          'python.exe'
+        ),
       WORKBENCH_E2E: '1',
       WORKBENCH_E2E_UPDATE_SCENARIO: options.updateScenario ?? 'none',
       WORKBENCH_E2E_FAIL_SAVE: options.failSaveOnce ? 'once' : ''

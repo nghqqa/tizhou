@@ -510,9 +510,18 @@ export class DatabaseService {
     encryptedKey: string | null,
     verified: boolean,
     lastCheckedAt?: string,
-    lastError?: string
+    lastError?: string,
+    clearKey = false
   ): void {
-    systemRepo.saveAiRecord(this.db, payloadJson, encryptedKey, verified, lastCheckedAt, lastError)
+    systemRepo.saveAiRecord(
+      this.db,
+      payloadJson,
+      encryptedKey,
+      verified,
+      lastCheckedAt,
+      lastError,
+      clearKey
+    )
   }
 
   clearAiCredential(): void {
@@ -528,9 +537,18 @@ export class DatabaseService {
     encryptedKey: string | null,
     verified: boolean,
     lastCheckedAt?: string,
-    lastError?: string
+    lastError?: string,
+    clearKey = false
   ): void {
-    systemRepo.saveVlmRecord(this.db, payloadJson, encryptedKey, verified, lastCheckedAt, lastError)
+    systemRepo.saveVlmRecord(
+      this.db,
+      payloadJson,
+      encryptedKey,
+      verified,
+      lastCheckedAt,
+      lastError,
+      clearKey
+    )
   }
 
   clearVlmCredential(): void {
@@ -587,6 +605,11 @@ export class DatabaseService {
       this.caches.facets.clear()
       this.caches.shenlunQuality = null
     } catch (error) {
+      try {
+        this.db.close()
+      } catch {
+        // 忽略已关闭的连接
+      }
       for (const suffix of ['-wal', '-shm']) {
         const sidecar = `${this.databasePath}${suffix}`
         if (existsSync(sidecar)) unlinkSync(sidecar)

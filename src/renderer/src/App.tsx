@@ -222,7 +222,9 @@ function AppShell(): React.JSX.Element {
         event.altKey &&
         !event.ctrlKey &&
         !event.metaKey &&
+        !event.isComposing &&
         event.key.toLowerCase() === 'z' &&
+        !isEditableTarget(event.target) &&
         !hasOpenModal()
       ) {
         event.preventDefault()

@@ -212,10 +212,16 @@ export class AgentRuntime {
           break
         }
 
+        if (turn.fromFallback && !fallbackMode) {
+          // 原生请求下模型改用 <tool_call> 文本协议时切换为文本回传模式，避免将伪造 id 塞入 role: 'tool' 触发 400
+          fallbackMode = true
+        }
+
         if (!fallbackMode) {
           messages.push({
             role: 'assistant',
             content: turn.content,
+            ...(turn.reasoningContent ? { reasoningContent: turn.reasoningContent } : {}),
             toolCalls: turn.toolCalls
           })
         } else {
@@ -294,15 +300,18 @@ export class AgentRuntime {
 
       if (!finalContent && !this.cancelledIds.has(requestId)) {
         emit({ requestId, type: 'status', text: '正在整理最终答复…' })
+        const closingInstruction =
+          '请综合上述已查证数据与已生成的提案卡片，直接给出简洁清晰的最终回复，不要再调用工具。'
+        const lastMsg = messages[messages.length - 1]
+        const closingMessages: ToolTurnMessage[] =
+          lastMsg?.role === 'user'
+            ? [
+                ...messages.slice(0, -1),
+                { ...lastMsg, content: `${lastMsg.content}\n\n${closingInstruction}` }
+              ]
+            : [...messages, { role: 'user', content: closingInstruction }]
         const closingTurn = await this.ai.askToolTurn(
-          [
-            ...messages,
-            {
-              role: 'user',
-              content:
-                '请综合上述已查证数据与已生成的提案卡片，直接给出简洁清晰的最终回复，不要再调用工具。'
-            }
-          ],
+          closingMessages,
           fallbackMode ? [] : nativeDefinitions,
           { requestId, timeoutMs: 90_000, ...(fallbackMode ? {} : { toolChoice: 'none' }) }
         )

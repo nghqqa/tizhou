@@ -29,10 +29,14 @@ export function createBuilderHandlers(ctx: IpcContext): Pick<IpcHandlerMap, Buil
   const { knowledgeBuilder } = ctx
   return {
     'knowledgeBuilder.source.choose': async () => {
-      const selected = await dialog.showOpenDialog(ctx.getMainWindow()!, {
+      const win = ctx.getMainWindow()
+      const options = {
         title: '选择未整理的知识库原料目录',
-        properties: ['openDirectory']
-      })
+        properties: ['openDirectory'] as Array<'openDirectory'>
+      }
+      const selected = win
+        ? await dialog.showOpenDialog(win, options)
+        : await dialog.showOpenDialog(options)
       return selected.canceled ? undefined : selected.filePaths[0]
     },
     'knowledgeBuilder.source.scan': (params) => knowledgeBuilder.scan(params.path),

@@ -92,6 +92,7 @@ export class KnowledgeBuilderService {
   private readonly conversionCache: ConversionCache
   private readonly engineManager: KnowledgeEngineManager
   private runningJobId?: string
+  private startingJob = false
   private runningChild?: ReturnType<typeof spawn>
 
   constructor(
@@ -251,65 +252,73 @@ export class KnowledgeBuilderService {
     fileIds: string[]
     options: KnowledgeBuildOptions
   }): Promise<KnowledgeBuildJob> {
-    if (this.runningJobId) throw new Error('已有知识构建任务正在运行')
+    if (this.runningJobId || this.startingJob) throw new Error('已有知识构建任务正在运行')
     if (!input.options.rightsConfirmed)
       throw new Error('请先确认你有权处理所选资料，并会在发布前人工复核')
     const ids = [...new Set(input.fileIds)]
     if (!ids.length) throw new Error('至少选择一个可转换文件')
     if (ids.length > MAX_SELECTED_FILES)
       throw new Error(`单个批次最多处理 ${MAX_SELECTED_FILES} 个文件`)
-    const engine = await this.engineStatus()
-    if (!engine.available) throw new Error('请先安装 MarkItDown 转换引擎')
-    if (input.options.mode !== 'convert-only' && input.options.mode !== 'direct') {
-      const config = this.ai.getConfig()
-      if (!config.hasApiKey && !['ollama', 'lmstudio'].includes(config.provider))
-        throw new Error('请先在模型设置中保存 API Key，或配置本地模型')
+    this.startingJob = true
+    try {
+      const engine = await this.engineStatus()
+      if (!engine.available) throw new Error('请先安装 MarkItDown 转换引擎')
+      if (input.options.mode !== 'convert-only' && input.options.mode !== 'direct') {
+        const config = this.ai.getConfig()
+        if (!config.hasApiKey && !['ollama', 'lmstudio'].includes(config.provider))
+          throw new Error('请先在模型设置中保存 API Key，或配置本地模型')
+      }
+      const scan = this.scan(input.sourcePath)
+      const selected = scan.files.filter((file) => file.eligible && ids.includes(file.id))
+      if (selected.length !== ids.length)
+        throw new Error('部分文件已变化或不再可处理，请重新扫描后选择')
+      const id = `kbjob-${randomUUID()}`
+      const outputPath = join(this.jobsDirectory, id)
+      mkdirSync(join(outputPath, 'raw'), { recursive: true })
+      mkdirSync(join(outputPath, 'artifacts'), { recursive: true })
+      const job: StoredJob = {
+        id,
+        sourcePath: scan.sourcePath,
+        createdAt: now(),
+        updatedAt: now(),
+        status: 'queued',
+        options: {
+          ...input.options,
+          tags: [...new Set(input.options.tags.map((tag) => tag.trim()).filter(Boolean))].slice(
+            0,
+            20
+          ),
+          instruction: input.options.instruction.trim().slice(0, 2000)
+        },
+        files: selected.map((file) => ({
+          sourceId: file.id,
+          relativePath: file.relativePath,
+          size: file.size,
+          state: 'queued',
+          artifactCount: 0,
+          chunkCount: 0
+        })),
+        artifactIds: [],
+        cancelRequested: false,
+        outputPath
+      }
+      this.saveJob(job)
+      this.runningJobId = id
+      void this.runJob(id).catch((error) => {
+        const failed = this.loadJob(id)
+        failed.status = 'failed'
+        failed.message = error instanceof Error ? error.message : '后台任务异常结束'
+        failed.updatedAt = now()
+        this.saveJob(failed)
+        if (this.runningJobId === id) {
+          this.runningJobId = undefined
+          this.runningChild = undefined
+        }
+      })
+      return this.jobView(job)
+    } finally {
+      this.startingJob = false
     }
-    const scan = this.scan(input.sourcePath)
-    const selected = scan.files.filter((file) => file.eligible && ids.includes(file.id))
-    if (selected.length !== ids.length)
-      throw new Error('部分文件已变化或不再可处理，请重新扫描后选择')
-    const id = `kbjob-${randomUUID()}`
-    const outputPath = join(this.jobsDirectory, id)
-    mkdirSync(join(outputPath, 'raw'), { recursive: true })
-    mkdirSync(join(outputPath, 'artifacts'), { recursive: true })
-    const job: StoredJob = {
-      id,
-      sourcePath: scan.sourcePath,
-      createdAt: now(),
-      updatedAt: now(),
-      status: 'queued',
-      options: {
-        ...input.options,
-        tags: [...new Set(input.options.tags.map((tag) => tag.trim()).filter(Boolean))].slice(
-          0,
-          20
-        ),
-        instruction: input.options.instruction.trim().slice(0, 2000)
-      },
-      files: selected.map((file) => ({
-        sourceId: file.id,
-        relativePath: file.relativePath,
-        size: file.size,
-        state: 'queued',
-        artifactCount: 0,
-        chunkCount: 0
-      })),
-      artifactIds: [],
-      cancelRequested: false,
-      outputPath
-    }
-    this.saveJob(job)
-    void this.runJob(id).catch((error) => {
-      const failed = this.loadJob(id)
-      failed.status = 'failed'
-      failed.message = error instanceof Error ? error.message : '后台任务异常结束'
-      failed.updatedAt = now()
-      this.saveJob(failed)
-      this.runningJobId = undefined
-      this.runningChild = undefined
-    })
-    return this.jobView(job)
   }
 
   latestJob(): KnowledgeBuildJob | undefined {
@@ -337,6 +346,25 @@ export class KnowledgeBuilderService {
     this.saveJob(job)
     if (this.runningJobId === id && this.runningChild) this.runningChild.kill()
     return this.jobView(job)
+  }
+
+  dispose(): void {
+    if (this.runningJobId) {
+      try {
+        this.cancelJob(this.runningJobId)
+      } catch {
+        /* 退出清理时忽略任务状态读写异常 */
+      }
+    }
+    if (this.runningChild && !this.runningChild.killed) {
+      try {
+        this.runningChild.kill()
+      } catch {
+        /* 忽略已退出子进程 */
+      }
+    }
+    this.runningChild = undefined
+    this.runningJobId = undefined
   }
 
   async retryJob(id: string, sourceIds?: string[]): Promise<KnowledgeBuildJob> {
@@ -499,25 +527,32 @@ export class KnowledgeBuilderService {
     for (const item of staged) atomicWriteFile(item.target, item.content)
     const rawImagesDir = join(job.outputPath, 'raw', 'images')
     if (existsSync(rawImagesDir)) {
-      const vaultImagesDir = join(targetRoot, '直导题库', 'images')
-      mkdirSync(vaultImagesDir, { recursive: true })
-      for (const imageName of readdirSync(rawImagesDir)) {
-        if (!IMAGE_ASSET_PATTERN.test(imageName)) continue
-        const from = join(rawImagesDir, imageName)
+      const imageTargets = isDirect
+        ? [join(targetRoot, '直导题库', 'images')]
+        : [...new Set(staged.map((item) => join(resolve(item.target, '..'), 'images')))]
+      const imageFiles = readdirSync(rawImagesDir).filter((imageName) => {
+        if (!IMAGE_ASSET_PATTERN.test(imageName)) return false
         try {
-          if (!statSync(from).isFile()) continue
+          return statSync(join(rawImagesDir, imageName)).isFile()
         } catch {
-          continue
+          return false
         }
-        const to = join(vaultImagesDir, imageName)
-        if (!existsSync(to)) copyFileSync(from, to)
+      })
+      for (const vaultImagesDir of imageTargets) {
+        mkdirSync(vaultImagesDir, { recursive: true })
+        for (const imageName of imageFiles) {
+          const to = join(vaultImagesDir, imageName)
+          if (!existsSync(to)) copyFileSync(join(rawImagesDir, imageName), to)
+        }
       }
     }
     const result = this.vaults.connect(targetRoot)
+    this.vaults.startWatching?.()
     for (const item of staged) {
       item.artifact.status = 'published'
       this.saveArtifact(job, item.artifact)
     }
+    job.publishedVaultPath = targetRoot
     job.status = 'completed'
     job.message = isDirect
       ? `已发布 ${staged.length} 题到${directToUserVault ? '当前题库' : '应用管理知识库'}的「直导题库」目录并完成重索引` +
@@ -538,7 +573,12 @@ export class KnowledgeBuilderService {
       .filter((artifact) => artifact.status === 'published')
     if (!published.length) throw new Error('该任务没有已发布的产物可撤销')
     const activeVault = this.vaults.ensureBuiltinVault()
-    const targetRoot = activeVault.isBuiltin ? this.managedVaultDirectory : activeVault.path
+    const targetRoot =
+      job.publishedVaultPath && existsSync(job.publishedVaultPath)
+        ? job.publishedVaultPath
+        : activeVault.isBuiltin
+          ? this.managedVaultDirectory
+          : activeVault.path
     const importDirectory = join(targetRoot, '直导题库')
     let removed = 0
     for (const artifact of published) {
@@ -554,7 +594,13 @@ export class KnowledgeBuilderService {
       artifact.warnings = [...artifact.warnings, '已撤销导入：文件已从题库移除']
       this.saveArtifact(job, artifact)
     }
-    this.vaults.connect(targetRoot)
+    try {
+      this.vaults.connect(targetRoot)
+      this.vaults.startWatching?.()
+    } catch {
+      // 若撤销后目录内已无剩余有效题库文件，安全回退到内置示例库避免崩溃
+      this.vaults.ensureBuiltinVault()
+    }
     job.status = 'completed'
     job.message = `已撤销本次导入：移除 ${removed} 个题目文件并重新索引`
     job.updatedAt = now()
@@ -563,7 +609,7 @@ export class KnowledgeBuilderService {
   }
 
   private async runJob(id: string): Promise<void> {
-    if (this.runningJobId) throw new Error('已有知识构建任务正在运行')
+    if (this.runningJobId && this.runningJobId !== id) throw new Error('已有知识构建任务正在运行')
     this.runningJobId = id
     await executeJobPipeline(
       {
@@ -803,10 +849,24 @@ export class KnowledgeBuilderService {
     return JSON.parse(readFileSync(path, 'utf8')) as StoredJob
   }
 
-  private saveJob(job: StoredJob): void {
+  private saveJob(job: StoredJob, options?: { allowResetCancel?: boolean }): void {
+    const jobFile = join(this.jobDirectory(job.id), 'job.json')
+    if (!options?.allowResetCancel && !job.cancelRequested && existsSync(jobFile)) {
+      try {
+        const disk = JSON.parse(readFileSync(jobFile, 'utf8')) as Partial<StoredJob>
+        if (disk.cancelRequested) {
+          job.cancelRequested = true
+          if (job.status === 'running' || job.status === 'queued') {
+            job.status = 'cancelling'
+          }
+        }
+      } catch {
+        // 忽略读取失败，继续原子写入当前状态
+      }
+    }
     job.updatedAt = now()
     mkdirSync(this.jobDirectory(job.id), { recursive: true })
-    atomicWriteFile(join(this.jobDirectory(job.id), 'job.json'), JSON.stringify(job, null, 2))
+    atomicWriteFile(jobFile, JSON.stringify(job, null, 2))
   }
 
   private artifactPath(job: StoredJob, artifactId: string): string {
@@ -846,7 +906,7 @@ export class KnowledgeBuilderService {
         job.currentFile = undefined
         job.cancelRequested = false
         job.message = '上次任务被应用退出中断，已完成内容仍被保留'
-        this.saveJob(job)
+        this.saveJob(job, { allowResetCancel: true })
       } catch {
         // A damaged manifest is isolated from other jobs and can be inspected in its folder.
       }

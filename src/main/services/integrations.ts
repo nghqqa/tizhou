@@ -1,5 +1,4 @@
 import {
-  cpSync,
   existsSync,
   lstatSync,
   mkdirSync,
@@ -16,6 +15,7 @@ import { spawn } from 'node:child_process'
 import { shell } from 'electron'
 import type { IntegrationConfig, ObsidianBackupInfo, ReportData } from '../../shared/contracts'
 import { DEFAULT_INTEGRATIONS } from '../../shared/defaults'
+import { copyDirectorySafe } from '../utils/common'
 import { DatabaseService } from './database'
 import { detectedObsidian } from './obsidian-detect'
 import { isTizhouGeneratedReport, renderReportMarkdown, reportFileName } from './report-markdown'
@@ -48,12 +48,7 @@ function directorySize(path: string): number {
 }
 
 function copyDirectory(source: string, target: string): void {
-  cpSync(source, target, {
-    recursive: true,
-    force: false,
-    errorOnExist: true,
-    filter: (item) => !lstatSync(item).isSymbolicLink()
-  })
+  copyDirectorySafe(source, target, { errorOnExist: true, skipSymlinks: true })
 }
 
 export class IntegrationService {

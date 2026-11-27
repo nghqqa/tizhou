@@ -117,11 +117,22 @@ export function QuestionNavigatorGrid({
     if (!onModuleOrderChange) return
     const targetIndex = sectionIndex + delta
     if (targetIndex < 0 || targetIndex >= groupedSections.length) return
-    const nextNames = groupedSections.map((section) => section.moduleName)
-    const swapped = nextNames[targetIndex]!
-    nextNames[targetIndex] = nextNames[sectionIndex]!
-    nextNames[sectionIndex] = swapped
-    onModuleOrderChange(nextNames)
+    const visibleNames = groupedSections.map((section) => section.moduleName)
+    const nameA = visibleNames[sectionIndex]!
+    const nameB = visibleNames[targetIndex]!
+    const baseOrder = [
+      ...(moduleOrder && moduleOrder.length > 0 ? moduleOrder : XINGCE_MODULE_ORDER)
+    ]
+    for (const name of visibleNames) {
+      if (!baseOrder.includes(name)) baseOrder.push(name)
+    }
+    const idxA = baseOrder.indexOf(nameA)
+    const idxB = baseOrder.indexOf(nameB)
+    if (idxA >= 0 && idxB >= 0) {
+      baseOrder[idxA] = nameB
+      baseOrder[idxB] = nameA
+    }
+    onModuleOrderChange(baseOrder)
   }
 
   return (

@@ -46,10 +46,29 @@ function skipWs(text: string, start: number): number {
   return i
 }
 
+function skipWsAndComments(text: string, start: number): number {
+  let i = start
+  while (i < text.length) {
+    i = skipWs(text, i)
+    if (text[i] === '/' && text[i + 1] === '/') {
+      const nl = text.indexOf('\n', i + 2)
+      i = nl >= 0 ? nl + 1 : text.length
+      continue
+    }
+    if (text[i] === '/' && text[i + 1] === '*') {
+      const close = text.indexOf('*/', i + 2)
+      i = close >= 0 ? close + 2 : text.length
+      continue
+    }
+    break
+  }
+  return i
+}
+
 /**
  * 字符级 JSON 清洗状态机：
- * 1. 字符串字面量内部：转义裸换行/回车/制表符，剔除非法控制字符；
- * 2. 字符串字面量外部：移除 // 与 /* * / 注释，以及 ]/} 前的尾逗号。
+ * 1. 字符串字面量内部：转义裸换行/回车/制表符，修复非法反斜杠转义，剔除非法控制字符；
+ * 2. 字符串字面量外部：移除 // 与 /* * / 注释，以及 ]/} 前的尾逗号（支持逗号与括号间夹带注释）。
  */
 export function sanitizeJsonText(input: string): string {
   const out: string[] = []
@@ -65,8 +84,22 @@ export function sanitizeJsonText(input: string): string {
           out.push('n')
         } else if (ch === '\r') {
           out.push('r')
-        } else {
+        } else if (ch === '\t') {
+          out.push('t')
+        } else if (
+          ch === '"' ||
+          ch === '\\' ||
+          ch === '/' ||
+          ch === 'b' ||
+          ch === 'f' ||
+          ch === 'n' ||
+          ch === 'r' ||
+          ch === 't' ||
+          (ch === 'u' && /^[0-9a-fA-F]{4}$/.test(input.slice(i + 1, i + 5)))
+        ) {
           out.push(ch)
+        } else {
+          out.push('\\', ch)
         }
         escaped = false
         i += 1
@@ -125,7 +158,7 @@ export function sanitizeJsonText(input: string): string {
       continue
     }
     if (ch === ',') {
-      const nextIdx = skipWs(input, i + 1)
+      const nextIdx = skipWsAndComments(input, i + 1)
       const nextCh = input[nextIdx]
       if (nextCh === ']' || nextCh === '}') {
         i += 1
@@ -152,9 +185,8 @@ function isLikelyJsonArrayNextString(text: string, quoteIdx: number): boolean {
   // 判断数组逗号后的 "..." 是否为真实下一条元素（例如 ["建议1", "建议2"]），
   // 而不是字符串正文内部举例（例如 ["写了"A", "B"两项"]）
   let i = quoteIdx + 1
-  const limit = Math.min(text.length, quoteIdx + 240)
   let escaped = false
-  while (i < limit) {
+  while (i < text.length) {
     const ch = text[i]!
     if (escaped) {
       escaped = false
@@ -518,7 +550,7 @@ function parseCandidateVariants(candidate: string): Record<string, unknown>[] {
   pushObj(tryParsePlainObject(sanitized))
   if (results.length > 0) return results
 
-  const escapedQuotes = escapeStrayInnerQuotes(sanitized)
+  const escapedQuotes = sanitizeJsonText(escapeStrayInnerQuotes(sanitized))
   pushObj(tryParsePlainObject(escapedQuotes))
   if (results.length > 0) return results
 
@@ -552,8 +584,8 @@ function pickFirstField(record: Record<string, unknown>, keys: readonly string[]
 
 function parseScoreNumber(value: unknown): number | undefined {
   if (typeof value === 'number') {
-    if (!Number.isFinite(value)) return undefined
-    return clamp(Math.round(value), 0, 100)
+    if (!Number.isFinite(value) || value < 0 || value > 100) return undefined
+    return Math.round(value)
   }
   if (typeof value !== 'string') return undefined
   const trimmed = value.trim()
@@ -564,13 +596,18 @@ function parseScoreNumber(value: unknown): number | undefined {
     const denom = Number(ratioMatch[2])
     if (Number.isFinite(num) && Number.isFinite(denom) && denom > 0) {
       const scaled = denom === 100 ? num : (num / denom) * 100
-      return clamp(Math.round(scaled), 0, 100)
+      if (scaled >= 0 && scaled <= 100) return Math.round(scaled)
     }
   }
-  const plainMatch = trimmed.match(/(-?\d+(?:\.\d+)?)\s*(?:分|pts?|points?)?/i)
+  const unitMatch = trimmed.match(/(-?\d+(?:\.\d+)?)\s*(?:分|pts?|points?)/i)
+  if (unitMatch?.[1]) {
+    const num = Number(unitMatch[1])
+    if (Number.isFinite(num) && num >= 0 && num <= 100) return Math.round(num)
+  }
+  const plainMatch = trimmed.match(/(-?\d+(?:\.\d+)?)/)
   if (plainMatch?.[1]) {
     const num = Number(plainMatch[1])
-    if (Number.isFinite(num)) return clamp(Math.round(num), 0, 100)
+    if (Number.isFinite(num) && num >= 0 && num <= 100) return Math.round(num)
   }
   return undefined
 }
@@ -591,7 +628,7 @@ function unwrapEvaluationObject(raw: Record<string, unknown>): Record<string, un
 
 function normalizeDimensions(
   value: unknown
-): Array<{ name: string; score: number; comment: string }> {
+): Array<{ name: string; score?: number; comment: string }> {
   if (Array.isArray(value)) {
     return value.flatMap((item) => {
       if (!item || typeof item !== 'object' || Array.isArray(item)) return []
@@ -599,7 +636,7 @@ function normalizeDimensions(
       const rawName = pickFirstField(record, ['name', 'title', 'dimension', 'label'])
       const name = typeof rawName === 'string' && rawName.trim() ? rawName.trim() : '综合'
       const rawScore = pickFirstField(record, ['score', 'points', 'value'])
-      const score = parseScoreNumber(rawScore) ?? 0
+      const score = parseScoreNumber(rawScore)
       const rawComment = pickFirstField(record, [
         'comment',
         'feedback',
@@ -616,11 +653,11 @@ function normalizeDimensions(
     return entries.flatMap(([name, detail]) => {
       if (!name.trim()) return []
       if (typeof detail === 'number' || typeof detail === 'string') {
-        return [{ name: name.trim(), score: parseScoreNumber(detail) ?? 0, comment: '' }]
+        return [{ name: name.trim(), score: parseScoreNumber(detail), comment: '' }]
       }
       if (detail && typeof detail === 'object' && !Array.isArray(detail)) {
         const record = detail as Record<string, unknown>
-        const score = parseScoreNumber(pickFirstField(record, ['score', 'points', 'value'])) ?? 0
+        const score = parseScoreNumber(pickFirstField(record, ['score', 'points', 'value']))
         const rawComment = pickFirstField(record, [
           'comment',
           'feedback',
@@ -701,16 +738,15 @@ export function normalizeConstructedEvaluation(
   const target = unwrapEvaluationObject(rawObj)
   const rawTopScore = pickFirstField(target, SCORE_KEYS)
   const topScore = parseScoreNumber(rawTopScore)
-  const dimensions = normalizeDimensions(pickFirstField(target, DIMENSION_KEYS))
+  const rawDimensions = normalizeDimensions(pickFirstField(target, DIMENSION_KEYS))
 
-  const hasDimensionScore =
-    Array.isArray(pickFirstField(target, DIMENSION_KEYS)) ||
-    (pickFirstField(target, DIMENSION_KEYS) !== undefined && dimensions.length > 0)
-  const scoredDimensions = dimensions.filter((d) => Number.isFinite(d.score))
+  const scoredDimensions = rawDimensions.filter(
+    (d): d is { name: string; score: number; comment: string } => d.score !== undefined
+  )
   const resolvedScore =
     topScore !== undefined
       ? topScore
-      : hasDimensionScore && scoredDimensions.length > 0
+      : scoredDimensions.length > 0
         ? clamp(
             Math.round(
               scoredDimensions.reduce((sum, item) => sum + item.score, 0) / scoredDimensions.length
@@ -721,6 +757,12 @@ export function normalizeConstructedEvaluation(
         : undefined
 
   if (resolvedScore === undefined) return undefined
+
+  const dimensions = rawDimensions.map((item) => ({
+    name: item.name,
+    score: item.score ?? resolvedScore,
+    comment: item.comment
+  }))
 
   const rawSummary = pickFirstField(target, SUMMARY_KEYS)
   const summaryText = typeof rawSummary === 'string' ? rawSummary.trim() : ''
@@ -775,7 +817,7 @@ export function parseConstructedEvaluationMarkdown(
   if (/^\s*\{[\s\S]*"error"\s*:/.test(cleaned)) return undefined
 
   const totalScoreMatch = cleaned.match(
-    /(?:^|[\n\s#*>\-—])(?:综合得分|最终得分|评估得分|总体得分|总分|得分|评分)[：:\s*]*(\d{1,3}(?:\.\d+)?)\s*(?:\/\s*(\d{1,3})|分)?/m
+    /(?:^|[\n\s#*>\-—])(?:综合得分|最终得分|评估得分|总体得分|总分|得分|评分)[：: \t*]*(\d{1,3}(?:\.\d+)?)\s*(?:\/\s*(\d{1,3})|分)?/m
   )
   if (!totalScoreMatch?.[1]) return undefined
   const rawScoreToken = totalScoreMatch[2]

@@ -619,7 +619,7 @@ export function KnowledgeBuilderPage(): React.JSX.Element {
   if (!engine)
     return (
       <div className="page">
-        <LoadingState label="正在检查知识转换环境" />
+        {error ? <ErrorState message={error} /> : <LoadingState label="正在检查知识转换环境" />}
       </div>
     )
 

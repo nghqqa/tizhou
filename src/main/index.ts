@@ -1,4 +1,4 @@
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname, join, resolve } from 'node:path'
 import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { app, BrowserWindow, shell } from 'electron'
@@ -20,6 +20,7 @@ const currentDirectory = dirname(fileURLToPath(import.meta.url))
 let mainWindow: BrowserWindow | null = null
 let database: DatabaseService | undefined
 let migration: MigrationService | undefined
+let knowledgeBuilder: KnowledgeBuilderService | undefined
 
 // 测试运行时判定（--smoke-test / WORKBENCH_E2E）：必须在 app.setPath 之前完成，
 // 数据目录覆盖只允许在测试运行时（冒烟或 E2E）下生效——
@@ -105,6 +106,9 @@ function createWindow(): void {
   }
   mainWindow.on('enter-full-screen', () => sendFullscreen(true))
   mainWindow.on('leave-full-screen', () => sendFullscreen(false))
+  mainWindow.on('closed', () => {
+    mainWindow = null
+  })
   mainWindow.once('ready-to-show', () => {
     restoreSavedZoom()
     mainWindow?.show()
@@ -217,9 +221,31 @@ function createWindow(): void {
     if (/^https:\/\//i.test(url)) void shell.openExternal(url)
     return { action: 'deny' }
   })
+  const rendererUrl = pathToFileURL(join(currentDirectory, '../renderer/index.html'))
   mainWindow.webContents.on('will-navigate', (event, url) => {
     const developmentUrl = process.env.ELECTRON_RENDERER_URL
-    if ((developmentUrl && url.startsWith(developmentUrl)) || url.startsWith('file://')) return
+    if (developmentUrl) {
+      try {
+        if (new URL(url).origin === new URL(developmentUrl).origin) return
+      } catch {
+        /* 忽略非法 URL */
+      }
+    }
+    try {
+      const target = new URL(url)
+      const normalizeForPlatform = (value: string): string =>
+        process.platform === 'win32' ? value.toLowerCase() : value
+      if (
+        target.protocol === 'file:' &&
+        normalizeForPlatform(target.host) === normalizeForPlatform(rendererUrl.host) &&
+        normalizeForPlatform(decodeURIComponent(target.pathname)) ===
+          normalizeForPlatform(decodeURIComponent(rendererUrl.pathname))
+      ) {
+        return
+      }
+    } catch {
+      /* 忽略非法 URL */
+    }
     event.preventDefault()
   })
   if (process.env.ELECTRON_RENDERER_URL) void mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL)
@@ -252,17 +278,16 @@ async function initialize(): Promise<void> {
   const integrations = new IntegrationService(database)
   const study = new StudyService(database, ai)
   const agent = new AgentRuntime(database, study, ai)
-  const knowledgeBuilder = new KnowledgeBuilderService(
-    dataDirectory,
-    process.resourcesPath,
-    ai,
-    vaults
-  )
+  const builder = new KnowledgeBuilderService(dataDirectory, process.resourcesPath, ai, vaults)
+  knowledgeBuilder = builder
   const diagnostics = new DiagnosticService(database, ai, integrations, app.getVersion())
   vaults.ensureBuiltinVault()
   // 烟雾测试会立即退出，不必挂磁盘监听
   if (!isSmokeTest) vaults.startWatching()
-  app.once('before-quit', () => vaults.stopWatching())
+  app.once('before-quit', () => {
+    vaults.stopWatching()
+    knowledgeBuilder?.dispose()
+  })
 
   const settings = database.getAppSettings()
   if (settings.autoBackup) {
@@ -283,7 +308,7 @@ async function initialize(): Promise<void> {
     integrations,
     study,
     agent,
-    knowledgeBuilder,
+    knowledgeBuilder: builder,
     diagnostics,
     updater,
     dataDirectory,

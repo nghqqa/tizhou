@@ -18,9 +18,11 @@ tizhou.nghqqa.cn {
         X-Content-Type-Options "nosniff"
         X-Frame-Options "DENY"
         Referrer-Policy "strict-origin-when-cross-origin"
-        # 带哈希指纹的构建产物强缓存；index.html 由下方规则单独控制
-        /assets/* Cache-Control "public, max-age=31536000, immutable"
     }
+
+    # 带哈希指纹的构建产物强缓存；index.html 由下方规则单独控制
+    @assets path /assets/*
+    header @assets Cache-Control "public, max-age=31536000, immutable"
 
     @index path /index.html
     header @index Cache-Control "no-cache, must-revalidate"

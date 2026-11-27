@@ -23,6 +23,14 @@ export function registerIpcHandlers(ctx: IpcContext): void {
   ipcMain.handle('workbench:invoke', async (event, request: WorkbenchRequest) => {
     if (!event.senderFrame || event.senderFrame !== event.sender.mainFrame)
       throw new Error('拒绝来自子框架的请求')
+    if (
+      !request ||
+      typeof request !== 'object' ||
+      typeof request.method !== 'string' ||
+      !Object.hasOwn(handlers, request.method)
+    ) {
+      throw new Error(`未知或不支持的 IPC 方法：${String(request?.method ?? '')}`)
+    }
     const handler = handlers[request.method] as (params: unknown) => unknown
     return handler('params' in request ? request.params : undefined)
   })

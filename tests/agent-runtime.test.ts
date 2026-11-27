@@ -1329,4 +1329,57 @@ describe('Agent regression fixes', () => {
     ).rejects.toThrow('模型请求超时，请检查网络或服务地址')
     release?.()
   })
+
+  it('omits tools on ollama-openai when toolChoice is none and rejects HTTP 200 error payloads', async () => {
+    const db = makeDb()
+    const receivedBodies: Array<Record<string, unknown>> = []
+    let returnErrorBody = false
+    const { url } = await startHttpServer((req, res) => {
+      let body = ''
+      req.on('data', (c) => (body += c))
+      req.on('end', () => {
+        receivedBodies.push(JSON.parse(body || '{}') as Record<string, unknown>)
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        if (returnErrorBody) {
+          res.end(JSON.stringify({ error: { message: 'upstream quota exceeded' } }))
+        } else {
+          res.end(
+            JSON.stringify({
+              choices: [
+                { message: { role: 'assistant', content: '最终汇总结论' }, finish_reason: 'stop' }
+              ]
+            })
+          )
+        }
+      })
+    })
+    const ai = new AiService(db)
+    ai.saveConfig({
+      provider: 'ollama',
+      protocol: 'ollama-openai',
+      baseUrl: url,
+      model: 'qwen2.5:7b',
+      temperature: 0.2,
+      maxTokens: 1024
+    })
+
+    const turn = await ai.askToolTurn(
+      [{ role: 'user', content: '总结一下' }],
+      [
+        {
+          name: 'get_dashboard_summary',
+          description: 'summary',
+          parameters: { type: 'object', properties: {} }
+        }
+      ],
+      { requestId: 'req-ollama-none', toolChoice: 'none' }
+    )
+    expect(turn.content).toBe('最终汇总结论')
+    expect(receivedBodies[0]?.tools).toBeUndefined()
+
+    returnErrorBody = true
+    await expect(
+      ai.askToolTurn([{ role: 'user', content: '继续' }], [], { requestId: 'req-http200-err' })
+    ).rejects.toThrow(/upstream quota exceeded/)
+  })
 })

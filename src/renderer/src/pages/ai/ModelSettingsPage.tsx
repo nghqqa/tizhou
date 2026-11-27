@@ -18,6 +18,7 @@ export function ModelSettingsPage(): React.JSX.Element {
   const initialize = useAppStore((state) => state.initialize)
   const showToast = useAppStore((state) => state.showToast)
   const [config, setConfig] = useState<AiConfigView>(initial)
+  const [maxTokensInput, setMaxTokensInput] = useState(() => String(initial.maxTokens))
   const [providers, setProviders] = useState<AiProviderInfo[]>([])
   const [models, setModels] = useState<string[]>([])
   const [apiKey, setApiKey] = useState('')
@@ -46,12 +47,10 @@ export function ModelSettingsPage(): React.JSX.Element {
       .then((view) => {
         setVlm(view)
         setVlmMode(view.mode)
-        if (view.mode === 'custom') {
-          setVlmProvider(view.provider ?? 'qwen')
-          setVlmProtocol(view.protocol ?? 'openai-chat')
-          setVlmBaseUrl(view.baseUrl ?? '')
-          setVlmModel(view.model ?? '')
-        }
+        if (view.provider) setVlmProvider(view.provider)
+        if (view.protocol) setVlmProtocol(view.protocol)
+        if (view.baseUrl) setVlmBaseUrl(view.baseUrl)
+        if (view.model) setVlmModel(view.model)
       })
       .catch(() => undefined)
   }, [])
@@ -75,7 +74,9 @@ export function ModelSettingsPage(): React.JSX.Element {
     setError('')
     setMessage('')
     try {
-      setConfig(await invoke<AiConfigView>({ method: 'ai.config.save', params: inputConfig() }))
+      const saved = await invoke<AiConfigView>({ method: 'ai.config.save', params: inputConfig() })
+      setConfig(saved)
+      setMaxTokensInput(String(saved.maxTokens))
       await initialize()
       setApiKey('')
       setMessage('配置已保存，请继续测试连接。')
@@ -197,10 +198,13 @@ export function ModelSettingsPage(): React.JSX.Element {
     setError('')
     setMessage('')
     try {
+      const saveParams: VlmConfigInput =
+        vlmMode === 'custom'
+          ? { ...buildVlmParams(), enabled: checked }
+          : { enabled: checked, mode: vlmMode }
       const view = await invoke<VlmConfigView>({
         method: 'ai.vlmConfig.save',
-        // 用当前下拉选中的模式保存，避免开关操作把用户刚切换、尚未保存的模式回退成旧值
-        params: { enabled: checked, mode: vlmMode }
+        params: saveParams
       })
       setVlm(view)
       setVlmMode(view.mode)
@@ -231,14 +235,20 @@ export function ModelSettingsPage(): React.JSX.Element {
 
   function handleVlmModeChange(nextMode: VlmConfigView['mode']): void {
     setVlmMode(nextMode)
-    // 切到 custom 且地址/模型为空（也无已保存的 custom 配置）时，
-    // 按当前选中 provider 预填默认协议/地址/模型，避免空表单直接保存报错
-    if (nextMode === 'custom' && !vlm?.baseUrl && !vlmBaseUrl.trim() && !vlmModel.trim()) {
+    if (nextMode !== 'custom') return
+    if (vlm?.baseUrl && !vlmBaseUrl.trim()) {
+      setVlmProvider(vlm.provider ?? vlmProvider)
+      setVlmProtocol(vlm.protocol ?? vlmProtocol)
+      setVlmBaseUrl(vlm.baseUrl)
+      setVlmModel(vlm.model ?? vlmModel)
+      return
+    }
+    if (!vlmBaseUrl.trim() || !vlmModel.trim()) {
       const provider = providers.find((item) => item.id === vlmProvider)
       if (provider) {
         setVlmProtocol(provider.protocol)
-        setVlmBaseUrl(provider.defaultBaseUrl)
-        setVlmModel(provider.defaultModel)
+        if (!vlmBaseUrl.trim()) setVlmBaseUrl(provider.defaultBaseUrl)
+        if (!vlmModel.trim()) setVlmModel(provider.defaultModel)
       }
     }
   }
@@ -341,7 +351,13 @@ export function ModelSettingsPage(): React.JSX.Element {
             </Field>
             <Field
               className="full"
-              label={config.hasApiKey ? 'API Key（已保存，留空保持不变）' : 'API Key'}
+              label={
+                config.hasApiKey &&
+                config.provider === initial.provider &&
+                config.baseUrl.trim() === initial.baseUrl.trim()
+                  ? 'API Key（已保存，留空保持不变）'
+                  : 'API Key（切换服务或地址后需重新填写）'
+              }
             >
               <Input
                 type="password"
@@ -369,10 +385,27 @@ export function ModelSettingsPage(): React.JSX.Element {
                 type="number"
                 min={256}
                 max={32768}
-                value={String(config.maxTokens)}
-                onChange={(_, data) =>
-                  setConfig({ ...config, maxTokens: Number(data.value) || 4096 })
-                }
+                value={maxTokensInput}
+                onChange={(_, data) => {
+                  setMaxTokensInput(data.value)
+                  const parsed = Number(data.value.trim())
+                  if (
+                    data.value.trim() &&
+                    Number.isFinite(parsed) &&
+                    parsed >= 256 &&
+                    parsed <= 32768
+                  ) {
+                    setConfig((prev) => ({ ...prev, maxTokens: Math.round(parsed) }))
+                  }
+                }}
+                onBlur={() => {
+                  const parsed = Number(maxTokensInput.trim())
+                  const clamped = Number.isFinite(parsed)
+                    ? Math.min(32768, Math.max(256, Math.round(parsed)))
+                    : config.maxTokens
+                  setMaxTokensInput(String(clamped))
+                  setConfig((prev) => ({ ...prev, maxTokens: clamped }))
+                }}
               />
             </Field>
           </div>

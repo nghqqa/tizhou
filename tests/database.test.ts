@@ -842,4 +842,89 @@ describe('DatabaseService local-date statistics and exam edge cases', () => {
     expect(database.listDocuments({ query: '%' })).toEqual([])
     expect(database.listDocuments({ query: '___not_match_wildcard___' })).toEqual([])
   })
+
+  it('老库缺少 region/paper 列时迁移不报错，且原卷抽题与 Dashboard 严格按科目和活动库隔离', async () => {
+    const { DatabaseSync } = await import('node:sqlite')
+    const legacyDir = mkdtempSync(join(tmpdir(), 'tizhou-legacy-db-'))
+    const legacyDbPath = join(legacyDir, 'workbench.sqlite')
+    const raw = new DatabaseSync(legacyDbPath)
+    raw.exec(`
+      CREATE TABLE questions (
+        id TEXT PRIMARY KEY,
+        vault_id TEXT NOT NULL,
+        subject TEXT NOT NULL,
+        category TEXT NOT NULL,
+        type TEXT NOT NULL,
+        stem TEXT NOT NULL,
+        options_json TEXT NOT NULL,
+        answer_json TEXT NOT NULL,
+        explanation TEXT NOT NULL,
+        difficulty INTEGER NOT NULL,
+        tags_json TEXT NOT NULL,
+        source TEXT NOT NULL,
+        year INTEGER,
+        file_path TEXT NOT NULL,
+        content_hash TEXT NOT NULL,
+        indexed_at TEXT NOT NULL
+      );
+    `)
+    raw.close()
+
+    const legacySvc = new DatabaseService(legacyDbPath, legacyDir, join(legacyDir, 'backups'))
+    try {
+      expect(legacySvc.listQuestions()).toEqual([])
+    } finally {
+      legacySvc.close()
+      rmSync(legacyDir, { recursive: true, force: true })
+    }
+
+    // 同名试卷中行测原卷查询不得混入申论大题
+    const activeVault = database.getActiveVault()!
+    database.replaceVaultContent(
+      activeVault,
+      [
+        {
+          id: 'paper-xc-1',
+          subject: 'xingce',
+          category: '常识判断',
+          type: 'single',
+          stem: '行测真题',
+          options: [
+            { key: 'A', text: '甲' },
+            { key: 'B', text: '乙' }
+          ],
+          answer: ['A'],
+          explanation: '解析',
+          difficulty: 2,
+          tags: [],
+          source: '2025年国考',
+          paper: '2025年国考同名卷',
+          papers: [{ paper: '2025年国考同名卷', order: 1 }],
+          filePath: join(activeVault.path, 'xc.md'),
+          contentHash: 'h-xc-1'
+        },
+        {
+          id: 'paper-sl-1',
+          subject: 'shenlun',
+          category: '归纳概括',
+          type: 'essay',
+          stem: '申论大题',
+          options: [],
+          answer: [],
+          explanation: '解析',
+          difficulty: 3,
+          tags: [],
+          source: '2025年国考',
+          paper: '2025年国考同名卷',
+          papers: [{ paper: '2025年国考同名卷', order: 2 }],
+          filePath: join(activeVault.path, 'sl.md'),
+          contentHash: 'h-sl-1'
+        }
+      ],
+      [],
+      false
+    )
+    const xingcePaper = database.listQuestionsByPaper('2025年国考同名卷')
+    expect(xingcePaper.map((q) => q.id)).toEqual(['paper-xc-1'])
+  })
 })

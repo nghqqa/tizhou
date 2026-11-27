@@ -283,6 +283,8 @@ export function ScratchpadDrawer({
     blankPage.clearedBackup = backup
     pagesRef.current = [blankPage]
     nextPageIdRef.current = 2
+    drawingRef.current = false
+    currentStrokeRef.current = null
     strokesRef.current = []
     clearedBackupRef.current = backup
     setPageIds([1])
@@ -412,16 +414,19 @@ export function ScratchpadDrawer({
       if (hasOpenModal()) return
       if (event.altKey && !event.ctrlKey && !event.metaKey && event.key.toLowerCase() === 'd') {
         event.preventDefault()
+        event.stopImmediatePropagation()
         onClose()
         return
       }
       if (event.key === 'Escape') {
         if (dockMenuOpen) {
           event.preventDefault()
+          event.stopImmediatePropagation()
           setDockMenuOpen(false)
           dragHandleRef.current?.focus()
           return
         }
+        event.stopImmediatePropagation()
         onClose()
         return
       }
@@ -436,8 +441,8 @@ export function ScratchpadDrawer({
         undoStroke()
       }
     }
-    window.addEventListener('keydown', handleKey)
-    return () => window.removeEventListener('keydown', handleKey)
+    window.addEventListener('keydown', handleKey, true)
+    return () => window.removeEventListener('keydown', handleKey, true)
   }, [open, tab, dockMenuOpen, onClose, undoStroke])
 
   useEffect(() => {
@@ -454,9 +459,25 @@ export function ScratchpadDrawer({
       attributes: true,
       attributeFilter: ['data-theme']
     })
+    let dprCleanup: (() => void) | undefined
+    const watchDpr = (): void => {
+      dprCleanup?.()
+      if (typeof window.matchMedia !== 'function') return
+      const mq = window.matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`)
+      const onChange = (): void => {
+        redrawCanvas()
+        watchDpr()
+      }
+      mq.addEventListener('change', onChange)
+      dprCleanup = () => mq.removeEventListener('change', onChange)
+    }
+    watchDpr()
+    window.addEventListener('resize', redrawCanvas)
     return () => {
       observer?.disconnect()
       themeObserver.disconnect()
+      dprCleanup?.()
+      window.removeEventListener('resize', redrawCanvas)
     }
   }, [open, tab, redrawCanvas])
 

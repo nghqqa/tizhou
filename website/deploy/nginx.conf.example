@@ -26,13 +26,19 @@ server {
     add_header X-Frame-Options "DENY" always;
     add_header Referrer-Policy "strict-origin-when-cross-origin" always;
 
-    # 带哈希指纹的构建产物：强缓存
+    # 带哈希指纹的构建产物：强缓存（子块使用 add_header 时需重复安全响应头，避免 Nginx 丢弃继承头）
     location /assets/ {
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header X-Frame-Options "DENY" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
         add_header Cache-Control "public, max-age=31536000, immutable";
     }
 
     # 入口文档不缓存，保证发版即生效
     location = /index.html {
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header X-Frame-Options "DENY" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
         add_header Cache-Control "no-cache, must-revalidate";
     }
 

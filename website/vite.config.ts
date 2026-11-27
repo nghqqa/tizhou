@@ -30,10 +30,12 @@ function injectSocialMeta(): Plugin {
 function sanitizeChangelogText(text: string): string {
   const emDash = String.fromCharCode(0x2014)
   const enDash = String.fromCharCode(0x2013)
+  const quotedDoubleEmRe = new RegExp('`' + emDash + emDash + '`', 'g')
   const doubleEmRe = new RegExp(emDash + emDash, 'g')
   const singleDashRe = new RegExp(`[${emDash}${enDash}]`, 'g')
 
   return text
+    .replace(quotedDoubleEmRe, '双横线')
     .replace(doubleEmRe, '，')
     .replace(singleDashRe, '-')
     .replace(/\b(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}\b/g, (full, a: string, b: string) =>

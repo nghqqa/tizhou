@@ -599,12 +599,16 @@ export function runImportShenlunExport(opts) {
       }
       const wb = new DatabaseSync(sqlitePath)
       wb.exec('PRAGMA busy_timeout = 5000;')
+      const normVaultPath = (p) =>
+        process.platform === 'win32' ? resolve(p).toLowerCase() : resolve(p)
+      const targetVaultNorm = normVaultPath(vaultDir)
+      const allVaults = wb.prepare('SELECT id, path, active FROM vault_registry').all()
       const vaultRow =
-        wb.prepare('SELECT id, path FROM vault_registry WHERE active = 1 LIMIT 1').get() ??
-        wb.prepare('SELECT id, path FROM vault_registry WHERE path = ? LIMIT 1').get(vaultDir)
+        allVaults.find((row) => normVaultPath(String(row.path)) === targetVaultNorm) ??
+        allVaults.find((row) => Number(row.active) === 1)
       if (!vaultRow) {
         wb.close()
-        throw new Error('workbench.sqlite 中未找到匹配的 vault_registry 记录')
+        throw new Error(`workbench.sqlite 中未找到匹配的 vault_registry 记录（目标：${vaultDir}）`)
       }
       activeVaultId = String(vaultRow.id)
       const indexedAt = new Date().toISOString()

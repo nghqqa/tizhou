@@ -7,7 +7,6 @@
 import { createHash } from 'node:crypto'
 import {
   copyFileSync,
-  cpSync,
   existsSync,
   lstatSync,
   mkdirSync,
@@ -18,6 +17,7 @@ import {
 } from 'node:fs'
 import { basename, join, resolve } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
+import { copyDirectorySafe, isWithin } from '../utils/common'
 import type { DatabaseService } from './database'
 
 interface MigrationManifest {
@@ -75,7 +75,9 @@ export class MigrationService {
     const backup = this.database.createBackup('manual')
     copyFileSync(backup.path, join(root, 'workbench.sqlite'))
     for (const vault of vaults)
-      cpSync(vault.path, join(root, 'vaults', basename(vault.path)), { recursive: true })
+      copyDirectorySafe(vault.path, join(root, 'vaults', basename(vault.path)), {
+        skipSymlinks: true
+      })
     const manifest: MigrationManifest = {
       app: MIGRATION_APP_ID,
       version: 1,
@@ -98,14 +100,36 @@ export class MigrationService {
     const vaultRoot = resolve(vaultTargetPath)
 
     // 阶段 2：路径安全校验（源目录真实存在、防符号链接逃逸、目标目录冲突）
+    const realRoot = realpathSync(root)
+    const stagedSource = join(root, 'workbench.sqlite')
+    if (!existsSync(stagedSource) || lstatSync(stagedSource).isSymbolicLink())
+      throw new Error('迁移包缺少有效数据库文件 workbench.sqlite')
+    if (!isWithin(realRoot, realpathSync(stagedSource)))
+      throw new Error('迁移包数据库存在符号链接逃逸，已拒绝导入')
+
     const packageVaultsDir = join(root, 'vaults')
-    const realpathRoot = realpathSync(root)
+    let realPackageVaultsDir = realRoot
+    if (manifest.vaults.length > 0) {
+      if (!existsSync(packageVaultsDir) || lstatSync(packageVaultsDir).isSymbolicLink())
+        throw new Error('迁移包缺少有效的 vaults 目录')
+      realPackageVaultsDir = realpathSync(packageVaultsDir)
+      if (!isWithin(realRoot, realPackageVaultsDir))
+        throw new Error('迁移包 vaults 目录存在符号链接逃逸，已拒绝导入')
+    }
+
     for (const vault of manifest.vaults) {
       const source = join(packageVaultsDir, vault.name)
-      if (!existsSync(source) || !lstatSync(source).isDirectory())
+      const stat = existsSync(source) ? lstatSync(source) : undefined
+      if (!stat || !stat.isDirectory()) {
+        if (stat?.isSymbolicLink())
+          throw new Error(`知识库目录「${vault.name}」存在符号链接逃逸，已拒绝导入`)
         throw new Error(`迁移包缺少知识库目录：${vault.name}`)
-      // 符号链接逃逸：目录真实位置必须仍在迁移包内
-      if (realpathSync(source) !== realpathSync(join(realpathRoot, 'vaults', vault.name)))
+      }
+      if (stat.isSymbolicLink())
+        throw new Error(`知识库目录「${vault.name}」存在符号链接逃逸，已拒绝导入`)
+      // 符号链接逃逸：目录真实位置必须在迁移包 vaults 目录下
+      const realSource = realpathSync(source)
+      if (!isWithin(realPackageVaultsDir, realSource))
         throw new Error(`知识库目录「${vault.name}」存在符号链接逃逸，已拒绝导入`)
       const target = join(vaultRoot, vault.name)
       if (existsSync(target))
@@ -113,9 +137,8 @@ export class MigrationService {
     }
 
     // 阶段 3：数据库完整性（复制后在副本上做 integrity_check，不触碰当前数据库）
-    mkdirSync(vaultRoot, { recursive: true })
     const staged = join(this.dataDirectory, 'pending-import.db')
-    copyFileSync(join(root, 'workbench.sqlite'), staged)
+    copyFileSync(stagedSource, staged)
     let db: DatabaseSync | undefined
     try {
       db = new DatabaseSync(staged)
@@ -123,21 +146,111 @@ export class MigrationService {
         { integrity_check?: string } | undefined
       if (!integrity || integrity.integrity_check !== 'ok')
         throw new Error('迁移包中的数据库文件已损坏（完整性检查未通过）')
-      // 阶段 4：路径重映射
-      for (const vault of manifest.vaults) {
-        const newPath = join(vaultRoot, vault.name)
-        const oldId = vaultIdForPath(vault.path)
-        const newId = vaultIdForPath(newPath)
-        db.prepare('UPDATE vault_registry SET id=?, path=? WHERE id=? OR path=?').run(
-          newId,
-          newPath,
-          oldId,
-          vault.path
-        )
-        for (const table of ['questions', 'documents', 'vault_snapshots'])
-          db.prepare(`UPDATE ${table} SET vault_id=? WHERE vault_id=?`).run(newId, oldId)
+
+      // 阶段 4：校验核心表并探测可选表/列，安全重映射 vault_id、题/文档 ID 前缀与 file_path
+      const existingTables = new Set(
+        (
+          db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as Array<{
+            name: string
+          }>
+        ).map((row) => row.name)
+      )
+      for (const requiredTable of ['vault_registry', 'questions', 'documents', 'vault_snapshots']) {
+        if (!existingTables.has(requiredTable)) {
+          throw new Error(`迁移包数据库缺少核心表：${requiredTable}`)
+        }
+      }
+      const columnsOf = (table: string): Set<string> => {
+        if (!existingTables.has(table)) return new Set()
+        const rows = db!.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>
+        return new Set(rows.map((row) => row.name))
+      }
+
+      db.exec('PRAGMA foreign_keys = OFF')
+      db.exec('BEGIN')
+      try {
+        for (const vault of manifest.vaults) {
+          const newPath = join(vaultRoot, vault.name)
+          const oldId = vaultIdForPath(vault.path)
+          const newId = vaultIdForPath(newPath)
+          const oldIds = new Set<string>([oldId])
+          const matchedRows = db
+            .prepare('SELECT id FROM vault_registry WHERE id=? OR path=? OR lower(path)=lower(?)')
+            .all(oldId, vault.path, vault.path) as Array<{ id: string }>
+          for (const row of matchedRows) {
+            if (row.id) oldIds.add(String(row.id))
+          }
+          db.prepare(
+            'UPDATE vault_registry SET id=?, path=? WHERE id=? OR path=? OR lower(path)=lower(?)'
+          ).run(newId, newPath, oldId, vault.path, vault.path)
+
+          for (const candidateOldId of oldIds) {
+            if (candidateOldId !== newId) {
+              for (const table of ['questions', 'documents', 'vault_snapshots']) {
+                db.prepare(`UPDATE ${table} SET vault_id=? WHERE vault_id=?`).run(
+                  newId,
+                  candidateOldId
+                )
+              }
+              const oldPrefix = `${candidateOldId}:`
+              const newPrefix = `${newId}:`
+              for (const [table, column] of [
+                ['questions', 'id'],
+                ['documents', 'id'],
+                ['attempts', 'question_id'],
+                ['wrong_questions', 'question_id'],
+                ['review_tasks', 'question_id'],
+                ['favorites', 'question_id'],
+                ['user_notes', 'question_id'],
+                ['constructed_drafts', 'prompt_id'],
+                ['constructed_attempts', 'prompt_id'],
+                ['ai_conversations', 'question_id'],
+                ['study_snippets', 'source_doc_id'],
+                ['ai_training_attempts', 'source_question_id']
+              ] as const) {
+                if (!columnsOf(table).has(column)) continue
+                db.prepare(
+                  `UPDATE ${table} SET ${column} = ? || substr(${column}, ?) WHERE substr(${column}, 1, ?) = ?`
+                ).run(newPrefix, oldPrefix.length + 1, oldPrefix.length, oldPrefix)
+              }
+            }
+          }
+
+          const oldBase = vault.path.replace(/[/\\]+$/, '')
+          const oldBaseLower = oldBase.toLowerCase()
+          for (const table of ['questions', 'documents'] as const) {
+            if (!columnsOf(table).has('file_path')) continue
+            const rows = db
+              .prepare(
+                `SELECT id, file_path FROM ${table} WHERE vault_id = ? AND file_path IS NOT NULL`
+              )
+              .all(newId) as Array<{ id: string; file_path: string }>
+            const updateFilePath = db.prepare(`UPDATE ${table} SET file_path = ? WHERE id = ?`)
+            for (const row of rows) {
+              const fp = String(row.file_path)
+              const fpLower = fp.toLowerCase()
+              if (
+                fpLower === oldBaseLower ||
+                fpLower.startsWith(`${oldBaseLower}/`) ||
+                fpLower.startsWith(`${oldBaseLower}\\`)
+              ) {
+                const suffix = fp.slice(oldBase.length).replace(/^[/\\]+/, '')
+                updateFilePath.run(suffix ? join(newPath, suffix) : newPath, row.id)
+              }
+            }
+          }
+        }
+        db.exec('COMMIT')
+      } catch (transactionError) {
+        try {
+          db.exec('ROLLBACK')
+        } catch {
+          /* 忽略回滚失败 */
+        }
+        throw transactionError
       }
       db.close()
+      db = undefined
     } catch (error) {
       try {
         db?.close()
@@ -151,6 +264,32 @@ export class MigrationService {
         /* 清理失败仅记录，原库仍然安全 */
       }
       throw error instanceof Error ? error : new Error('迁移数据准备失败')
+    }
+
+    // 阶段 5：拷贝知识库目录；任一步骤失败均回滚已拷贝目录与 staged 数据库
+    mkdirSync(vaultRoot, { recursive: true })
+    const copiedTargets: string[] = []
+    try {
+      for (const vault of manifest.vaults) {
+        const source = join(packageVaultsDir, vault.name)
+        const target = join(vaultRoot, vault.name)
+        copyDirectorySafe(source, target, { errorOnExist: true, skipSymlinks: false })
+        copiedTargets.push(target)
+      }
+    } catch (error) {
+      for (const target of copiedTargets) {
+        try {
+          rmSync(target, { recursive: true, force: true })
+        } catch {
+          /* ignore */
+        }
+      }
+      try {
+        rmSync(staged, { force: true })
+      } catch {
+        /* ignore */
+      }
+      throw error instanceof Error ? error : new Error('迁移知识库目录复制失败')
     }
     return {
       restartRequired: true,

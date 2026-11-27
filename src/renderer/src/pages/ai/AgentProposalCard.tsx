@@ -34,7 +34,7 @@ export function AgentProposalCard({
   onDismiss,
   onNavigate
 }: AgentProposalCardProps) {
-  const meta = KIND_META[proposal.kind]
+  const meta = KIND_META[proposal.kind] ?? { label: '备考行动提案', icon: PlayIcon }
   const Icon = meta.icon
   const statusLabel =
     proposal.status === 'approved'
@@ -119,6 +119,14 @@ export function AgentProposalCard({
           <div className="agent-proposal-error">
             <XCircleIcon weight="fill" />
             <span>{proposal.resultMessage || '操作未能完成，请确认本地题库与参数后重试。'}</span>
+            <Button
+              appearance="outline"
+              size="small"
+              disabled={busy}
+              onClick={() => void onApprove(proposal)}
+            >
+              重试执行
+            </Button>
           </div>
         )}
       </div>

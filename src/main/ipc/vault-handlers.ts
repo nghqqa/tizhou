@@ -34,10 +34,14 @@ export function createVaultHandlers(ctx: IpcContext): Pick<IpcHandlerMap, VaultH
     }),
     'dashboard.get': () => database.getDashboard(),
     'vault.choose': async () => {
-      const selected = await dialog.showOpenDialog(ctx.getMainWindow()!, {
+      const win = ctx.getMainWindow()
+      const options = {
         title: '选择 Markdown 知识库目录',
-        properties: ['openDirectory']
-      })
+        properties: ['openDirectory'] as Array<'openDirectory'>
+      }
+      const selected = win
+        ? await dialog.showOpenDialog(win, options)
+        : await dialog.showOpenDialog(options)
       return selected.canceled ? undefined : selected.filePaths[0]
     },
     'vault.connect': (params) => {

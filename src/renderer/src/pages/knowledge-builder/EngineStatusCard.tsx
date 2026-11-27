@@ -25,22 +25,25 @@ export function EngineStatusCard({
       description="使用独立 Python 环境，不改动系统 Python，也不会把 API Key 交给转换进程。"
       actions={
         <>
-          {engine.available && engine.ocrAvailable && busy !== 'engine' && (
-            <Button
-              appearance={engine.ocrAccelerator === 'dml' ? 'subtle' : 'primary'}
-              icon={<LightningIcon />}
-              disabled={busy === 'gpu'}
-              onClick={onToggleGpu}
-            >
-              {busy === 'gpu'
-                ? engine.ocrAccelerator === 'dml'
-                  ? '正在移除'
-                  : '正在启用'
-                : engine.ocrAccelerator === 'dml'
-                  ? '移除 GPU 加速'
-                  : '启用 GPU 加速'}
-            </Button>
-          )}
+          {engine.available &&
+            engine.ocrAvailable &&
+            busy !== 'engine' &&
+            (engine.ocrAccelerator === 'dml' || Boolean(engine.gpuAdapterName)) && (
+              <Button
+                appearance={engine.ocrAccelerator === 'dml' ? 'subtle' : 'primary'}
+                icon={<LightningIcon />}
+                disabled={busy === 'gpu'}
+                onClick={onToggleGpu}
+              >
+                {busy === 'gpu'
+                  ? engine.ocrAccelerator === 'dml'
+                    ? '正在移除'
+                    : '正在启用'
+                  : engine.ocrAccelerator === 'dml'
+                    ? '移除 GPU 加速'
+                    : '启用 GPU 加速'}
+              </Button>
+            )}
           {(!engine.available || !engine.ocrAvailable || !engine.structuredParseAvailable) && (
             <Button
               appearance="primary"

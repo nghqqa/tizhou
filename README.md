@@ -6,7 +6,7 @@
   <a href="https://github.com/nghqqa/tizhou/releases/latest"><img src="https://img.shields.io/github/v/release/nghqqa/tizhou?label=%E6%9C%80%E6%96%B0%E7%89%88%E6%9C%AC" alt="最新版本"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-2f855a.svg" alt="MIT License"></a>
   <img src="https://img.shields.io/badge/%E5%B9%B3%E5%8F%B0-Windows%2010%2F11-0078D4" alt="Windows 10/11">
-  <img src="https://img.shields.io/badge/%E6%B5%8B%E8%AF%95-558%20%E9%A1%B9%E5%8D%95%E5%85%83%20%2B%2024%20E2E-brightgreen" alt="558 项单元测试与 24 项 E2E">
+  <img src="https://img.shields.io/badge/%E6%B5%8B%E8%AF%95-570%20%E9%A1%B9%E5%8D%95%E5%85%83%20%2B%2024%20E2E-brightgreen" alt="570 项单元测试与 24 项 E2E">
 </p>
 
 **题舟** 是一个**本地优先**的开源考公学习工作台：学习数据存在你自己的电脑上，无广告、无推送、无遥测；题库由你自己导入，扫描版题本 PDF 也能一键转成结构化题库；内置可选**备考规划 Agent**与透明的**本机长期学习记忆**（五协议 Tool Calling + 人工审批门禁），不装模型也能完整离线刷题。
@@ -128,7 +128,7 @@ src/
 ├── shared/            类型契约、Prompt 协议、OCR 解析器
 └── preload/           IPC 桥
 tools/                 OCR worker（Python）、直导脚本、打包烟雾测试
-tests/                 Vitest 单元测试（558 项，含真实 OCR 与 Agent 运行时集成测试）
+tests/                 Vitest 单元测试（570 项，含真实 OCR 与 Agent 运行时集成测试）
 docs/                  用户手册、导入指南、UAT 清单、架构文档
 ```
 
@@ -137,7 +137,7 @@ docs/                  用户手册、导入指南、UAT 清单、架构文档
 ```bash
 npm install
 npm run dev            # 开发模式
-npm test               # 运行 558 项单元测试
+npm test               # 运行 570 项单元测试
 npm run test:e2e       # 运行 24 项 E2E（真实 Electron 实例）
 npm run typecheck      # 类型检查
 npm run format:check   # 代码格式检查

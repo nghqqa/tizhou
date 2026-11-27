@@ -79,11 +79,11 @@ export function ShenlunAnswerSheet({
     setSelection({ start, end })
   }
 
-  function applySelectionRange(anchor: number, focus: number): void {
+  function applySelectionRange(anchor: number, focus: number, maxLen = value.length): void {
     const el = textareaRef.current
     if (!el) return
-    const a = Math.max(0, Math.min(anchor, value.length))
-    const f = Math.max(0, Math.min(focus, value.length))
+    const a = Math.max(0, Math.min(anchor, maxLen))
+    const f = Math.max(0, Math.min(focus, maxLen))
     const start = Math.min(a, f)
     const end = Math.max(a, f)
     el.focus()
@@ -94,8 +94,8 @@ export function ShenlunAnswerSheet({
     })
   }
 
-  function focusAt(index: number): void {
-    applySelectionRange(index, index)
+  function focusAt(index: number, maxLen = value.length): void {
+    applySelectionRange(index, index, maxLen)
   }
 
   function insertIndent(): void {
@@ -105,7 +105,7 @@ export function ShenlunAnswerSheet({
     const indent = '\u3000\u3000'
     const next = value.slice(0, start) + indent + value.slice(end)
     onChange(next)
-    focusAt(start + indent.length)
+    focusAt(start + indent.length, next.length)
   }
 
   function indexFromCellEvent(
@@ -114,11 +114,21 @@ export function ShenlunAnswerSheet({
     event: React.MouseEvent<HTMLDivElement>
   ): number {
     if (cell.charIndex !== null && cell.charEndIndex !== null) {
-      const span = Math.max(1, cell.charEndIndex - cell.charIndex)
+      const slice = value.slice(cell.charIndex, cell.charEndIndex)
+      const offsets: number[] = [cell.charIndex]
+      let pos = cell.charIndex
+      for (const ch of slice) {
+        pos += ch.length
+        offsets.push(pos)
+      }
       const rect = event.currentTarget.getBoundingClientRect()
       const ratio =
         rect.width > 0 ? Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width)) : 0
-      return cell.charIndex + Math.round(ratio * span)
+      const slot = Math.min(
+        offsets.length - 1,
+        Math.max(0, Math.round(ratio * (offsets.length - 1)))
+      )
+      return offsets[slot]!
     }
     return row.lineEndCharIndex
   }
@@ -239,7 +249,11 @@ export function ShenlunAnswerSheet({
             setSelection({ start: nextPos, end: nextPos })
           }}
           onKeyDown={(event) => {
-            if (event.key === 'Tab') {
+            if (
+              event.key === 'Tab' &&
+              !composing &&
+              !(event.nativeEvent as KeyboardEvent).isComposing
+            ) {
               event.preventDefault()
               insertIndent()
             }
@@ -251,10 +265,17 @@ export function ShenlunAnswerSheet({
         {composing && imePreviewText && (
           <div
             className="shenlun-sheet-ime-pill"
-            style={{
-              left: `calc(${caretLeftPct}% + 14px)`,
-              top: `${Math.max(4, caretTopPx - 4)}px`
-            }}
+            style={
+              caretLeftPct > 72
+                ? {
+                    right: `calc(${Math.max(2, 100 - caretLeftPct)}% + 8px)`,
+                    top: `${Math.max(4, caretTopPx - 4)}px`
+                  }
+                : {
+                    left: `calc(${caretLeftPct}% + 14px)`,
+                    top: `${Math.max(4, caretTopPx - 4)}px`
+                  }
+            }
           >
             {imePreviewText}
           </div>

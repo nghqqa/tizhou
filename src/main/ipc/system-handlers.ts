@@ -1,4 +1,4 @@
-import { writeFileSync } from 'node:fs'
+import { existsSync, realpathSync, statSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { dialog, shell } from 'electron'
 import { isWithin } from '../utils/common'
@@ -59,10 +59,14 @@ export function createSystemHandlers(ctx: IpcContext): Pick<IpcHandlerMap, Syste
     'app.update.download': () => updater.download(),
     'app.update.install': () => updater.install(),
     'folder.pick': async (params) => {
-      const selected = await dialog.showOpenDialog(ctx.getMainWindow()!, {
+      const win = ctx.getMainWindow()
+      const options = {
         title: params.title,
-        properties: ['openDirectory']
-      })
+        properties: ['openDirectory'] as Array<'openDirectory'>
+      }
+      const selected = win
+        ? await dialog.showOpenDialog(win, options)
+        : await dialog.showOpenDialog(options)
       return selected.canceled ? undefined : selected.filePaths[0]
     },
     'settings.get': () => database.getAppSettings(),
@@ -87,23 +91,30 @@ export function createSystemHandlers(ctx: IpcContext): Pick<IpcHandlerMap, Syste
     'backup.list': () => database.listBackups(),
     'backup.restore': (params) => {
       database.restoreBackup(params.path)
-      // 恢复的数据库可能指向另一个知识库目录：重新挂载磁盘监听，避免旧 watcher 失联
+      // 恢复的数据库可能指向另一个知识库目录或不同的界面缩放：同步缩放、兜底内置库并重挂监听
+      const settings = database.getAppSettings()
+      applyWindowZoom(settings.uiScale)
+      const vault = database.getActiveVault() ?? vaults.ensureBuiltinVault()
       vaults.startWatching()
       return {
         dashboard: database.getDashboard(),
-        settings: database.getAppSettings(),
-        vault: database.getActiveVault()!,
+        settings,
+        vault,
         ai: ai.getConfig()
       }
     },
     'diagnostics.run': () => diagnostics.run(),
     'diagnostics.export': async () => {
       const report = diagnostics.run()
-      const selected = await dialog.showSaveDialog(ctx.getMainWindow()!, {
+      const win = ctx.getMainWindow()
+      const options = {
         title: '导出诊断报告',
         defaultPath: `题舟诊断-${new Date().toISOString().slice(0, 10)}.json`,
         filters: [{ name: 'JSON', extensions: ['json'] }]
-      })
+      }
+      const selected = win
+        ? await dialog.showSaveDialog(win, options)
+        : await dialog.showSaveDialog(options)
       if (selected.canceled || !selected.filePath) return undefined
       writeFileSync(selected.filePath, JSON.stringify(report, null, 2), 'utf8')
       return selected.filePath
@@ -116,14 +127,19 @@ export function createSystemHandlers(ctx: IpcContext): Pick<IpcHandlerMap, Syste
     },
     'shell.openPath': async (params) => {
       const requested = resolve(params.path)
+      if (!existsSync(requested)) throw new Error('目标目录不存在')
+      const realRequested = realpathSync(requested)
       const activeVault = database.getActiveVault()
       const allowedRoots = [
-        resolve(dataDirectory),
-        ...(activeVault && !activeVault.isBuiltin ? [resolve(activeVault.path)] : [])
+        realpathSync(resolve(dataDirectory)),
+        ...(activeVault && !activeVault.isBuiltin && existsSync(activeVault.path)
+          ? [realpathSync(resolve(activeVault.path))]
+          : [])
       ]
-      if (!allowedRoots.some((root) => isWithin(root, requested)))
+      if (!allowedRoots.some((root) => isWithin(root, realRequested)))
         throw new Error('该路径不在应用数据或活动知识库范围内')
-      const error = await shell.openPath(requested)
+      if (!statSync(realRequested).isDirectory()) throw new Error('仅支持打开目录路径')
+      const error = await shell.openPath(realRequested)
       if (error) throw new Error(error)
       return true
     },

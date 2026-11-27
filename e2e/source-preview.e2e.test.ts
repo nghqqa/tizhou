@@ -6,6 +6,7 @@
 import { afterAll, beforeAll, describe, expect, it, onTestFailed } from 'vitest'
 import type { Page } from 'playwright'
 import { mkdirSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { closeApp, dumpE2EArtifacts, launchApp, removeTempDataDir, type AppHandle } from './helpers'
 
@@ -25,7 +26,7 @@ async function dump(name: string, page: Page | undefined): Promise<void> {
 describe('来源页预览 UI E2E（模拟证据·组件行为）', () => {
   beforeAll(async () => {
     // 动态生成夹具（.md 直转与 PDF 文字层管线一致；证据图片由测试注入模拟渲染完成）
-    const fixtureDir = join('C:/Users/ngh/AppData/Local/Temp', 'tizhou-e2e-preview-src')
+    const fixtureDir = join(tmpdir(), 'tizhou-e2e-preview-src')
     mkdirSync(fixtureDir, { recursive: true })
     writeFileSync(join(fixtureDir, '双页题本.md'), twoPageMarkdown(), 'utf8')
     writeFileSync(join(fixtureDir, '解析.md'), solutionMarkdown(), 'utf8')
@@ -45,7 +46,7 @@ describe('来源页预览 UI E2E（模拟证据·组件行为）', () => {
     try {
       // 1. 导入动态 .md 源（与 PDF 文字直转同一管线）
       await page.getByRole('link', { name: '知识库工坊' }).click()
-      const sourceDir = join('C:/Users/ngh/AppData/Local/Temp', 'tizhou-e2e-preview-src')
+      const sourceDir = join(tmpdir(), 'tizhou-e2e-preview-src')
       await page.getByLabel('原料目录').fill(sourceDir)
       await page.getByRole('button', { name: '扫描' }).click()
       await page.getByText('可转换文件').waitFor({ timeout: 30_000 })

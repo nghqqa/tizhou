@@ -72,6 +72,7 @@ export function PaperProgressWall({
   }, [items])
 
   async function startPaperExam(item: PaperProgressItem): Promise<void> {
+    if (startingPaper) return
     if (item.hasActiveExam) {
       navigate('/exam/run')
       return
@@ -249,9 +250,7 @@ export function PaperProgressWall({
                       item.hasActiveExam || item.examCount === 0 ? 'primary' : 'secondary'
                     }
                     icon={<ExamIcon />}
-                    disabled={
-                      startingPaper === busyKey || (!item.hasActiveExam && hasAnyActiveExam)
-                    }
+                    disabled={Boolean(startingPaper) || (!item.hasActiveExam && hasAnyActiveExam)}
                     onClick={() => void startPaperExam(item)}
                   >
                     {item.hasActiveExam
