@@ -11,6 +11,7 @@ import {
   isLikelyBot,
   parseNginxLogLine
 } from '../scripts/website-stats.mjs'
+import { startStatsUiServer } from '../scripts/website-stats-ui.mjs'
 
 describe('Nginx 302 跳转片段生成与官网访问统计', () => {
   it('能从真实 website/src/release.ts 生成五条安全的 302 no-store 跳转规则', () => {
@@ -101,5 +102,72 @@ describe('Nginx 302 跳转片段生成与官网访问统计', () => {
     expect(report).toContain('首页访问：  PV 3  |  UV 3')
     expect(report).toContain('按 UV 66.7%')
     expect(report).toContain('xhs')
+  })
+
+  it('本地可视化看板服务严格监听 127.0.0.1、附带安全响应头并拦截跨站 API 请求', async () => {
+    let calls = 0
+    const sampleLines = [
+      '1.2.3.4 - - [27/Nov/2026:10:00:01 +0800] "GET /?from=xhs HTTP/2.0" 200 2410 "https://www.xiaohongshu.com/explore/1" "Mozilla/5.0 Chrome/131.0.0.0" "-"',
+      '1.2.3.4 - - [27/Nov/2026:10:00:10 +0800] "GET /go/download-cnb?from=xhs HTTP/2.0" 302 154 "https://tizhou.nghqqa.cn/?from=xhs" "Mozilla/5.0 Chrome/131.0.0.0" "-"'
+    ]
+    const handle = await startStatsUiServer({
+      sourceLabel: '测试样例',
+      loadPayload: async ({ days, includeBots, forceRefresh }) => {
+        if (forceRefresh || calls === 0) calls += 1
+        return {
+          stats: aggregateWebsiteStats(sampleLines, {
+            days,
+            includeBots,
+            todayKey: '2026-11-27'
+          }),
+          githubReleases: {
+            releaseCount: 1,
+            totalExe: 3,
+            recent: [{ tag: 'v1.0.52', downloads: 3 }]
+          },
+          fetchedAt: '2026-11-27T10:00:00.000Z',
+          sourceLabel: '测试样例',
+          cached: !forceRefresh && calls > 0
+        }
+      }
+    })
+    try {
+      expect(handle.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/$/)
+
+      // 首页 HTML：含 color-scheme meta、每次请求独立的 CSP nonce 及核心安全头
+      const homeRes = await fetch(handle.url)
+      expect(homeRes.status).toBe(200)
+      const csp = homeRes.headers.get('content-security-policy') ?? ''
+      expect(csp).toMatch(/script-src 'nonce-[A-Za-z0-9+/=]+' 'strict-dynamic' 'report-sample'/)
+      expect(csp).toContain("frame-ancestors 'none'")
+      expect(homeRes.headers.get('x-frame-options')).toBe('DENY')
+      expect(homeRes.headers.get('x-content-type-options')).toBe('nosniff')
+      expect(homeRes.headers.get('cross-origin-resource-policy')).toBe('same-origin')
+      const html = await homeRes.text()
+      expect(html).toContain('<meta name="color-scheme" content="light dark" />')
+      expect(html).toContain('题舟官网 · 流量与下载转化看板')
+
+      // 跨站 API 请求被 Fetch Metadata 拒绝
+      const crossSiteRes = await fetch(`${handle.url}api/stats?days=14`, {
+        headers: { 'Sec-Fetch-Site': 'cross-site' }
+      })
+      expect(crossSiteRes.status).toBe(403)
+      expect(crossSiteRes.headers.get('vary')).toContain('Sec-Fetch-Site')
+
+      // 正常同源查询与强制刷新
+      const apiRes = await fetch(`${handle.url}api/stats?days=14&includeBots=0&refresh=1`, {
+        headers: { 'Sec-Fetch-Site': 'same-origin' }
+      })
+      expect(apiRes.status).toBe(200)
+      const json = (await apiRes.json()) as {
+        stats: { summary: { homeUv: number; downloadCnbPv: number; conversionUvPct: number } }
+      }
+      expect(json.stats.summary.homeUv).toBe(1)
+      expect(json.stats.summary.downloadCnbPv).toBe(1)
+      expect(json.stats.summary.conversionUvPct).toBe(100)
+      expect(calls).toBe(1)
+    } finally {
+      await handle.close()
+    }
   })
 })

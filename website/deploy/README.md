@@ -64,7 +64,8 @@ bash website/deploy/deploy.sh --no-build # 仅发布（dist 已构建好时）
 在仓库根目录执行：
 
 ```bash
-npm run website:stats                 # 默认查看近 14 天汇总、按天趋势、来源渠道与下载率
+npm run website:stats:ui              # 启动本地可视化看板并自动打开浏览器（仅监听 127.0.0.1，支持实时刷新）
+npm run website:stats                 # 命令行查看近 14 天汇总、按天趋势、来源渠道与下载率
 npm run website:stats -- --days 1     # 仅查看今天
 npm run website:stats -- --days 30    # 查看近 30 天
 ```

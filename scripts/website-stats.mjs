@@ -11,11 +11,13 @@
 //   npm run website:stats -- --file path.log    分析本地日志文件（不连服务器）
 //   npm run website:stats -- --no-github        不查询 GitHub Releases 下载数
 //   npm run website:stats -- --json             输出 JSON
+//   npm run website:stats:ui                    启动本地可视化看板并自动打开浏览器（仅监听 127.0.0.1）
 import { execFileSync, spawnSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { gunzipSync } from 'node:zlib'
+import { openBrowserUrl, startStatsUiServer } from './website-stats-ui.mjs'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const OWN_HOST = 'tizhou.nghqqa.cn'
@@ -396,6 +398,9 @@ function parseCliArgs(argv) {
     logPrefix: '',
     noGithub: false,
     json: false,
+    ui: false,
+    noOpen: false,
+    port: 0,
     help: false
   }
   for (let i = 0; i < argv.length; i += 1) {
@@ -404,7 +409,13 @@ function parseCliArgs(argv) {
     else if (arg === '--include-bots') opts.includeBots = true
     else if (arg === '--no-github') opts.noGithub = true
     else if (arg === '--json') opts.json = true
-    else if (arg === '--days') {
+    else if (arg === '--ui' || arg === '--open') opts.ui = true
+    else if (arg === '--no-open') opts.noOpen = true
+    else if (arg === '--port') {
+      opts.port = Math.max(0, Number(argv[++i] ?? 0))
+    } else if (arg.startsWith('--port=')) {
+      opts.port = Math.max(0, Number(arg.slice('--port='.length)))
+    } else if (arg === '--days') {
       opts.days = Math.max(0, Number(argv[++i] ?? 14))
     } else if (arg.startsWith('--days=')) {
       opts.days = Math.max(0, Number(arg.slice('--days='.length)))
@@ -518,6 +529,9 @@ if (isDirectRun) {
     console.log(
       [
         '用法：npm run website:stats -- [options]',
+        '  --ui / --open     启动本地可视化看板（仅监听 127.0.0.1）并自动打开浏览器',
+        '  --port N          可视化看板监听端口（默认随机空闲端口）',
+        '  --no-open         配合 --ui 使用，仅打印访问地址不自动拉起浏览器',
         '  --days N          统计最近 N 天（默认 14，0 表示全部）',
         '  --include-bots    包含爬虫与探针请求',
         '  --file <path>     读取本地 Nginx 日志（支持 .gz），不连服务器',
@@ -528,15 +542,56 @@ if (isDirectRun) {
     )
     process.exit(0)
   }
-  const lines = opts.file ? readLocalLogFile(opts.file) : readRemoteLogsViaSsh(opts.logPrefix)
-  const stats = aggregateWebsiteStats(lines, {
-    days: opts.days,
-    includeBots: opts.includeBots
-  })
-  const githubReleases = opts.noGithub ? null : fetchGithubReleaseSummary()
-  if (opts.json) {
-    console.log(JSON.stringify({ ...stats, githubReleases }, null, 2))
+  if (opts.ui) {
+    const sourceLabel = opts.file ? `本地文件 (${opts.file})` : '线上服务器专属日志'
+    let cachedLines = null
+    let cachedGithub = null
+    let lastFetchedAt = null
+
+    const { url, close } = await startStatsUiServer({
+      port: opts.port,
+      initialDays: opts.days,
+      initialIncludeBots: opts.includeBots,
+      sourceLabel,
+      loadPayload: async ({ days, includeBots, forceRefresh }) => {
+        const shouldReload = forceRefresh || cachedLines === null
+        if (shouldReload) {
+          cachedLines = opts.file
+            ? readLocalLogFile(opts.file)
+            : readRemoteLogsViaSsh(opts.logPrefix)
+          cachedGithub = opts.noGithub ? null : fetchGithubReleaseSummary()
+          lastFetchedAt = new Date().toISOString()
+        }
+        const stats = aggregateWebsiteStats(cachedLines, { days, includeBots })
+        return {
+          stats,
+          githubReleases: cachedGithub,
+          fetchedAt: lastFetchedAt,
+          sourceLabel,
+          cached: !shouldReload
+        }
+      }
+    })
+    console.log(`[website-stats] 本地可视化看板已启动：${url}`)
+    console.log('[website-stats] 仅本机 127.0.0.1 可访问，按 Ctrl+C 关闭服务。')
+    if (!opts.noOpen) openBrowserUrl(url)
+    const shutdown = async () => {
+      await close()
+      process.exit(0)
+    }
+    process.on('SIGINT', () => void shutdown())
+    process.on('SIGTERM', () => void shutdown())
   } else {
-    console.log(formatStatsReport(stats, githubReleases))
+    const lines = opts.file ? readLocalLogFile(opts.file) : readRemoteLogsViaSsh(opts.logPrefix)
+    const stats = aggregateWebsiteStats(lines, {
+      days: opts.days,
+      includeBots: opts.includeBots
+    })
+    const githubReleases = opts.noGithub ? null : fetchGithubReleaseSummary()
+    if (opts.json) {
+      console.log(JSON.stringify({ ...stats, githubReleases }, null, 2))
+    } else {
+      console.log(formatStatsReport(stats, githubReleases))
+    }
   }
 }
