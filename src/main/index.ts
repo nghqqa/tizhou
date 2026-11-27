@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:f
 import { app, BrowserWindow, shell } from 'electron'
 import { UI_SCALE_MAX, UI_SCALE_MIN, UI_SCALE_STEP, clampUiScale } from '../shared/defaults'
 import { registerIpcHandlers } from './ipc'
+import { AgentRuntime } from './services/agent-runtime'
 import { AiService } from './services/ai'
 import { DatabaseService, localDateKeyOf } from './services/database'
 import { DiagnosticService } from './services/diagnostics'
@@ -250,6 +251,7 @@ async function initialize(): Promise<void> {
   const ai = new AiService(database)
   const integrations = new IntegrationService(database)
   const study = new StudyService(database, ai)
+  const agent = new AgentRuntime(database, study, ai)
   const knowledgeBuilder = new KnowledgeBuilderService(
     dataDirectory,
     process.resourcesPath,
@@ -280,6 +282,7 @@ async function initialize(): Promise<void> {
     ai,
     integrations,
     study,
+    agent,
     knowledgeBuilder,
     diagnostics,
     updater,

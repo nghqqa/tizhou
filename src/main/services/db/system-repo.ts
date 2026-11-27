@@ -3,11 +3,14 @@ import { basename, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { DatabaseSync } from 'node:sqlite'
 import type {
+  AgentActionProposal,
+  AgentToolStep,
   AiConversation,
   AiMessage,
   AiTrainingRecord,
   AppSettings,
-  BackupInfo
+  BackupInfo,
+  LearnerMemory
 } from '../../../shared/contracts'
 import { DEFAULT_SETTINGS, clampUiScale } from '../../../shared/defaults'
 import { isAnswerCorrect } from '../../../shared/study-constants'
@@ -223,7 +226,16 @@ export function saveAiConversation(
         (m.role === 'user' || m.role === 'assistant' || m.role === 'system') &&
         typeof m.content === 'string'
     )
-    .map((m) => ({ role: m.role, content: m.content }))
+    .map((m) => ({
+      role: m.role,
+      content: m.content,
+      ...(Array.isArray(m.toolSteps) && m.toolSteps.length > 0
+        ? { toolSteps: m.toolSteps as AgentToolStep[] }
+        : {}),
+      ...(Array.isArray(m.proposals) && m.proposals.length > 0
+        ? { proposals: m.proposals as AgentActionProposal[] }
+        : {})
+    }))
   const resolvedQuestionId =
     input.questionId?.trim() || (existing?.question_id ? String(existing.question_id) : null)
   db.prepare(
@@ -247,6 +259,107 @@ export function saveAiConversation(
 
 export function deleteAiConversation(db: DatabaseSync, id: string): void {
   db.prepare('DELETE FROM ai_conversations WHERE id = ?').run(id)
+}
+
+function mapLearnerMemory(row: Row): LearnerMemory {
+  return {
+    id: String(row.id),
+    category: String(row.category),
+    content: String(row.content),
+    evidence: String(row.evidence ?? ''),
+    source: row.source === 'user' ? 'user' : 'agent',
+    enabled: Number(row.enabled) !== 0,
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at)
+  }
+}
+
+export function listLearnerMemories(db: DatabaseSync, onlyEnabled = false): LearnerMemory[] {
+  const sql = onlyEnabled
+    ? 'SELECT * FROM learner_memories WHERE enabled = 1 ORDER BY updated_at DESC'
+    : 'SELECT * FROM learner_memories ORDER BY updated_at DESC'
+  const rows = db.prepare(sql).all() as Row[]
+  return rows.map(mapLearnerMemory)
+}
+
+export function saveLearnerMemory(
+  db: DatabaseSync,
+  input: {
+    id?: string
+    category: string
+    content: string
+    evidence?: string
+    source?: 'agent' | 'user'
+  }
+): LearnerMemory {
+  const category = (input.category || '综合规律').trim().slice(0, 30) || '综合规律'
+  const content = (input.content || '').trim().slice(0, 240)
+  if (!content) throw new Error('学习记忆内容不能为空')
+  const evidence = (input.evidence ?? '').trim().slice(0, 240)
+  const source: 'agent' | 'user' = input.source === 'user' ? 'user' : 'agent'
+  const timestamp = now()
+
+  // 未指定 id 时按同分类+同内容（忽略空白）去重合并，避免 Agent 反复沉淀完全一样的记忆
+  let targetId = input.id?.trim()
+  if (!targetId) {
+    const normalized = content.replace(/\s+/g, '')
+    const candidates = db
+      .prepare('SELECT id, content FROM learner_memories WHERE category = ?')
+      .all(category) as Row[]
+    const dup = candidates.find((r) => String(r.content).replace(/\s+/g, '') === normalized)
+    if (dup) targetId = String(dup.id)
+  }
+
+  const id = targetId || randomUUID()
+  const existing = db
+    .prepare('SELECT created_at, enabled, evidence FROM learner_memories WHERE id = ?')
+    .get(id) as Row | undefined
+  const createdAt = existing ? String(existing.created_at) : timestamp
+  const enabled = 1
+  const finalEvidence = evidence || (existing ? String(existing.evidence ?? '') : '')
+
+  db.prepare(
+    `INSERT INTO learner_memories(id, category, content, evidence, source, enabled, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       category = excluded.category,
+       content = excluded.content,
+       evidence = CASE WHEN excluded.evidence != '' THEN excluded.evidence ELSE learner_memories.evidence END,
+       source = excluded.source,
+       enabled = 1,
+       updated_at = excluded.updated_at`
+  ).run(id, category, content, finalEvidence, source, enabled, createdAt, timestamp)
+
+  return {
+    id,
+    category,
+    content,
+    evidence: finalEvidence,
+    source,
+    enabled: true,
+    createdAt,
+    updatedAt: timestamp
+  }
+}
+
+export function toggleLearnerMemory(db: DatabaseSync, id: string, enabled: boolean): LearnerMemory {
+  const row = db.prepare('SELECT * FROM learner_memories WHERE id = ?').get(id) as Row | undefined
+  if (!row) throw new Error('未找到该条学习记忆')
+  const timestamp = now()
+  db.prepare('UPDATE learner_memories SET enabled = ?, updated_at = ? WHERE id = ?').run(
+    enabled ? 1 : 0,
+    timestamp,
+    id
+  )
+  return {
+    ...mapLearnerMemory(row),
+    enabled,
+    updatedAt: timestamp
+  }
+}
+
+export function deleteLearnerMemory(db: DatabaseSync, id: string): void {
+  db.prepare('DELETE FROM learner_memories WHERE id = ?').run(id)
 }
 
 export function createBackup(
@@ -331,7 +444,8 @@ export function resetLearningData(db: DatabaseSync): void {
       'plan_completions',
       'learning_plans',
       'ai_training_attempts',
-      'ai_conversations'
+      'ai_conversations',
+      'learner_memories'
     ]) {
       db.exec(`DELETE FROM ${table}`)
     }

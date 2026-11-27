@@ -227,6 +227,17 @@ export function migrateDatabase(db: DatabaseSync): void {
       created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_study_snippets_kind_time ON study_snippets(kind, created_at DESC);
+    CREATE TABLE IF NOT EXISTS learner_memories (
+      id TEXT PRIMARY KEY,
+      category TEXT NOT NULL,
+      content TEXT NOT NULL,
+      evidence TEXT NOT NULL DEFAULT '',
+      source TEXT NOT NULL DEFAULT 'agent',
+      enabled INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_learner_memories_updated ON learner_memories(updated_at DESC);
   `)
   const examColumns = db.prepare('PRAGMA table_info(exam_sessions)').all() as Row[]
   if (!examColumns.some((column) => String(column.name) === 'question_snapshots_json')) {

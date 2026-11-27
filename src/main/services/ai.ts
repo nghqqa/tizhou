@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { lookup } from 'node:dns/promises'
 import { isIP } from 'node:net'
 import { safeStorage } from 'electron'
@@ -333,6 +334,15 @@ function systemText(messages: AiMessage[]): string {
     .join('\n\n')
 }
 
+function sanitizePlainMessages(messages: AiMessage[]): AiMessage[] {
+  const needsStrip = messages.some((message) =>
+    Object.keys(message).some((key) => key !== 'role' && key !== 'content')
+  )
+  return needsStrip
+    ? messages.map((message) => ({ role: message.role, content: message.content }))
+    : messages
+}
+
 /** 构造各协议的请求体（导出供单测断言多模态/纯文本与流式开关） */
 export function requestSpec(
   config: StoredAiConfig,
@@ -352,7 +362,6 @@ export function requestSpec(
         headers: { ...commonHeaders, Authorization: `Bearer ${apiKey}` },
         body: {
           model: config.model,
-          // 含图消息转 input_text/input_image 内容块；无图保持原 messages 结构不变
           input: hasImages(messages)
             ? messages.map((message) => ({
                 role: message.role,
@@ -366,7 +375,7 @@ export function requestSpec(
                     ]
                   : message.content
               }))
-            : messages,
+            : sanitizePlainMessages(messages),
           temperature: config.temperature,
           max_output_tokens: config.maxTokens,
           ...(stream ? { stream: true } : {})
@@ -432,13 +441,12 @@ export function requestSpec(
         headers: { ...commonHeaders, ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}) },
         body: {
           model: config.model,
-          // 无图消息保持原数组引用与字符串 content（一字节不变）；有图才转内容数组
           messages: hasImages(messages)
             ? messages.map((message) => ({
                 role: message.role,
                 content: openAiVisionContent(message, useHighDetail)
               }))
-            : messages,
+            : sanitizePlainMessages(messages),
           temperature: config.temperature,
           max_tokens: config.maxTokens,
           stream,
@@ -1344,6 +1352,122 @@ export class AiService {
     }
   }
 
+  /** 执行单轮带工具定义的对话请求，并在端点不支持原生工具时抛出 ToolsUnsupportedError */
+  async askToolTurn(
+    messages: ToolTurnMessage[],
+    tools: AgentToolDefinition[],
+    options?: { requestId?: string; timeoutMs?: number; toolChoice?: 'auto' | 'none' }
+  ): Promise<ToolTurnResult> {
+    const config = this.toStored(this.getConfig())
+    const apiKey = this.readApiKey()
+    if (providerInfo(config.provider).apiKeyRequired && !apiKey) {
+      throw new Error('请先配置并保存模型 API Key')
+    }
+
+    const timeoutMs = options?.timeoutMs ?? 90_000
+    const requestId = options?.requestId
+    const controller = new AbortController()
+    if (requestId) {
+      if (this.userCancelled.has(requestId)) {
+        this.userCancelled.delete(requestId)
+        return {
+          content: '',
+          toolCalls: [],
+          provider: config.provider,
+          model: config.model,
+          aborted: true
+        }
+      }
+      this.activeStreams.set(requestId, controller)
+    }
+
+    let timedOut = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      await verifyNetworkTarget(config.baseUrl, config.provider)
+      if (requestId && (this.userCancelled.has(requestId) || controller.signal.aborted)) {
+        this.userCancelled.delete(requestId)
+        return {
+          content: '',
+          toolCalls: [],
+          provider: config.provider,
+          model: config.model,
+          aborted: true
+        }
+      }
+
+      const spec = toolRequestSpec(
+        config,
+        apiKey,
+        messages,
+        tools,
+        options?.toolChoice ? { toolChoice: options.toolChoice } : undefined
+      )
+      timer = setTimeout(() => {
+        timedOut = true
+        controller.abort()
+      }, timeoutMs)
+
+      const response = await fetch(spec.endpoint, {
+        method: 'POST',
+        headers: spec.headers,
+        body: JSON.stringify(spec.body),
+        signal: controller.signal,
+        redirect: 'error'
+      })
+      const raw = await response.text()
+      const payload = safeParse<Record<string, unknown>>(raw, {})
+      if (!response.ok) {
+        const message = responseError(payload, raw)
+        if (tools.length > 0 && isToolsUnsupportedError(response.status, `${message}\n${raw}`)) {
+          throw new ToolsUnsupportedError(
+            `当前模型端点不支持原生工具调用（${response.status}）：${message}`
+          )
+        }
+        throw new Error(`模型服务返回 ${response.status}：${message}`)
+      }
+      const parsed = parseToolTurnResponse(config.protocol, payload)
+      return {
+        ...parsed,
+        provider: config.provider,
+        model: config.model
+      }
+    } catch (error) {
+      if (requestId && this.userCancelled.has(requestId)) {
+        this.userCancelled.delete(requestId)
+        return {
+          content: '',
+          toolCalls: [],
+          provider: config.provider,
+          model: config.model,
+          aborted: true
+        }
+      }
+      if (timedOut) {
+        throw new Error('模型请求超时，请检查网络或服务地址')
+      }
+      if (controller.signal.aborted || (error instanceof Error && error.name === 'AbortError')) {
+        if (requestId) {
+          return {
+            content: '',
+            toolCalls: [],
+            provider: config.provider,
+            model: config.model,
+            aborted: true
+          }
+        }
+        throw new Error('模型请求超时，请检查网络或服务地址')
+      }
+      throw error
+    } finally {
+      if (timer) clearTimeout(timer)
+      if (requestId) {
+        this.activeStreams.delete(requestId)
+        this.userCancelled.delete(requestId)
+      }
+    }
+  }
+
   private toStored(view: AiConfigView): StoredAiConfig {
     return {
       provider: view.provider,
@@ -1357,5 +1481,502 @@ export class AiService {
 
   private readApiKey(): string {
     return this.readKeyFromRecord(this.database.getAiRecord(), '')
+  }
+}
+
+export interface AgentToolDefinition {
+  name: string
+  description: string
+  parameters: Record<string, unknown>
+}
+
+export interface ParsedToolCall {
+  id: string
+  name: string
+  arguments: Record<string, unknown>
+  thoughtSignature?: string
+}
+
+export interface ToolTurnMessage {
+  role: 'system' | 'user' | 'assistant' | 'tool'
+  content: string
+  toolCalls?: ParsedToolCall[]
+  toolCallId?: string
+  toolName?: string
+}
+
+export interface ToolTurnResult {
+  content: string
+  toolCalls: ParsedToolCall[]
+  provider: AiProvider
+  model: string
+  usage?: AiAskResult['usage']
+  aborted?: boolean
+}
+
+export class ToolsUnsupportedError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'ToolsUnsupportedError'
+  }
+}
+
+/** 判断 HTTP 错误响应是否表示当前端点/模型不支持原生 tools 参数 */
+export function isToolsUnsupportedError(status: number, bodyText: string): boolean {
+  if (status !== 400 && status !== 422) return false
+  const mentionsTools =
+    /\b(tools?|function_call|functions|tool_choice|functionDeclarations|tool_use)\b/i.test(bodyText)
+  const indicatesUnsupported =
+    /(unsupported|not\s+supported|unknown|unrecognized|unexpected|invalid|does\s+not\s+support|cannot|forbidden)/i.test(
+      bodyText
+    )
+  return (
+    (mentionsTools && indicatesUnsupported) || /不支持.*(工具|函数|tools|function)/i.test(bodyText)
+  )
+}
+
+function asArgsRecord(value: unknown): Record<string, unknown> {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return value as Record<string, unknown>
+  }
+  if (typeof value === 'string') {
+    const parsed = safeParse<unknown>(value, null)
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>
+    }
+  }
+  return {}
+}
+
+/** 从降级文本回复中解析 <tool_call>{"name":...,"arguments":...}</tool_call> 块 */
+export function extractFallbackToolCalls(rawText: string): {
+  calls: ParsedToolCall[]
+  cleanContent: string
+} {
+  const calls: ParsedToolCall[] = []
+  const cleaned = rawText.replace(/<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/gi, (full, inner) => {
+    const stripped = String(inner)
+      .replace(/^```(?:json)?\s*/i, '')
+      .replace(/```$/i, '')
+      .trim()
+    const parsed = safeParse<Record<string, unknown> | null>(stripped, null)
+    if (!parsed || typeof parsed.name !== 'string' || !parsed.name.trim()) {
+      return full
+    }
+    const argsSource = parsed.arguments ?? parsed.input ?? parsed.params ?? {}
+    calls.push({
+      id:
+        typeof parsed.id === 'string' && parsed.id.trim()
+          ? parsed.id.trim()
+          : `fallback_${randomUUID()}`,
+      name: parsed.name.trim(),
+      arguments: asArgsRecord(argsSource)
+    })
+    return ''
+  })
+  return {
+    calls,
+    cleanContent: cleaned.replace(/\n{3,}/g, '\n\n').trim()
+  }
+}
+
+/** 为 5 种协议构造支持原生 Tool Calling 的非流式请求规格 */
+export function toolRequestSpec(
+  config: StoredAiConfig,
+  apiKey: string,
+  messages: ToolTurnMessage[],
+  tools: AgentToolDefinition[],
+  options?: { toolChoice?: 'auto' | 'none' }
+): RequestSpec {
+  const toolChoice = options?.toolChoice ?? 'auto'
+  const maxTokens = isDeepSeekEndpoint(config.baseUrl)
+    ? Math.min(config.maxTokens, 8192)
+    : config.maxTokens
+  const systemText = messages
+    .filter((m) => m.role === 'system' && m.content.trim())
+    .map((m) => m.content)
+    .join('\n\n')
+  const nonSystem = messages.filter((m) => m.role !== 'system')
+
+  if (config.protocol === 'openai-responses') {
+    const input: Array<Record<string, unknown>> = []
+    for (const msg of nonSystem) {
+      if (msg.role === 'user') {
+        input.push({ role: 'user', content: msg.content })
+      } else if (msg.role === 'assistant') {
+        if (msg.content.trim()) {
+          input.push({ role: 'assistant', content: msg.content })
+        }
+        for (const call of msg.toolCalls ?? []) {
+          input.push({
+            type: 'function_call',
+            call_id: call.id,
+            name: call.name,
+            arguments: JSON.stringify(call.arguments ?? {})
+          })
+        }
+      } else if (msg.role === 'tool') {
+        input.push({
+          type: 'function_call_output',
+          call_id: msg.toolCallId ?? '',
+          output: msg.content
+        })
+      }
+    }
+    const body: Record<string, unknown> = {
+      model: config.model,
+      ...(systemText ? { instructions: systemText } : {}),
+      input,
+      temperature: config.temperature,
+      max_output_tokens: maxTokens,
+      stream: false
+    }
+    if (tools.length > 0) {
+      body.tools = tools.map((t) => ({
+        type: 'function',
+        name: t.name,
+        description: t.description,
+        parameters: t.parameters,
+        strict: false
+      }))
+      body.tool_choice = toolChoice
+    }
+    return {
+      endpoint: responsesEndpoint(config),
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+        ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {})
+      },
+      body
+    }
+  }
+
+  if (config.protocol === 'anthropic-messages') {
+    const anthropicMessages: Array<{
+      role: 'user' | 'assistant'
+      content: Array<Record<string, unknown>>
+    }> = []
+    const pushMsg = (role: 'user' | 'assistant', blocks: Array<Record<string, unknown>>): void => {
+      if (blocks.length === 0) return
+      const last = anthropicMessages[anthropicMessages.length - 1]
+      if (last && last.role === role) {
+        last.content.push(...blocks)
+      } else {
+        anthropicMessages.push({ role, content: [...blocks] })
+      }
+    }
+    for (const msg of nonSystem) {
+      if (msg.role === 'user') {
+        pushMsg('user', [{ type: 'text', text: msg.content }])
+      } else if (msg.role === 'assistant') {
+        const blocks: Array<Record<string, unknown>> = []
+        if (msg.content.trim()) {
+          blocks.push({ type: 'text', text: msg.content })
+        }
+        for (const call of msg.toolCalls ?? []) {
+          blocks.push({
+            type: 'tool_use',
+            id: call.id,
+            name: call.name,
+            input: call.arguments ?? {}
+          })
+        }
+        pushMsg('assistant', blocks)
+      } else if (msg.role === 'tool') {
+        pushMsg('user', [
+          {
+            type: 'tool_result',
+            tool_use_id: msg.toolCallId ?? '',
+            content: msg.content
+          }
+        ])
+      }
+    }
+    const body: Record<string, unknown> = {
+      model: config.model,
+      max_tokens: maxTokens,
+      temperature: config.temperature,
+      ...(systemText ? { system: systemText } : {}),
+      messages: anthropicMessages
+    }
+    if (tools.length > 0) {
+      body.tools = tools.map((t) => ({
+        name: t.name,
+        description: t.description,
+        input_schema: t.parameters
+      }))
+      body.tool_choice = { type: toolChoice }
+    }
+    return {
+      endpoint: anthropicEndpoint(config),
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01'
+      },
+      body
+    }
+  }
+
+  if (config.protocol === 'google-generate-content') {
+    const contents: Array<{
+      role: 'user' | 'model'
+      parts: Array<Record<string, unknown>>
+    }> = []
+    const pushContent = (role: 'user' | 'model', parts: Array<Record<string, unknown>>): void => {
+      if (parts.length === 0) return
+      const last = contents[contents.length - 1]
+      if (last && last.role === role) {
+        last.parts.push(...parts)
+      } else {
+        contents.push({ role, parts: [...parts] })
+      }
+    }
+    for (const msg of nonSystem) {
+      if (msg.role === 'user') {
+        pushContent('user', [{ text: msg.content }])
+      } else if (msg.role === 'assistant') {
+        const parts: Array<Record<string, unknown>> = []
+        if (msg.content.trim()) {
+          parts.push({ text: msg.content })
+        }
+        for (const call of msg.toolCalls ?? []) {
+          parts.push({
+            functionCall: {
+              name: call.name,
+              args: call.arguments ?? {}
+            },
+            ...(call.thoughtSignature ? { thoughtSignature: call.thoughtSignature } : {})
+          })
+        }
+        pushContent('model', parts)
+      } else if (msg.role === 'tool') {
+        const parsedObj = safeParse<unknown>(msg.content, null)
+        const responseObj =
+          parsedObj && typeof parsedObj === 'object' && !Array.isArray(parsedObj)
+            ? (parsedObj as Record<string, unknown>)
+            : { result: parsedObj ?? msg.content }
+        pushContent('user', [
+          {
+            functionResponse: {
+              name: msg.toolName ?? 'tool',
+              response: responseObj
+            }
+          }
+        ])
+      }
+    }
+    const body: Record<string, unknown> = {
+      ...(systemText ? { systemInstruction: { parts: [{ text: systemText }] } } : {}),
+      contents,
+      generationConfig: {
+        temperature: config.temperature,
+        maxOutputTokens: maxTokens
+      }
+    }
+    if (tools.length > 0) {
+      body.tools = [
+        {
+          functionDeclarations: tools.map((t) => ({
+            name: t.name,
+            description: t.description,
+            parameters: t.parameters
+          }))
+        }
+      ]
+      if (toolChoice === 'none') {
+        body.toolConfig = {
+          functionCallingConfig: {
+            mode: 'NONE'
+          }
+        }
+      }
+    }
+    return {
+      endpoint: googleEndpoint(config, false),
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+        ...(apiKey ? { 'x-goog-api-key': apiKey } : {})
+      },
+      body
+    }
+  }
+
+  // openai-chat & ollama-openai
+  const mappedMessages: Array<Record<string, unknown>> = messages.map((msg) => {
+    if (msg.role === 'assistant' && msg.toolCalls && msg.toolCalls.length > 0) {
+      return {
+        role: 'assistant',
+        content: msg.content || null,
+        tool_calls: msg.toolCalls.map((call) => ({
+          id: call.id,
+          type: 'function',
+          function: {
+            name: call.name,
+            arguments: JSON.stringify(call.arguments ?? {})
+          }
+        }))
+      }
+    }
+    if (msg.role === 'tool') {
+      return {
+        role: 'tool',
+        tool_call_id: msg.toolCallId ?? '',
+        content: msg.content
+      }
+    }
+    return { role: msg.role, content: msg.content }
+  })
+
+  const body: Record<string, unknown> = {
+    model: config.model,
+    messages: mappedMessages,
+    temperature: config.temperature,
+    max_tokens: maxTokens,
+    stream: false,
+    ...(isDeepSeekEndpoint(config.baseUrl) ? { thinking: { type: 'disabled' } } : {})
+  }
+  if (tools.length > 0) {
+    body.tools = tools.map((t) => ({
+      type: 'function',
+      function: {
+        name: t.name,
+        description: t.description,
+        parameters: t.parameters
+      }
+    }))
+    if (config.protocol === 'openai-chat') {
+      body.tool_choice = toolChoice
+    }
+  }
+  return {
+    endpoint: openAiChatEndpoint(config),
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+      ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {})
+    },
+    body
+  }
+}
+
+/** 从各协议响应 JSON 中解析本轮正文、原生工具调用或降级 <tool_call> 调用 */
+export function parseToolTurnResponse(
+  protocol: AiProtocol,
+  payload: Record<string, unknown>
+): { content: string; toolCalls: ParsedToolCall[]; usage?: AiAskResult['usage'] } {
+  const toolCalls: ParsedToolCall[] = []
+
+  if (protocol === 'openai-responses') {
+    const output = Array.isArray(payload.output)
+      ? (payload.output as Array<Record<string, unknown>>)
+      : []
+    for (const item of output) {
+      if (item?.type === 'function_call' && typeof item.name === 'string' && item.name.trim()) {
+        const callId =
+          typeof item.call_id === 'string' && item.call_id
+            ? item.call_id
+            : typeof item.id === 'string' && item.id
+              ? item.id
+              : randomUUID()
+        toolCalls.push({
+          id: callId,
+          name: item.name.trim(),
+          arguments: asArgsRecord(item.arguments)
+        })
+      }
+    }
+  } else if (protocol === 'anthropic-messages') {
+    const contentBlocks = Array.isArray(payload.content)
+      ? (payload.content as Array<Record<string, unknown>>)
+      : []
+    for (const block of contentBlocks) {
+      if (block?.type === 'tool_use' && typeof block.name === 'string' && block.name.trim()) {
+        toolCalls.push({
+          id: typeof block.id === 'string' && block.id ? block.id : randomUUID(),
+          name: block.name.trim(),
+          arguments: asArgsRecord(block.input)
+        })
+      }
+    }
+  } else if (protocol === 'google-generate-content') {
+    const candidates = Array.isArray(payload.candidates)
+      ? (payload.candidates as Array<Record<string, unknown>>)
+      : []
+    const contentObj =
+      candidates[0]?.content && typeof candidates[0].content === 'object'
+        ? (candidates[0].content as Record<string, unknown>)
+        : undefined
+    const parts = Array.isArray(contentObj?.parts)
+      ? (contentObj.parts as Array<Record<string, unknown>>)
+      : []
+    for (const part of parts) {
+      const fn =
+        part?.functionCall && typeof part.functionCall === 'object'
+          ? (part.functionCall as Record<string, unknown>)
+          : undefined
+      if (fn && typeof fn.name === 'string' && fn.name.trim()) {
+        toolCalls.push({
+          id: randomUUID(),
+          name: fn.name.trim(),
+          arguments: asArgsRecord(fn.args),
+          ...(typeof part.thoughtSignature === 'string'
+            ? { thoughtSignature: part.thoughtSignature }
+            : {})
+        })
+      }
+    }
+  } else {
+    const choices = Array.isArray(payload.choices)
+      ? (payload.choices as Array<Record<string, unknown>>)
+      : []
+    const msg =
+      choices[0]?.message && typeof choices[0].message === 'object'
+        ? (choices[0].message as Record<string, unknown>)
+        : undefined
+    const rawCalls = Array.isArray(msg?.tool_calls)
+      ? (msg.tool_calls as Array<Record<string, unknown>>)
+      : []
+    for (const tc of rawCalls) {
+      const fn =
+        tc?.function && typeof tc.function === 'object'
+          ? (tc.function as Record<string, unknown>)
+          : undefined
+      if (fn && typeof fn.name === 'string' && fn.name.trim()) {
+        toolCalls.push({
+          id: typeof tc.id === 'string' && tc.id ? tc.id : randomUUID(),
+          name: fn.name.trim(),
+          arguments: asArgsRecord(fn.arguments)
+        })
+      }
+    }
+    if (toolCalls.length === 0 && msg?.function_call && typeof msg.function_call === 'object') {
+      const legacy = msg.function_call as Record<string, unknown>
+      if (typeof legacy.name === 'string' && legacy.name.trim()) {
+        toolCalls.push({
+          id: randomUUID(),
+          name: legacy.name.trim(),
+          arguments: asArgsRecord(legacy.arguments)
+        })
+      }
+    }
+  }
+
+  let content = textFromResponse(protocol, payload)
+  if (toolCalls.length === 0 && content) {
+    const fallback = extractFallbackToolCalls(content)
+    if (fallback.calls.length > 0) {
+      toolCalls.push(...fallback.calls)
+      content = fallback.cleanContent
+    }
+  }
+
+  return {
+    content,
+    toolCalls,
+    usage: usageFromResponse(protocol, payload)
   }
 }

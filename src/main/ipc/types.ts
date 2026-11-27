@@ -1,5 +1,6 @@
 import type { BrowserWindow } from 'electron'
 import type { WorkbenchMethod, WorkbenchMethodMap } from '../../shared/contracts'
+import type { AgentRuntime } from '../services/agent-runtime'
 import type { AiService } from '../services/ai'
 import type { DatabaseService } from '../services/database'
 import type { DiagnosticService } from '../services/diagnostics'
@@ -17,6 +18,7 @@ export interface IpcContext {
   ai: AiService
   integrations: IntegrationService
   study: StudyService
+  agent: AgentRuntime
   knowledgeBuilder: KnowledgeBuilderService
   diagnostics: DiagnosticService
   updater: UpdateManager

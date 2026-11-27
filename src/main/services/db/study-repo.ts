@@ -382,6 +382,24 @@ export function enqueueReviewQuestions(
   })
 }
 
+/** 返回已在活跃待复习队列中（未掌握且未完成本轮复习任务）的题目 ID 集合 */
+export function getActiveReviewQueueIds(db: DatabaseSync, questionIds: string[]): Set<string> {
+  const uniqueIds = [...new Set(questionIds.map((id) => id.trim()).filter(Boolean))].slice(0, 200)
+  if (!uniqueIds.length) return new Set()
+  const placeholders = uniqueIds.map(() => '?').join(',')
+  const rows = db
+    .prepare(
+      `SELECT w.question_id
+       FROM wrong_questions w
+       JOIN review_tasks rt ON rt.question_id = w.question_id
+       WHERE w.mastered = 0
+         AND rt.completed_at IS NULL
+         AND w.question_id IN (${placeholders})`
+    )
+    .all(...uniqueIds) as Row[]
+  return new Set(rows.map((row) => String(row.question_id)))
+}
+
 export function setFavorite(db: DatabaseSync, questionId: string, favorite: boolean): void {
   if (favorite)
     db.prepare('INSERT OR IGNORE INTO favorites(question_id, created_at) VALUES (?, ?)').run(

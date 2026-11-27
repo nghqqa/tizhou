@@ -33,11 +33,18 @@ type InsightsAiHandlerKeys =
   | 'ai.conversations.delete'
   | 'aiTraining.record'
   | 'aiTraining.history'
+  | 'agent.run'
+  | 'agent.cancel'
+  | 'agent.action.execute'
+  | 'memory.list'
+  | 'memory.save'
+  | 'memory.toggle'
+  | 'memory.delete'
 
 export function createInsightsAiHandlers(
   ctx: IpcContext
 ): Pick<IpcHandlerMap, InsightsAiHandlerKeys> {
-  const { database, study, integrations, ai } = ctx
+  const { database, study, integrations, ai, agent } = ctx
   return {
     'reports.get': (params) => database.getReport(params.range),
     'reports.exportMarkdown': async (params) => {
@@ -114,6 +121,22 @@ export function createInsightsAiHandlers(
       return true
     },
     'aiTraining.record': (params) => database.saveAiTrainingRecord(params),
-    'aiTraining.history': () => database.listAiTrainingRecords()
+    'aiTraining.history': () => database.listAiTrainingRecords(),
+    'agent.run': (params) =>
+      agent.run(params, (event) => {
+        const win = ctx.getMainWindow()
+        if (win && !win.isDestroyed()) {
+          win.webContents.send('workbench:agent-event', event)
+        }
+      }),
+    'agent.cancel': (params) => agent.cancel(params.requestId),
+    'agent.action.execute': (params) => agent.executeAction(params.proposal),
+    'memory.list': (params) => database.listLearnerMemories(params?.onlyEnabled),
+    'memory.save': (params) => database.saveLearnerMemory(params),
+    'memory.toggle': (params) => database.toggleLearnerMemory(params.id, params.enabled),
+    'memory.delete': (params) => {
+      database.deleteLearnerMemory(params.id)
+      return true
+    }
   }
 }

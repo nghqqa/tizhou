@@ -677,10 +677,50 @@ export interface AiImageInput {
   dataUrl: string
 }
 
+export interface LearnerMemory {
+  id: string
+  category: string
+  content: string
+  evidence: string
+  source: 'agent' | 'user'
+  enabled: boolean
+  createdAt: string
+  updatedAt: string
+}
+
+export interface AgentToolStep {
+  id: string
+  toolName: string
+  label: string
+  mode: 'read' | 'write'
+  argsSummary: string
+  status: 'running' | 'done' | 'error'
+  resultSummary?: string
+  durationMs?: number
+}
+
+export type AgentActionKind =
+  'start_practice' | 'enqueue_review' | 'save_note' | 'save_memory' | 'apply_plan'
+
+export interface AgentActionProposal {
+  id: string
+  kind: AgentActionKind
+  title: string
+  summary: string
+  reason: string
+  previewItems?: string[]
+  payload: Record<string, unknown>
+  status: 'pending' | 'approved' | 'rejected' | 'error'
+  resultMessage?: string
+  navigateTo?: string
+}
+
 export interface AiMessage {
   role: 'system' | 'user' | 'assistant'
   content: string
   images?: AiImageInput[]
+  toolSteps?: AgentToolStep[]
+  proposals?: AgentActionProposal[]
 }
 
 export interface AiConversation {
@@ -727,6 +767,42 @@ export interface AiStreamEvent {
   type: 'chunk' | 'reset' | 'done' | 'error' | 'aborted'
   delta?: string
   content?: string
+  error?: string
+}
+
+export interface AgentRunInput {
+  requestId: string
+  messages: Array<{ role: 'user' | 'assistant'; content: string }>
+  questionId?: string
+}
+
+export interface AgentRunResult {
+  content: string
+  toolSteps: AgentToolStep[]
+  proposals: AgentActionProposal[]
+  provider: string
+  model: string
+  aborted?: boolean
+}
+
+export interface AgentActionExecuteResult {
+  ok: boolean
+  message: string
+  navigateTo?: string
+  savedMemory?: LearnerMemory
+}
+
+export interface AgentStreamEvent {
+  requestId: string
+  type:
+    'status' | 'tool_start' | 'tool_result' | 'proposal' | 'chunk' | 'done' | 'aborted' | 'error'
+  text?: string
+  step?: AgentToolStep
+  proposal?: AgentActionProposal
+  delta?: string
+  content?: string
+  toolSteps?: AgentToolStep[]
+  proposals?: AgentActionProposal[]
   error?: string
 }
 
@@ -1144,6 +1220,25 @@ export interface WorkbenchMethodMap {
     result: AiConversation
   }
   'ai.conversations.delete': { params: { id: string }; result: boolean }
+  'agent.run': { params: AgentRunInput; result: AgentRunResult }
+  'agent.cancel': { params: { requestId: string }; result: boolean }
+  'agent.action.execute': {
+    params: { proposal: AgentActionProposal }
+    result: AgentActionExecuteResult
+  }
+  'memory.list': { params?: { onlyEnabled?: boolean }; result: LearnerMemory[] }
+  'memory.save': {
+    params: {
+      id?: string
+      category: string
+      content: string
+      evidence?: string
+      source?: 'agent' | 'user'
+    }
+    result: LearnerMemory
+  }
+  'memory.toggle': { params: { id: string; enabled: boolean }; result: LearnerMemory }
+  'memory.delete': { params: { id: string }; result: boolean }
   'aiTraining.record': {
     params: Omit<AiTrainingRecord, 'id' | 'correct' | 'createdAt'>
     result: AiTrainingRecord
@@ -1191,5 +1286,6 @@ export interface WorkbenchAPI {
   platform: string
   onSettingsUpdated?: (listener: (settings: AppSettings) => void) => () => void
   onAiStream?: (listener: (event: AiStreamEvent) => void) => () => void
+  onAgentEvent?: (listener: (event: AgentStreamEvent) => void) => () => void
   onFullscreenChanged?: (listener: (fullscreen: boolean) => void) => () => void
 }

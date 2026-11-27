@@ -493,6 +493,7 @@ export function listQuestionLibrary(
   params: {
     tab: 'wrong' | 'favorite' | 'notes'
     category?: string
+    categories?: string[]
     wrongCause?: string
     query?: string
     minWrongCount?: number
@@ -540,7 +541,13 @@ export function listQuestionLibrary(
       LEFT JOIN favorites f ON f.question_id = q.id`
     orderSql = 'n.updated_at DESC'
   }
-  if (params.category?.trim()) {
+  const categories = [
+    ...new Set((params.categories ?? []).map((item) => item.trim()).filter(Boolean))
+  ]
+  if (categories.length > 0) {
+    where.push(`q.category IN (${categories.map(() => '?').join(',')})`)
+    values.push(...categories)
+  } else if (params.category?.trim()) {
     where.push('q.category = ?')
     values.push(params.category.trim())
   }

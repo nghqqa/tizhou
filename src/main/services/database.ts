@@ -15,6 +15,7 @@ import type {
   ExamConfig,
   ExamSession,
   KnowledgeDocument,
+  LearnerMemory,
   LearningPlan,
   PaperProgressItem,
   PracticeSelection,
@@ -173,6 +174,7 @@ export class DatabaseService {
   listQuestionLibrary(params: {
     tab: 'wrong' | 'favorite' | 'notes'
     category?: string
+    categories?: string[]
     wrongCause?: string
     query?: string
     minWrongCount?: number
@@ -211,6 +213,28 @@ export class DatabaseService {
 
   deleteAiConversation(id: string): void {
     systemRepo.deleteAiConversation(this.db, id)
+  }
+
+  listLearnerMemories(onlyEnabled = false): LearnerMemory[] {
+    return systemRepo.listLearnerMemories(this.db, onlyEnabled)
+  }
+
+  saveLearnerMemory(input: {
+    id?: string
+    category: string
+    content: string
+    evidence?: string
+    source?: 'agent' | 'user'
+  }): LearnerMemory {
+    return systemRepo.saveLearnerMemory(this.db, input)
+  }
+
+  toggleLearnerMemory(id: string, enabled: boolean): LearnerMemory {
+    return systemRepo.toggleLearnerMemory(this.db, id, enabled)
+  }
+
+  deleteLearnerMemory(id: string): void {
+    systemRepo.deleteLearnerMemory(this.db, id)
   }
 
   /** 整库题目一次取出（供快照与增量索引复用未变文件的记录） */
@@ -332,6 +356,10 @@ export class DatabaseService {
 
   enqueueReviewQuestions(questionIds: string[], reason?: string) {
     return studyRepo.enqueueReviewQuestions(this.db, questionIds, reason)
+  }
+
+  getActiveReviewQueueIds(questionIds: string[]): Set<string> {
+    return studyRepo.getActiveReviewQueueIds(this.db, questionIds)
   }
 
   setFavorite(questionId: string, favorite: boolean): void {

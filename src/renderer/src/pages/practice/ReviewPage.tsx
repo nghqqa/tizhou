@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { Tab, TabList } from '@fluentui/react-components'
 import type { ReviewItem } from '@shared/contracts'
 import { invoke } from '../../api'
@@ -8,7 +9,10 @@ import { Trainer } from './Trainer'
 
 export function ReviewPage(): React.JSX.Element {
   const [due, setDue] = useState<ReviewItem[]>()
-  const [tab, setTab] = useState<'due' | 'wrong' | 'favorite' | 'notes'>('due')
+  const [searchParams, setSearchParams] = useSearchParams()
+  const rawTab = searchParams.get('tab')
+  const tab: 'due' | 'wrong' | 'favorite' | 'notes' =
+    rawTab === 'wrong' || rawTab === 'favorite' || rawTab === 'notes' ? rawTab : 'due'
   useEffect(() => {
     void invoke<ReviewItem[]>({ method: 'review.due', params: { limit: 500 } }).then(setDue)
   }, [])
@@ -26,7 +30,11 @@ export function ReviewPage(): React.JSX.Element {
       <TabList
         className="review-tabs"
         selectedValue={tab}
-        onTabSelect={(_, data) => setTab(data.value as 'due' | 'wrong' | 'favorite' | 'notes')}
+        onTabSelect={(_, data) => {
+          const next = String(data.value)
+          if (next === 'due') setSearchParams({}, { replace: true })
+          else setSearchParams({ tab: next }, { replace: true })
+        }}
       >
         <Tab value="due">今日到期复习{due ? ` (${due.length})` : ''}</Tab>
         <Tab value="wrong">错题本</Tab>

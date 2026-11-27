@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type {
+  AgentStreamEvent,
   AiStreamEvent,
   AppSettings,
   WorkbenchAPI,
@@ -27,6 +28,15 @@ const api: WorkbenchAPI = {
     ipcRenderer.on('workbench:ai-stream', handler)
     return () => {
       ipcRenderer.removeListener('workbench:ai-stream', handler)
+    }
+  },
+  onAgentEvent(listener: (event: AgentStreamEvent) => void): () => void {
+    const handler = (_event: Electron.IpcRendererEvent, event: AgentStreamEvent): void => {
+      listener(event)
+    }
+    ipcRenderer.on('workbench:agent-event', handler)
+    return () => {
+      ipcRenderer.removeListener('workbench:agent-event', handler)
     }
   },
   onFullscreenChanged(listener: (fullscreen: boolean) => void): () => void {

@@ -1,5 +1,15 @@
 # 更新日志
 
+## 1.0.51 - 2026-11-27
+
+### 备考规划 Agent、五协议 Tool Calling 与本机长期学习记忆
+
+- **备考规划 Agent 与 11 项本机数据工具**：在 AI 助手新增「备考规划 Agent」模式，支持围绕错题、模考、薄弱点、SRS 复习与学习笔记本进行多轮自主工具调用（最多 5 步）。提供 `get_overview`、`list_weak_topics`、`list_mistake_records`、`list_recent_exams`、`list_study_notes`、`get_review_queue`、`propose_practice_session`、`propose_mistake_tag`、`propose_note_append`、`list_learner_memories`、`upsert_learner_memory` 共 11 个本机数据只读与拟制工具
+- **五协议工具调用与自动降级**：全面覆盖 OpenAI Chat、OpenAI Responses（显式 `strict: false`）、Anthropic Messages、Google Gemini 及 DeepSeek V4（工具回合关闭默认思考模式），并在部分网关不支持 `tools` 字段返回 400/422 时自动回退为纯问答模式，确保问答链路不断裂
+- **写操作人工确认门禁（Human-in-the-Loop）**：智能组卷开启训练或复习、批量补充错题诊断标签、新建或追加题目笔记三类写操作统一先生成结构化提案卡片，必须由用户点击「确认执行」才写入本地 SQLite，并支持随时撤回与「暂不执行」
+- **可查看可编辑的本机长期学习记忆**：本地 SQLite 新增 `learner_memories` 表与「长期记忆」管理抽屉，支持按类别（目标、薄弱点、习惯、节奏、作答风格）持久记录备考偏好，自动注入系统提示词，并支持人工增删改与一键启用或停用
+- **13 项真实使用稳定性与协议修复**：修复追加题目笔记匹配已存在片段时的内容覆盖问题、切换纯问答模式透传 `toolSteps`/`proposals` 触发 400、OpenAI Responses `strict` 默认校验、DeepSeek 多轮工具调用缺少思考参数、复习模式提案误清理专项练习并跳错路由、第 6 轮收尾空 `tools: []` 在 Anthropic 报错、长期记忆抽屉流式期闪烁重载、多提案卡片审批竞态闭包回滚、请求超时错误信息识别，以及 SRS 复习统计与题库状态同步等多项细节问题；Vitest 单元测试提升至 558 项全量通过
+
 ## 1.0.50 - 2026-11-26
 
 ### 申论答题卡实考占格规范与申论 AI 批改防回退加固
