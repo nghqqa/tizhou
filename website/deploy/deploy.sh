@@ -28,6 +28,7 @@ set +a
 : "${DEPLOY_USER:?未配置 DEPLOY_USER}"
 : "${DEPLOY_TARGET:?未配置 DEPLOY_TARGET}"
 DEPLOY_PORT="${DEPLOY_PORT:-22}"
+DEPLOY_NGINX_REDIRECTS_FILE="${DEPLOY_NGINX_REDIRECTS_FILE-/etc/nginx/snippets/tizhou-redirects.conf}"
 
 SSH_OPTS=(-p "$DEPLOY_PORT" -o BatchMode=yes -o ConnectTimeout=10)
 if [ -n "${DEPLOY_SSH_KEY:-}" ]; then
@@ -46,7 +47,7 @@ if [ ! -f "$WEBSITE_DIR/dist/index.html" ]; then
   exit 1
 fi
 
-echo "[deploy] 发布到 $DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_TARGET …"
+echo "[deploy] 发布静态站点到 $DEPLOY_TARGET …"
 # 打包上传到临时目录 → 原子替换：失败时线上站点不受影响
 ssh "${SSH_OPTS[@]}" "$DEPLOY_USER@$DEPLOY_HOST" "rm -rf ${DEPLOY_TARGET}.incoming && mkdir -p ${DEPLOY_TARGET}.incoming"
 tar czf - -C "$WEBSITE_DIR/dist" . | ssh "${SSH_OPTS[@]}" "$DEPLOY_USER@$DEPLOY_HOST" \
@@ -60,4 +61,31 @@ ssh "${SSH_OPTS[@]}" "$DEPLOY_USER@$DEPLOY_HOST" "
   mv \"$DEPLOY_TARGET.incoming\" \"$DEPLOY_TARGET\"
   rm -rf \"$DEPLOY_TARGET.old\"
 "
+
+if [ -n "$DEPLOY_NGINX_REDIRECTS_FILE" ] && [ "$DEPLOY_NGINX_REDIRECTS_FILE" != "none" ]; then
+  echo "[deploy] 同步 Nginx 302 跳转片段到 $DEPLOY_NGINX_REDIRECTS_FILE …"
+  node "$WEBSITE_DIR/scripts/gen-nginx-redirects.mjs" | ssh "${SSH_OPTS[@]}" "$DEPLOY_USER@$DEPLOY_HOST" "
+    set -e
+    TARGET='$DEPLOY_NGINX_REDIRECTS_FILE'
+    mkdir -p \"\$(dirname \"\$TARGET\")\"
+    cat > \"\${TARGET}.incoming\"
+    if [ -f \"\$TARGET\" ]; then
+      cp \"\$TARGET\" \"\${TARGET}.bak\"
+    fi
+    mv \"\${TARGET}.incoming\" \"\$TARGET\"
+    if nginx -t; then
+      rm -f \"\${TARGET}.bak\"
+      systemctl reload nginx
+    else
+      if [ -f \"\${TARGET}.bak\" ]; then
+        mv \"\${TARGET}.bak\" \"\$TARGET\"
+      else
+        rm -f \"\$TARGET\"
+      fi
+      exit 1
+    fi
+  "
+  echo "[deploy] Nginx 302 跳转已校验并重载生效"
+fi
+
 echo "[deploy] 发布完成：$DEPLOY_TARGET"

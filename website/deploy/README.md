@@ -56,7 +56,21 @@ bash website/deploy/deploy.sh --no-build # 仅发布（dist 已构建好时）
 ```
 
 发布脚本先上传到 `.incoming` 临时目录再原子替换，失败时线上站点不受影响；
+同时会根据 `website/src/release.ts` 自动同步 `/etc/nginx/snippets/tizhou-redirects.conf`（`/go/download-cnb` 等 302 跳转），经 `nginx -t` 校验后再重载。
 回滚时把 `.old` 目录（如尚在）或任一历史 `dist` 重新上传即可。
+
+## 3.5 查看官网访问量与下载转化率（零 Cookie / 零前端埋点）
+
+在仓库根目录执行：
+
+```bash
+npm run website:stats                 # 默认查看近 14 天汇总、按天趋势、来源渠道与下载率
+npm run website:stats -- --days 1     # 仅查看今天
+npm run website:stats -- --days 30    # 查看近 30 天
+```
+
+推广投放时在官网链接后附带 `?from=渠道名`（如 `https://tizhou.nghqqa.cn/?from=xhs`），
+点击下载按钮会自动携带至 `/go/download-cnb?from=xhs`，统计报表即可按渠道核算访问 UV 与下载转化率。
 
 ## 4. （可选）启用安装包直链镜像
 

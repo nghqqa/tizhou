@@ -305,14 +305,19 @@ export class KnowledgeBuilderService {
       this.saveJob(job)
       this.runningJobId = id
       void this.runJob(id).catch((error) => {
-        const failed = this.loadJob(id)
-        failed.status = 'failed'
-        failed.message = error instanceof Error ? error.message : '后台任务异常结束'
-        failed.updatedAt = now()
-        this.saveJob(failed)
-        if (this.runningJobId === id) {
-          this.runningJobId = undefined
-          this.runningChild = undefined
+        try {
+          const failed = this.loadJob(id)
+          failed.status = 'failed'
+          failed.message = error instanceof Error ? error.message : '后台任务异常结束'
+          failed.updatedAt = now()
+          this.saveJob(failed)
+        } catch {
+          // 任务目录可能已在关闭或清理时被移除，忽略落盘失败避免未捕获 rejection
+        } finally {
+          if (this.runningJobId === id) {
+            this.runningJobId = undefined
+            this.runningChild = undefined
+          }
         }
       })
       return this.jobView(job)

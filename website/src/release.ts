@@ -39,5 +39,15 @@ export const release = {
     url: '/downloads/tizhou-setup-1.0.52.exe',
     note: '服务器直链（带宽充足后改 enabled 为 true 即可启用）'
   },
+  // 同域名 302 跳转入口：生产环境由 Nginx 重定向到上方直链，零 Cookie / 零前端埋点，
+  // 通过服务器专属访问日志统计点击量与下载转化率（deploy.sh 发版时自动同步目标地址）
+  redirects: {
+    enabled: true,
+    downloadCnb: '/go/download-cnb',
+    downloadGithub: '/go/download-github',
+    releasesCnb: '/go/releases-cnb',
+    checksumCnb: '/go/checksum-cnb',
+    checksumGithub: '/go/checksum-github'
+  },
   icp: ''
 }

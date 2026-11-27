@@ -13,6 +13,9 @@ server {
     root /var/www/tizhou-website;
     index index.html;
 
+    # 独立访问日志，供 npm run website:stats 统计首页访问量与下载转化率
+    access_log /var/log/nginx/tizhou-website.access.log main;
+
     # gzip 压缩
     gzip on;
     gzip_comp_level 5;
@@ -49,6 +52,9 @@ server {
     location ~* \.(env|pem|key|log)$ {
         deny all;
     }
+
+    # 自动生成的 /go/* 302 跳转片段（deploy.sh 每次发布自动更新并 reload）
+    include /etc/nginx/snippets/tizhou-redirects.conf;
 
     # 单页站点回退
     location / {

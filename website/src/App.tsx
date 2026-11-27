@@ -19,6 +19,25 @@ function resolveRouteFromHash(hash: string): { view: PageView; targetVersion: st
   return { view: 'home', targetVersion: null }
 }
 
+const SOURCE_TAG_RE = /^[a-zA-Z0-9_-]{1,32}$/
+
+function readTrafficSourceTag(): string {
+  try {
+    const params = new URLSearchParams(window.location.search)
+    const raw = (params.get('from') ?? params.get('utm_source') ?? '').trim()
+    return SOURCE_TAG_RE.test(raw) ? raw : ''
+  } catch {
+    return ''
+  }
+}
+
+function resolveTrackedHref(redirectPath: string, directUrl: string, sourceTag: string): string {
+  if (!import.meta.env.PROD || !release.redirects.enabled) {
+    return directUrl
+  }
+  return sourceTag ? `${redirectPath}?from=${encodeURIComponent(sourceTag)}` : redirectPath
+}
+
 const shot = (name: string): string => `./screenshots/${name}.webp`
 
 interface FlowTab {
@@ -328,6 +347,32 @@ export function App(): React.JSX.Element {
   const [copiedCmd, setCopiedCmd] = useState(false)
   const [route, setRoute] = useState(() => resolveRouteFromHash(window.location.hash))
   const view = route.view
+  const [sourceTag] = useState<string>(() => readTrafficSourceTag())
+  const downloadCnbHref = resolveTrackedHref(
+    release.redirects.downloadCnb,
+    release.directDownload.url,
+    sourceTag
+  )
+  const downloadGithubHref = resolveTrackedHref(
+    release.redirects.downloadGithub,
+    release.releasePages.github,
+    sourceTag
+  )
+  const releasesCnbHref = resolveTrackedHref(
+    release.redirects.releasesCnb,
+    release.releasePages.cnb,
+    sourceTag
+  )
+  const checksumCnbHref = resolveTrackedHref(
+    release.redirects.checksumCnb,
+    release.checksumUrls.cnb,
+    sourceTag
+  )
+  const checksumGithubHref = resolveTrackedHref(
+    release.redirects.checksumGithub,
+    release.checksumUrls.github,
+    sourceTag
+  )
 
   useEffect(() => {
     const syncHash = (): void => {
@@ -503,22 +548,21 @@ export function App(): React.JSX.Element {
                     ))}
                   </ul>
                   <div className="dl-buttons">
-                    <a className="btn btn-primary" href={release.directDownload.url}>
+                    <a className="btn btn-primary" href={downloadCnbHref}>
                       国内高速下载 v{release.version}
                       <span className="btn-sub">
                         直接下载 {release.asset.name} · {release.asset.sizeHint}
                       </span>
                     </a>
-                    <a className="btn btn-ghost" href={release.releasePages.github}>
+                    <a className="btn btn-ghost" href={downloadGithubHref}>
                       GitHub Releases
                       <span className="btn-sub">国际网络适用</span>
                     </a>
                   </div>
                   <p className="hero-meta">
-                    全量文件与{' '}
-                    <a href={release.checksumUrls.cnb}>{release.asset.checksumFile}（国内源）</a> /{' '}
-                    <a href={release.checksumUrls.github}>GitHub 源</a> 同步公开，v{release.version}{' '}
-                    · {release.platform} · {release.license} ·{' '}
+                    全量文件与 <a href={checksumCnbHref}>{release.asset.checksumFile}（国内源）</a>{' '}
+                    / <a href={checksumGithubHref}>GitHub 源</a> 同步公开，v{release.version} ·{' '}
+                    {release.platform} · {release.license} ·{' '}
                     <a
                       href="#changelog"
                       onClick={(e) => {
@@ -542,7 +586,7 @@ export function App(): React.JSX.Element {
                       </p>
                       <p>
                         如需核验安装包完整性，在安装包所在目录打开终端执行下方命令，并与官方{' '}
-                        <a href={release.checksumUrls.cnb}>{release.asset.checksumFile}</a>{' '}
+                        <a href={checksumCnbHref}>{release.asset.checksumFile}</a>{' '}
                         中的哈希逐字比对：
                       </p>
                       <div className="checksum-row">
@@ -631,7 +675,7 @@ export function App(): React.JSX.Element {
                     <span className="step-no">1</span>
                     <h3>下载安装包</h3>
                     <p>
-                      约 130 MB，点击「国内高速下载」直接开始；GitHub Releases
+                      {release.asset.sizeHint}，点击「国内高速下载」直接开始；GitHub Releases
                       内容一致。下载后可用发布页 SHA256SUMS.txt 校验完整性。
                     </p>
                   </div>
@@ -663,8 +707,8 @@ export function App(): React.JSX.Element {
                   </div>
                   <p className="smartbox-note">
                     只需放行一次。下载后可对照官方{' '}
-                    <a href={release.checksumUrls.cnb}>{release.asset.checksumFile}（CNB）</a> 或{' '}
-                    <a href={release.checksumUrls.github}>GitHub 校验文件</a> 核验哈希：
+                    <a href={checksumCnbHref}>{release.asset.checksumFile}（CNB）</a> 或{' '}
+                    <a href={checksumGithubHref}>GitHub 校验文件</a> 核验哈希：
                   </p>
                   <div className="checksum-row">
                     <code>{release.asset.checksumCommand}</code>
@@ -710,7 +754,7 @@ export function App(): React.JSX.Element {
           <nav className="footer-links" aria-label="项目链接">
             <a href="https://github.com/nghqqa/tizhou">GitHub 仓库</a>
             <a href="https://cnb.cool/nghqqa/tizhou">CNB 镜像</a>
-            <a href={release.releasePages.cnb}>Releases（含校验文件）</a>
+            <a href={releasesCnbHref}>Releases（含校验文件）</a>
             <a href="https://github.com/nghqqa/tizhou/issues">问题反馈</a>
             <a
               href="#guide"
