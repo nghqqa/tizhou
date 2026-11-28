@@ -518,6 +518,9 @@
   border-radius: var(--tz-radius);
   background: var(--tz-surface-2);
 }
+.eval-dim-card small {
+  white-space: pre-wrap;
+}
 .solution-history-head {
   display: flex;
   flex-wrap: wrap;
@@ -1120,4 +1123,23 @@
 .eval-answer-panel li {
   white-space: pre-wrap;
   line-height: 1.75;
+}
+.eval-rubric-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.eval-penalty-note {
+  margin-bottom: 14px;
+  padding: 9px 12px;
+  border-radius: var(--tz-radius);
+  border: 1px solid color-mix(in srgb, var(--tz-amber) 34%, transparent);
+  background: var(--tz-amber-bg);
+  font-size: var(--tz-text-xs);
+  line-height: 1.6;
+  color: var(--tz-ink-2);
+}
+.eval-penalty-note strong {
+  color: var(--tz-amber);
 }

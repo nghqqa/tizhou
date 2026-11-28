@@ -1,3 +1,4 @@
+import { unescapeEvalText } from '../../shared/shenlun-rubric'
 import { clamp } from '../utils/common'
 
 export interface ParsedConstructedEvaluation {
@@ -644,7 +645,7 @@ function normalizeDimensions(
         'reason',
         'analysis'
       ])
-      const comment = typeof rawComment === 'string' ? rawComment.trim() : ''
+      const comment = typeof rawComment === 'string' ? unescapeEvalText(rawComment).trim() : ''
       return [{ name, score, comment }]
     })
   }
@@ -665,7 +666,7 @@ function normalizeDimensions(
           'reason',
           'analysis'
         ])
-        const comment = typeof rawComment === 'string' ? rawComment.trim() : ''
+        const comment = typeof rawComment === 'string' ? unescapeEvalText(rawComment).trim() : ''
         return [{ name: name.trim(), score, comment }]
       }
       return []
@@ -710,13 +711,13 @@ function splitSuggestionsText(text: string): string[] {
 }
 
 function formatSuggestionItem(item: unknown): string {
-  if (typeof item === 'string') return item.trim()
+  if (typeof item === 'string') return unescapeEvalText(item).trim()
   if (!item || typeof item !== 'object') return ''
   const record = item as Record<string, unknown>
   const heading = pickFirstField(record, ['title', 'point', 'heading', 'name'])
   const body = pickFirstField(record, ['content', 'detail', 'suggestion', 'action', 'text'])
-  const headStr = typeof heading === 'string' ? heading.trim() : ''
-  const bodyStr = typeof body === 'string' ? body.trim() : ''
+  const headStr = typeof heading === 'string' ? unescapeEvalText(heading).trim() : ''
+  const bodyStr = typeof body === 'string' ? unescapeEvalText(body).trim() : ''
   if (headStr && bodyStr) return `${headStr}：${bodyStr}`
   return headStr || bodyStr
 }
@@ -726,7 +727,7 @@ function normalizeSuggestions(value: unknown): string[] {
     return value.map(formatSuggestionItem).filter(Boolean).slice(0, 8)
   }
   if (typeof value === 'string') {
-    return splitSuggestionsText(value)
+    return splitSuggestionsText(unescapeEvalText(value))
   }
   return []
 }
@@ -765,7 +766,7 @@ export function normalizeConstructedEvaluation(
   }))
 
   const rawSummary = pickFirstField(target, SUMMARY_KEYS)
-  const summaryText = typeof rawSummary === 'string' ? rawSummary.trim() : ''
+  const summaryText = typeof rawSummary === 'string' ? unescapeEvalText(rawSummary).trim() : ''
   const suggestions = normalizeSuggestions(pickFirstField(target, SUGGESTION_KEYS))
   const hasDimensionComment = dimensions.some((item) => item.comment.length > 0)
 
@@ -837,7 +838,7 @@ export function parseConstructedEvaluationMarkdown(
     if (!name || seenDim.has(name)) continue
     seenDim.add(name)
     const dimScore = match[2] ? (parseScoreNumber(match[2]) ?? score) : score
-    const comment = (match[3] ?? '').replace(/\*\*|__/g, '').trim()
+    const comment = unescapeEvalText((match[3] ?? '').replace(/\*\*|__/g, '')).trim()
     dimensions.push({ name, score: dimScore, comment })
   }
 
@@ -849,10 +850,10 @@ export function parseConstructedEvaluationMarkdown(
   )
 
   const suggestions = suggestionSection?.[1]
-    ? splitSuggestionsText(suggestionSection[1].replace(/\*\*|__/g, ''))
+    ? splitSuggestionsText(unescapeEvalText(suggestionSection[1].replace(/\*\*|__/g, '')))
     : []
 
-  let summary = summarySection?.[1]?.replace(/\*\*|__/g, '').trim() ?? ''
+  let summary = unescapeEvalText(summarySection?.[1]?.replace(/\*\*|__/g, '') ?? '').trim()
   if (!summary) {
     summary = cleaned
       .replace(/```[\s\S]*?```/g, '')

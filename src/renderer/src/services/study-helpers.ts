@@ -1,3 +1,4 @@
+import { type EssayWordLimit, extractWordLimit } from '../../../shared/shenlun-rubric'
 import { splitSearchTerms } from '../../../shared/search'
 import {
   readLocalStorage,
@@ -5,48 +6,8 @@ import {
   writeLocalStorage
 } from '../hooks/useLocalStorageState'
 
-export interface EssayWordLimit {
-  min?: number
-  max?: number
-  label: string
-}
-
-/** 从申论题干识别字数限制（如「不超过200字」「800—1000字」「不少于1000字，不超过1200字」「1000字左右」） */
-export function extractWordLimit(stem: string): EssayWordLimit | null {
-  if (!stem) return null
-  const compact = stem.replace(/\s+/g, '')
-  const rangeMatch = compact.match(/(\d{2,4})[—–\-~～至到](\d{2,4})字/)
-  if (rangeMatch) {
-    const a = Number(rangeMatch[1])
-    const b = Number(rangeMatch[2])
-    if (a > 0 && b >= a) return { min: a, max: b, label: `${a}–${b} 字` }
-  }
-  const minMatch =
-    compact.match(/(?:不少于|不低于|至少)(\d{2,4})字/) ?? compact.match(/(\d{2,4})字以上/)
-  const maxMatch =
-    compact.match(
-      /(?:不超过|不高于|(?<!不)少于|控制在|限于|字数(?:控制)?在)(\d{2,4})字(?:以内|以下)?/
-    ) ?? compact.match(/(\d{2,4})字(?:以内|以下)/)
-  const min = minMatch ? Number(minMatch[1]) : 0
-  const max = maxMatch ? Number(maxMatch[1]) : 0
-  if (min > 0 && max > 0 && max >= min) {
-    return { min, max, label: `${min}–${max} 字` }
-  }
-  const approxMatch = compact.match(/(\d{2,4})字左右/)
-  if (approxMatch) {
-    const target = Number(approxMatch[1])
-    if (target > 0) {
-      return {
-        min: Math.round(target * 0.9),
-        max: Math.round(target * 1.1),
-        label: `约 ${target} 字`
-      }
-    }
-  }
-  if (min > 0) return { min, label: `≥ ${min} 字` }
-  if (max > 0) return { max, label: `≤ ${max} 字` }
-  return null
-}
+export type { EssayWordLimit }
+export { extractWordLimit }
 
 /** 在正文中查找关键词匹配片段（支持空格分隔多词，用于知识中心与全局检索预览） */
 export function extractSearchSnippet(

@@ -6,6 +6,7 @@ import {
   repairTruncatedJson,
   sanitizeJsonText
 } from '../src/main/services/shenlun-eval-parser'
+import { unescapeEvalText } from '../src/shared/shenlun-rubric'
 
 describe('shenlun-eval-parser', () => {
   it('parses JSON wrapped in <think>/<thought> tags and prose', () => {
@@ -195,5 +196,35 @@ describe('shenlun-eval-parser', () => {
     // Markdown 兜底：“评分：”后换行接“1. 内容”不应跨行误抓 1 分
     const mdCrossLine = `## 评分：\n1. 要点覆盖较好，语言通顺。\n2. 建议进一步提炼对策表述。`
     expect(parseConstructedEvaluationMarkdown(mdCrossLine)).toBeUndefined()
+  })
+
+  it('unescapes double-escaped newlines and tabs in JSON responses including letter-prefixed lines', () => {
+    const raw = JSON.stringify({
+      score: 72,
+      dimensions: [
+        { name: '要点覆盖', score: 74, comment: '覆盖主要举措。\\n缺少：法柳村典型案例' },
+        { name: '结构组织', score: 70, comment: '层次清晰' },
+        { name: '表达规范', score: 72, comment: '字数达标' }
+      ],
+      summary: '总体完成度中等偏上。\\n折合题面约18/25分。',
+      suggestions: [
+        '第一条建议\\t附带补充说明',
+        '【参考思路/示范作答】关于E市农村集体“三资”治理工作情况的简报\\nE市农业农村局领导：\\n现将情况简报如下。\\n一、动态清查摸家底。\\nE市农业农村局\\n××年××月××日'
+      ]
+    })
+    const parsed = parseConstructedEvaluationJson(raw)
+    expect(parsed).toBeDefined()
+    expect(parsed?.dimensions[0]?.comment).toBe('覆盖主要举措。\n缺少：法柳村典型案例')
+    expect(parsed?.summary).toBe('总体完成度中等偏上。\n折合题面约18/25分。')
+    expect(parsed?.suggestions[0]).toBe('第一条建议  附带补充说明')
+    expect(parsed?.suggestions[1]).toContain('\nE市农业农村局领导：\n现将情况简报如下。\n')
+    expect(parsed?.suggestions[1]).not.toContain('\\n')
+  })
+
+  it('unescapeEvalText restores literal escapes without altering plain text', () => {
+    expect(unescapeEvalText('标题\\r\\nE市\\n一、要点\\t细节\\r结尾')).toBe(
+      '标题\nE市\n一、要点  细节\n结尾'
+    )
+    expect(unescapeEvalText('普通中文与50%数字文本')).toBe('普通中文与50%数字文本')
   })
 })

@@ -2,40 +2,11 @@ import { useEffect, useMemo, useState } from 'react'
 import { Button, Checkbox } from '@fluentui/react-components'
 import { CheckCircleIcon } from '@phosphor-icons/react'
 import type { ConstructedAttemptRecord } from '@shared/contracts'
+import { extractReferencePoints } from '@shared/shenlun-rubric'
 import { invoke } from '../../api'
 import { useAppStore } from '../../store'
 
-export function extractReferencePoints(answer: string[], explanation: string): string[] {
-  const seen = new Set<string>()
-  const points: string[] = []
-  const addPoint = (raw: string): void => {
-    const clean = raw
-      .replace(/^(?:[一二三四五六七八九十]+[、.．)]|\d+[、.．)]|[（(]?\d+[)）]?|[•·\-*])\s*/, '')
-      .replace(/\*\*([^*]+)\*\*/g, '$1')
-      .trim()
-    if (clean.length < 3 || clean.length > 260) return
-    if (seen.has(clean)) return
-    seen.add(clean)
-    points.push(clean)
-  }
-
-  for (const item of answer) {
-    for (const part of String(item).split(/[；;\n]/)) {
-      addPoint(part)
-    }
-  }
-  if (points.length < 2 && explanation) {
-    for (const line of explanation.split(/\r?\n/)) {
-      const trimmed = line.trim()
-      if (!trimmed || /^(?:参考答案|官方解析|评分标准|总字数)/.test(trimmed)) continue
-      if (/^(?:\d+[、.．]|[-*•]|[一二三四五六七八九十]+[、.])/.test(trimmed)) {
-        addPoint(trimmed)
-      }
-      if (points.length >= 12) break
-    }
-  }
-  return points.slice(0, 15)
-}
+export { extractReferencePoints }
 
 interface ShenlunPointChecklistProps {
   promptId: string

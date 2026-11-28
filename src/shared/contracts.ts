@@ -477,6 +477,18 @@ export interface ConstructedDraft {
   updatedAt: string
 }
 
+export interface ConstructedEvaluationMeta {
+  questionType: '单一题' | '综合题' | '公文题' | '作文题'
+  subType: string
+  fullScore?: number
+  convertedScore?: number
+  tierLabel: string
+  wordCount: number
+  sheetCellCount: number
+  wordLimitLabel?: string
+  penalties?: string[]
+}
+
 export interface ConstructedEvaluation {
   id: string
   promptId: string
@@ -486,6 +498,7 @@ export interface ConstructedEvaluation {
   suggestions: string[]
   createdAt: string
   provider: string
+  rubricMeta?: ConstructedEvaluationMeta
 }
 
 export interface ConstructedAttemptRecord {

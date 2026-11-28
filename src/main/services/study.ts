@@ -12,11 +12,17 @@ import type {
 } from '../../shared/contracts'
 import { FEATURE_PROMPTS, taskDataEnvelope } from '../../shared/prompts'
 import {
-  classifyShenlunType,
   recommendShenlunMaterialIndices,
   splitShenlunMaterialBlocks,
   type ShenlunQuestionType
 } from '../../shared/shenlun'
+import {
+  calibrateConstructedEvaluation,
+  evaluateShenlunLocally,
+  extractReferencePoints,
+  inspectShenlunAnswerMetrics,
+  parseShenlunStemRubric
+} from '../../shared/shenlun-rubric'
 import { expandCategoryAliases } from '../../shared/study-constants'
 import { AiService } from './ai'
 import { DatabaseService } from './database'
@@ -484,23 +490,24 @@ export class StudyService {
     if (content.length < 20) throw new Error('作答内容过短，至少输入 20 个字符后再评估')
     const prompt = this.database.getQuestion(input.promptId)
     const config = this.ai.getConfig()
+    const stemText = prompt?.stem ?? input.title
+    const rubric = parseShenlunStemRubric(stemText, prompt?.category)
+    const metrics = inspectShenlunAnswerMetrics(content, rubric, prompt?.material)
+    const explanationText =
+      prompt?.explanation && !prompt.explanation.startsWith('暂无参考答案')
+        ? prompt.explanation
+        : ''
+    const referencePoints = extractReferencePoints(prompt?.answer ?? [], explanationText)
     let evaluation: ConstructedEvaluation | undefined
     let aiFailureReason = ''
     let streamAborted = false
     if (config.hasApiKey || config.provider === 'ollama' || config.provider === 'lmstudio') {
-      const stemText = prompt?.stem ?? input.title
-      const questionType = classifyShenlunType(prompt?.category, stemText)
-      const actualWordCount = content.replace(/\s/g, '').length
-      const explanationText =
-        prompt?.explanation && !prompt.explanation.startsWith('暂无参考答案')
-          ? prompt.explanation
-          : ''
       const buildMessages = (compactMode: boolean, repairReminder: boolean): AiMessage[] => {
         const material = selectEvaluationMaterial(
           prompt?.material ?? '',
           stemText,
           explanationText,
-          questionType,
+          rubric.questionType,
           compactMode
         )
         const refExp =
@@ -509,11 +516,26 @@ export class StudyService {
             : explanationText
         const envelope = taskDataEnvelope('申论作答评估输入', {
           title: input.title,
-          questionType,
-          actualWordCount,
+          questionType: rubric.questionType,
+          subType: rubric.subType,
+          fullScore: rubric.fullScore ?? null,
+          wordLimit: rubric.wordLimit?.label ?? null,
+          docFormatRule: rubric.docFormatHint ?? null,
+          requiredTitle: rubric.requiredTitle ?? null,
+          requiresProblemBeforeMeasure: rubric.requiresProblemBeforeMeasure,
+          actualWordCount: metrics.wordCount,
+          sheetCellCount: metrics.sheetCellCount,
+          objectiveChecks: {
+            hasTitle: metrics.hasTitle,
+            matchesRequiredTitle: metrics.matchesRequiredTitle,
+            hasSalutation: metrics.hasSalutation,
+            hasSignOff: metrics.hasSignOff,
+            materialCopyRatio: metrics.materialCopyRatio,
+            hardPenalties: metrics.hardPenalties
+          },
           prompt: stemText,
           material,
-          referencePoints: prompt?.answer ?? [],
+          referencePoints,
           referenceExplanation: refExp,
           studentAnswer: content
         })
@@ -572,15 +594,17 @@ export class StudyService {
                 : 'AI 返回结果未能解析为有效 JSON 评分结构'
             continue
           }
+          const calibrated = calibrateConstructedEvaluation(parsed, rubric, metrics)
           evaluation = {
             id: randomUUID(),
             promptId: input.promptId,
-            score: parsed.score,
-            dimensions: parsed.dimensions,
-            summary: parsed.summary,
-            suggestions: parsed.suggestions,
+            score: calibrated.score,
+            dimensions: calibrated.dimensions,
+            summary: calibrated.summary,
+            suggestions: calibrated.suggestions,
             createdAt: now(),
-            provider: `${result.provider}/${result.model}`
+            provider: `${result.provider}/${result.model}`,
+            rubricMeta: calibrated.rubricMeta
           }
         } catch (cause) {
           const msg = cause instanceof Error ? cause.message : String(cause || '未知错误')
@@ -608,15 +632,17 @@ export class StudyService {
       if (!evaluation && !streamAborted && lastRawResult) {
         const rescued = parseConstructedEvaluationMarkdown(lastRawResult.content)
         if (rescued) {
+          const calibrated = calibrateConstructedEvaluation(rescued, rubric, metrics)
           evaluation = {
             id: randomUUID(),
             promptId: input.promptId,
-            score: rescued.score,
-            dimensions: rescued.dimensions,
-            summary: rescued.summary,
-            suggestions: rescued.suggestions,
+            score: calibrated.score,
+            dimensions: calibrated.dimensions,
+            summary: calibrated.summary,
+            suggestions: calibrated.suggestions,
             createdAt: now(),
-            provider: `${lastRawResult.provider}/${lastRawResult.model}`
+            provider: `${lastRawResult.provider}/${lastRawResult.model}`,
+            rubricMeta: calibrated.rubricMeta
           }
         }
       }
@@ -625,7 +651,10 @@ export class StudyService {
       throw new Error('已停止本次 AI 批改')
     }
     if (!evaluation) {
-      evaluation = this.localEvaluation(input.promptId, content, prompt)
+      evaluation = evaluateShenlunLocally(input.promptId, content, prompt, rubric, metrics, {
+        id: randomUUID(),
+        createdAt: now()
+      })
       if (aiFailureReason) {
         evaluation.summary = `【AI 批改回退提示】本次 AI 评估未能完成（原因：${aiFailureReason}），已自动回退为本地规则评分。\n\n${evaluation.summary}`
       }
@@ -639,60 +668,5 @@ export class StudyService {
       createdAt: evaluation.createdAt
     })
     return evaluation
-  }
-
-  private localEvaluation(
-    promptId: string,
-    content: string,
-    prompt?: Question
-  ): ConstructedEvaluation {
-    const keywords = prompt?.answer ?? []
-    const matched = keywords.filter((keyword) => content.includes(keyword)).length
-    const coverage = keywords.length ? matched / keywords.length : 0.55
-    const paragraphs = content.split(/\n+/).filter((item) => item.trim()).length
-    const structure = clamp(
-      (paragraphs >= 2 ? 72 : 55) + (/[一二三四]|首先|其次|最后|一是|二是/.test(content) ? 15 : 0),
-      0,
-      100
-    )
-    const lengthScore =
-      content.length >= 100 && content.length <= 500 ? 88 : content.length >= 60 ? 72 : 55
-    const accuracy = Math.round(45 + coverage * 50)
-    const score = Math.round(accuracy * 0.5 + structure * 0.3 + lengthScore * 0.2)
-    return {
-      id: randomUUID(),
-      promptId,
-      score,
-      dimensions: [
-        {
-          name: '要点覆盖',
-          score: accuracy,
-          comment: keywords.length
-            ? `命中 ${matched}/${keywords.length} 个参考要点。`
-            : '当前题目没有结构化参考要点，按表达完整度估算。'
-        },
-        {
-          name: '结构组织',
-          score: structure,
-          comment: paragraphs >= 2 ? '答案具备分层表达。' : '建议按并列或因果关系分层组织。'
-        },
-        {
-          name: '表达规范',
-          score: lengthScore,
-          comment: '请继续压缩重复表述，优先使用主体加措施加效果的句式。'
-        }
-      ],
-      summary:
-        '这是本地规则评分，用于快速自检，不替代人工阅卷。配置 AI 后可获得语义层面的进一步反馈。',
-      suggestions: [
-        matched < keywords.length
-          ? '对照材料补齐尚未覆盖的核心做法。'
-          : '要点覆盖较完整，可继续优化排序和概括层级。',
-        structure < 75 ? '用序号或分号明确拆分要点。' : '保持当前分层结构，并减少空泛修饰。',
-        '每个要点先写结论词，再补充材料依据。'
-      ],
-      createdAt: now(),
-      provider: 'local-rubric'
-    }
   }
 }
