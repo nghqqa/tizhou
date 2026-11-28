@@ -358,4 +358,79 @@ describe('shenlun normalization, quality inspection & cross-paper stitching', ()
     expect(surrogateGrid.rows[0]?.cells[0]?.char).toBe('𠮷')
     expect(surrogateGrid.rows[0]?.cells[0]?.compactLevel).toBe(0)
   })
+
+  it('merges adjacent sentence-end/closing & intro-quote punctuation pairs into single cells with proper line-break rules', () => {
+    // 1) 句末点号 + 闭合符号合占 1 格，光标落在两标点之间 subOffset=0.5
+    const endQuoteSamples = ['。”', '！”', '？”', '，”', '。）', '。》']
+    for (const pair of endQuoteSamples) {
+      const g = buildShenlunSheetGrid(`本${pair}`, 200, 2)
+      expect(g.rows[0]?.cells[0]?.char).toBe('本')
+      expect(g.rows[0]?.cells[1]?.char).toBe(pair)
+      expect(g.rows[0]?.cells[1]?.isPunctPair).toBe(true)
+      expect(g.rows[0]?.cells[1]?.compactLevel).toBe(0)
+      expect(g.filledCellCount).toBe(2)
+      expect(g.caretRow).toBe(0)
+      expect(g.caretCol).toBe(1)
+      expect(g.caretSubOffset).toBe(0.5)
+    }
+
+    // 2) 闭合符号 + 后续点号合占 1 格
+    for (const pair of ['”。', '”，', '”、', '）。', '》。']) {
+      const g = buildShenlunSheetGrid(`词${pair}下`, 200, 0)
+      expect(g.rows[0]?.cells[1]?.char).toBe(pair)
+      expect(g.rows[0]?.cells[1]?.isPunctPair).toBe(true)
+      expect(g.rows[0]?.cells[2]?.char).toBe('下')
+      expect(g.filledCellCount).toBe(3)
+    }
+
+    // 3) 冒号/逗号 + 前引号：行中合占 1 格；行末第 25 格拆分为冒号留末格+前引号换行首；行首自动避头挤入上行末格
+    const midIntro = buildShenlunSheetGrid('他说：“好”', 200, 0)
+    expect(midIntro.rows[0]?.cells[2]?.char).toBe('：“')
+    expect(midIntro.rows[0]?.cells[2]?.isPunctPair).toBe(true)
+    expect(midIntro.rows[0]?.cells[3]?.char).toBe('好')
+
+    const midCommaIntro = buildShenlunSheetGrid('写到，“好”', 200, 0)
+    expect(midCommaIntro.rows[0]?.cells[2]?.char).toBe('，“')
+    expect(midCommaIntro.rows[0]?.cells[2]?.isPunctPair).toBe(true)
+
+    const endIntro = buildShenlunSheetGrid(`${'字'.repeat(24)}：“好`, 200, 0)
+    expect(endIntro.rows[0]?.cells[24]?.char).toBe('：')
+    expect(endIntro.rows[1]?.cells[0]?.char).toBe('“')
+    expect(endIntro.rows[1]?.cells[1]?.char).toBe('好')
+
+    const startIntro = buildShenlunSheetGrid(`${'字'.repeat(25)}：“好`, 200, 0)
+    expect(startIntro.rows[0]?.cells[24]?.char).toBe('字')
+    expect(startIntro.rows[0]?.cells[24]?.squeezedPunct).toBe('：')
+    expect(startIntro.rows[1]?.cells[0]?.char).toBe('“')
+    expect(startIntro.rows[1]?.cells[1]?.char).toBe('好')
+
+    // 4) 行首合占标点（如 。”）整体避头挤入上一行末格右下角，不占新行首格
+    const startPair = buildShenlunSheetGrid(`${'字'.repeat(25)}。”下`, 200, 26)
+    expect(startPair.rows[0]?.cells[24]?.char).toBe('字')
+    expect(startPair.rows[0]?.cells[24]?.squeezedPunct).toBe('。”')
+    expect(startPair.rows[0]?.cells[24]?.charEndIndex).toBe(27)
+    expect(startPair.rows[1]?.cells[0]?.char).toBe('下')
+    expect(startPair.caretRow).toBe(0)
+    expect(startPair.caretCol).toBe(24)
+    expect(startPair.caretSubOffset).toBeGreaterThanOrEqual(0.6)
+
+    // 5) 非合占相邻标点保持独立占格
+    const adjQuotes = buildShenlunSheetGrid('“甲”“乙”', 200, 0)
+    expect(adjQuotes.rows[0]?.cells.slice(0, 6).map((c) => c.char)).toEqual([
+      '“',
+      '甲',
+      '”',
+      '“',
+      '乙',
+      '”'
+    ])
+
+    const periodThenOpen = buildShenlunSheetGrid('完成。“种子”', 200, 0)
+    expect(periodThenOpen.rows[0]?.cells[2]?.char).toBe('。')
+    expect(periodThenOpen.rows[0]?.cells[3]?.char).toBe('“')
+
+    const parenThenOpen = buildShenlunSheetGrid('（注）“正文”', 200, 0)
+    expect(parenThenOpen.rows[0]?.cells[2]?.char).toBe('）')
+    expect(parenThenOpen.rows[0]?.cells[3]?.char).toBe('“')
+  })
 })

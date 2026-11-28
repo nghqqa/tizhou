@@ -175,7 +175,7 @@ export function ShenlunAnswerSheet({
           </button>
           <span
             className={`shenlun-sheet-counter${overLimit ? ' is-over-limit' : underLimit ? ' is-under-limit' : ''}`}
-            title={`末字位于第 ${grid.lastFilledCellNumber} 格 · 实际填格 ${grid.filledCellCount} 格 · 字符 ${wordCount} 字（按真考 2 位数字/字母占 1 格、小数点与百分号合占、行首标点避头点排布）${limit ? ` · 题目要求：${limit.label}` : ''}`}
+            title={`末字位于第 ${grid.lastFilledCellNumber} 格 · 实际填格 ${grid.filledCellCount} 格 · 字符 ${wordCount} 字（按真考 2 位数字/字母占 1 格、小数点与百分号合占、相邻标点（如。”/：“）合占 1 格、行首标点避头点排布）${limit ? ` · 题目要求：${limit.label}` : ''}`}
           >
             {limit
               ? `占 ${grid.lastFilledCellNumber} 格 / ${limit.label}`
@@ -311,6 +311,7 @@ export function ShenlunAnswerSheet({
                       style={caretStyle}
                       className={[
                         'shenlun-sheet-cell',
+                        cell.isPunctPair ? 'is-punct-pair' : '',
                         cell.compactLevel === 2 ? 'is-compact-2' : '',
                         cell.compactLevel === 3 ? 'is-compact-3' : '',
                         cell.squeezedPunct ? 'is-squeezed' : '',
@@ -340,7 +341,15 @@ export function ShenlunAnswerSheet({
                     >
                       {cell.char && <span className="shenlun-sheet-char">{cell.char}</span>}
                       {cell.squeezedPunct && (
-                        <span className="shenlun-sheet-squeeze">{cell.squeezedPunct}</span>
+                        <span
+                          className={
+                            cell.squeezedPunct.length >= 2
+                              ? 'shenlun-sheet-squeeze is-pair'
+                              : 'shenlun-sheet-squeeze'
+                          }
+                        >
+                          {cell.squeezedPunct}
+                        </span>
                       )}
                     </div>
                   )

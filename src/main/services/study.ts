@@ -23,7 +23,11 @@ import {
   inspectShenlunAnswerMetrics,
   parseShenlunStemRubric
 } from '../../shared/shenlun-rubric'
-import { expandCategoryAliases } from '../../shared/study-constants'
+import {
+  XINGCE_MODULE_ORDER,
+  expandCategoryAliases,
+  normalizeXingceModule
+} from '../../shared/study-constants'
 import { AiService } from './ai'
 import { DatabaseService } from './database'
 import {
@@ -50,9 +54,11 @@ function shuffled<T>(items: T[]): T[] {
   return output
 }
 
-// ---- 组题抽题：资料分析锁死为整套材料 5 题连续（1→2→3→4→5），严禁拆散、打乱或跨模块混组 ----
+// ---- 组题抽题：资料分析 5 题套与判断推理「一拖五」材料组锁死整组连续，严禁拆散、打乱或跨模块混组 ----
 
 export const DATA_ANALYSIS_GROUP_SIZE = 5
+export const MAX_LOCKED_REASONING_GROUP_SIZE = 5
+export const MAX_CLEAN_NON_DA_GROUP_SIZE = 6
 
 export function isDataAnalysisCategory(category: string): boolean {
   return category === '资料分析' || category.startsWith('资料分析')
@@ -64,6 +70,48 @@ export function isDataAnalysisQuestion(question: Question): boolean {
 
 export function isLockedDataAnalysisUnit(unit: Question[]): boolean {
   return unit.length === DATA_ANALYSIS_GROUP_SIZE && unit.every(isDataAnalysisQuestion)
+}
+
+export function isReasoningCategory(category: string): boolean {
+  return category === '判断推理' || category.startsWith('判断推理')
+}
+
+export function isReasoningQuestion(question: Question): boolean {
+  return isReasoningCategory(question.category)
+}
+
+export function isLockedReasoningGroupUnit(unit: Question[]): boolean {
+  return (
+    unit.length >= 2 &&
+    unit.length <= MAX_LOCKED_REASONING_GROUP_SIZE &&
+    unit.every(isReasoningQuestion) &&
+    unit.every((q) => Boolean(normalizeMaterialForGroup(q.material)))
+  )
+}
+
+export function isLockedMaterialUnit(unit: Question[]): boolean {
+  return isLockedDataAnalysisUnit(unit) || isLockedReasoningGroupUnit(unit)
+}
+
+const STEM_PREFIX_STRIP_RE = /^(?:[（(][^）)\n]{1,36}[）)]\s*)+/
+const EXPL_REF_SHARED_COND_RE =
+  /条件\s*[（(]?\s*[1-6一二三四五六①②③④⑤⑥]\s*[）)]?|(?:根据|结合|由|代入)(?:题干)?条件/
+const SELF_CONTAINED_REASONING_STEM_RE =
+  /!\[|①|。|[；;]|是指|指的是|指一种|是一种|根据上述定义|不属于.{1,16}的是|对于\s*[（(]|相当于|[:：].*[:：]|由此(?:可以|可)?推|由此可知|据此|根据以上论述|位置关系|已知|满足以下|条件如下|如下[:：]|（1）|\(1\)|某[地市省县村镇校厂院部组队会公司机构单位超市商场餐厅饭店学校医院高中小学大学科研]|(?:甲|乙|丙|丁).{0,10}(?:说|表示|预测|猜测|认为)/
+const DANGLING_REASONING_STEM_RE =
+  /(?:不可能排在第|可能排在第|中间最多可能隔|不能安排在第|不能排在第|安排在任意一天|不能开设两次|开设两次|哪一类商品|哪两类商品|按照从前[到完]后|以下哪项安排是不可能的|下列哪两个部门不可能|关于分管情况|分管的部门多于|符合上述(?:要求|条件))/
+
+/** 识别缺少共用材料的「一拖五」孤题，避免脱离背景条件无法作答 */
+export function isOrphanReasoningGroupQuestion(question: Question): boolean {
+  if (question.subject !== 'xingce' || !isReasoningQuestion(question)) return false
+  if (normalizeMaterialForGroup(question.material) || question.groupId?.trim()) return false
+  const cleanStem = (question.stem ?? '').replace(STEM_PREFIX_STRIP_RE, '').trim()
+  if (!cleanStem || cleanStem.length > 60) return false
+  if (SELF_CONTAINED_REASONING_STEM_RE.test(cleanStem)) return false
+  return (
+    EXPL_REF_SHARED_COND_RE.test(question.explanation ?? '') ||
+    DANGLING_REASONING_STEM_RE.test(cleanStem)
+  )
 }
 
 function normalizeMaterialForGroup(material?: string): string {
@@ -149,7 +197,26 @@ export function normalizeDataAnalysisUnits(units: Question[][], strict = true): 
   return filtered.length > 0 ? filtered : normalized
 }
 
-// 依次整组收取；锁定 5 题资料分析组严禁拆散或截断，放不下时先跳过再用其他单元回填
+export function normalizePracticeUnits(units: Question[][], strict = true): Question[][] {
+  let result = normalizeDataAnalysisUnits(units, strict)
+  if (!strict) return result
+  const withoutOrphans = result.filter(
+    (unit) => !(unit.length === 1 && isOrphanReasoningGroupQuestion(unit[0]!))
+  )
+  if (withoutOrphans.length > 0) result = withoutOrphans
+
+  const withoutPolluted = result.filter(
+    (unit) =>
+      !(
+        unit.length > MAX_CLEAN_NON_DA_GROUP_SIZE &&
+        !unit.every(isDataAnalysisQuestion) &&
+        unit.every((q) => Boolean(normalizeMaterialForGroup(q.material)))
+      )
+  )
+  return withoutPolluted.length > 0 ? withoutPolluted : result
+}
+
+// 依次整组收取；锁定材料组（资料分析 5 题套 / 判断推理一拖五）严禁拆散或截断，放不下时先跳过再用其他单元回填
 export function takeUnits(units: Question[][], count: number): Question[] {
   const picked: Question[] = []
   const skipped: Question[][] = []
@@ -157,7 +224,7 @@ export function takeUnits(units: Question[][], count: number): Question[] {
     if (picked.length >= count) break
     if (
       picked.length + unit.length <= count ||
-      (picked.length === 0 && !isLockedDataAnalysisUnit(unit))
+      (picked.length === 0 && !isLockedMaterialUnit(unit))
     ) {
       picked.push(...unit)
     } else {
@@ -169,11 +236,28 @@ export function takeUnits(units: Question[][], count: number): Question[] {
     if (picked.length + unit.length <= count) picked.push(...unit)
   }
   if (picked.length === 0 && skipped.length > 0) {
-    const lockedFallback = skipped.find(isLockedDataAnalysisUnit)
+    const lockedFallback = skipped.find(isLockedMaterialUnit)
     if (lockedFallback) return [...lockedFallback]
     return skipped[0]!.slice(0, count)
   }
   return picked.slice(0, count)
+}
+
+/** 按行测五大模块标准顺序对抽取后的题目重新连排，并保持材料组内 1→N 顺序连续 */
+export function orderExamQuestionsByModule(questions: Question[]): Question[] {
+  if (questions.length <= 1) return [...questions]
+  const moduleRank = (category: string): number => {
+    const idx = (XINGCE_MODULE_ORDER as readonly string[]).indexOf(normalizeXingceModule(category))
+    return idx >= 0 ? idx : XINGCE_MODULE_ORDER.length
+  }
+  return buildQuestionUnits(questions)
+    .map((unit, originalIndex) => ({
+      unit,
+      rank: moduleRank(unit[0]!.category),
+      originalIndex
+    }))
+    .sort((a, b) => a.rank - b.rank || a.originalIndex - b.originalIndex)
+    .flatMap((entry) => entry.unit)
 }
 
 const EXPLICIT_MATERIAL_REF_IN_STEM_RE =
@@ -297,7 +381,7 @@ export class StudyService {
       !selection.filter?.difficulty &&
       !selection.filter?.query?.trim()
     // 严禁在 buildQuestionUnits 之前对 pool 洗牌，确保组内 1→2→3→4→5 顺序不被打乱
-    const units = normalizeDataAnalysisUnits(buildQuestionUnits(pool), strictDataAnalysis)
+    const units = normalizePracticeUnits(buildQuestionUnits(pool), strictDataAnalysis)
     if (selection.mode === 'sequence') return takeUnits(units, count)
     if (selection.mode === 'adaptive') {
       const diagnosis = this.getDiagnosis()

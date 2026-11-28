@@ -506,6 +506,8 @@ export interface ShenlunSheetCell {
   charEndIndex: number | null
   /** 因行首避头点挤入上一行末格右下角的标点 */
   squeezedPunct?: string
+  /** 相邻标点合占 1 格（如 。” / ！” / ：“ / ”。） */
+  isPunctPair?: boolean
   /** 单格容纳 2 或 3 个半角字符时的紧凑排版等级 */
   compactLevel?: 0 | 2 | 3
   cellNumber: number
@@ -558,6 +560,12 @@ const LINE_START_FORBIDDEN_PUNCT = new Set([
   '』'
 ])
 
+const STOP_PUNCT_SET = new Set(['。', '！', '？', '，', '；'])
+const CLOSING_MARK_SET = new Set(['”', '’', '）', '》', '】', '」', '』'])
+const TRAILING_STOP_AFTER_CLOSING_SET = new Set(['。', '！', '？', '，', '；', '、'])
+const INTRO_PUNCT_SET = new Set(['：', '，'])
+const OPENING_QUOTE_SET = new Set(['“', '‘', '「', '『'])
+
 function isAsciiDigit(ch: string | undefined): boolean {
   return Boolean(ch && ch >= '0' && ch <= '9')
 }
@@ -569,7 +577,15 @@ function isAsciiLetter(ch: string | undefined): boolean {
 type SheetToken =
   | { type: 'newline'; start: number; end: number }
   | { type: 'pair-punct'; chars: [string, string]; start: number; end: number }
-  | { type: 'cell'; text: string; start: number; end: number; allowSqueeze: boolean }
+  | { type: 'intro-quote-pair'; first: string; second: string; start: number; end: number }
+  | {
+      type: 'cell'
+      text: string
+      start: number
+      end: number
+      allowSqueeze: boolean
+      isPunctPair?: boolean
+    }
 
 function pushPairChunks(tokens: SheetToken[], content: string, start: number, end: number): void {
   for (let pos = start; pos < end; pos += 2) {
@@ -704,6 +720,46 @@ function tokenizeShenlunSheetContent(content: string): SheetToken[] {
       continue
     }
 
+    const next = content[i + 1]
+    // 真考标点合占规则：句末/分句点号+闭合标号（。”/！”/？”/，”/。））、闭合标号+点号（”。/”，/）。）、引出点号+前引号（：“/，“）
+    if (next) {
+      if (STOP_PUNCT_SET.has(ch) && CLOSING_MARK_SET.has(next)) {
+        tokens.push({
+          type: 'cell',
+          text: ch + next,
+          start: i,
+          end: i + 2,
+          allowSqueeze: true,
+          isPunctPair: true
+        })
+        i += 2
+        continue
+      }
+      if (CLOSING_MARK_SET.has(ch) && TRAILING_STOP_AFTER_CLOSING_SET.has(next)) {
+        tokens.push({
+          type: 'cell',
+          text: ch + next,
+          start: i,
+          end: i + 2,
+          allowSqueeze: true,
+          isPunctPair: true
+        })
+        i += 2
+        continue
+      }
+      if (INTRO_PUNCT_SET.has(ch) && OPENING_QUOTE_SET.has(next)) {
+        tokens.push({
+          type: 'intro-quote-pair',
+          first: ch,
+          second: next,
+          start: i,
+          end: i + 2
+        })
+        i += 2
+        continue
+      }
+    }
+
     const codePoint = content.codePointAt(i)
     const charLen = codePoint !== undefined && codePoint > 0xffff ? 2 : 1
     const unit = content.slice(i, i + charLen)
@@ -756,6 +812,7 @@ export function buildShenlunSheetGrid(
     charIndex: number
     charEndIndex: number
     squeezedPunct?: string
+    isPunctPair?: boolean
     compactLevel: 0 | 2 | 3
   }
 
@@ -831,17 +888,92 @@ export function buildShenlunSheetGrid(
       continue
     }
 
-    // 行首避头点：上一行写满自动换行且新行首为禁现标点时，挤入上一行末格右下角
+    if (token.type === 'intro-quote-pair') {
+      // 行首避头：自动换行后第 1 格，先将引出点号（：/，）挤入上一行末格，前引号落在本行第 1 格
+      if (col === 0 && autoWrappedPrevRow && row > 0) {
+        const prevCell = cellMap.get(`${row - 1}:${cols - 1}`)
+        if (prevCell && !prevCell.squeezedPunct) {
+          prevCell.squeezedPunct = token.first
+          prevCell.charEndIndex = token.start + 1
+          lineEndIndex.set(row - 1, token.start + 1)
+          charCoordMap[token.start] = {
+            row: row - 1,
+            col: cols - 1,
+            subOffset: 0.6
+          }
+          placeCell(row, 0, {
+            char: token.second,
+            charIndex: token.start + 1,
+            charEndIndex: token.end,
+            compactLevel: 0
+          })
+          assignSpanCoords(charCoordMap, token.start + 1, token.end, row, 0)
+          col = 1
+          autoWrappedPrevRow = false
+          continue
+        }
+      }
+
+      // 行末避尾：仅剩第 25 格时，点号留在本行末格，前引号移到下一行第 1 格
+      if (col === cols - 1) {
+        placeCell(row, col, {
+          char: token.first,
+          charIndex: token.start,
+          charEndIndex: token.start + 1,
+          compactLevel: 0
+        })
+        assignSpanCoords(charCoordMap, token.start, token.start + 1, row, col)
+        lineEndIndex.set(row, token.start + 1)
+        row += 1
+        col = 0
+        placeCell(row, col, {
+          char: token.second,
+          charIndex: token.start + 1,
+          charEndIndex: token.end,
+          compactLevel: 0
+        })
+        assignSpanCoords(charCoordMap, token.start + 1, token.end, row, col)
+        col = 1
+        autoWrappedPrevRow = false
+        continue
+      }
+
+      // 行中常态：引出点号与前引号合占 1 格
+      placeCell(row, col, {
+        char: token.first + token.second,
+        charIndex: token.start,
+        charEndIndex: token.end,
+        compactLevel: 0,
+        isPunctPair: true
+      })
+      assignSpanCoords(charCoordMap, token.start, token.end, row, col)
+      col += 1
+
+      if (col >= cols) {
+        lineEndIndex.set(row, token.end)
+        row += 1
+        col = 0
+        autoWrappedPrevRow = true
+      } else {
+        autoWrappedPrevRow = false
+      }
+      continue
+    }
+
+    // 行首避头点：上一行写满自动换行且新行首为禁现标点（含合占标点如 。”）时，挤入上一行末格右下角
     if (token.allowSqueeze && col === 0 && autoWrappedPrevRow && row > 0) {
       const prevCell = cellMap.get(`${row - 1}:${cols - 1}`)
       if (prevCell && !prevCell.squeezedPunct) {
         prevCell.squeezedPunct = token.text
         prevCell.charEndIndex = token.end
         lineEndIndex.set(row - 1, token.end)
-        charCoordMap[token.start] = {
-          row: row - 1,
-          col: cols - 1,
-          subOffset: 0.6
+        const span = Math.max(1, token.end - token.start)
+        for (let idx = token.start; idx < token.end; idx += 1) {
+          charCoordMap[idx] = {
+            row: row - 1,
+            col: cols - 1,
+            subOffset: 0.6 + ((idx - token.start) / span) * 0.35
+          }
         }
         autoWrappedPrevRow = false
         continue
@@ -849,13 +981,20 @@ export function buildShenlunSheetGrid(
     }
 
     const glyphLength = Array.from(token.text).length
-    const compactLevel: 0 | 2 | 3 = glyphLength >= 3 ? 3 : glyphLength === 2 ? 2 : 0
+    const compactLevel: 0 | 2 | 3 = token.isPunctPair
+      ? 0
+      : glyphLength >= 3
+        ? 3
+        : glyphLength === 2
+          ? 2
+          : 0
 
     placeCell(row, col, {
       char: token.text,
       charIndex: token.start,
       charEndIndex: token.end,
-      compactLevel
+      compactLevel,
+      isPunctPair: token.isPunctPair
     })
     assignSpanCoords(charCoordMap, token.start, token.end, row, col)
     col += 1
@@ -897,6 +1036,7 @@ export function buildShenlunSheetGrid(
         charIndex: entry ? entry.charIndex : null,
         charEndIndex: entry ? entry.charEndIndex : null,
         squeezedPunct: entry?.squeezedPunct,
+        isPunctPair: entry?.isPunctPair,
         compactLevel: entry?.compactLevel,
         cellNumber,
         isLimitBoundary: Boolean(maxChars && cellNumber === maxChars),

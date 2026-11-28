@@ -1,5 +1,12 @@
 # 更新日志
 
+## 1.0.56 - 2026-11-28
+
+### 申论方格标点并格排版与判断推理「一拖五」防拆散保护
+
+- **申论方格答题卡标点合并占格（`src/shared/shenlun.ts`、`ShenlunAnswerSheet.tsx`、`shenlun.css`）**：依据国考/省考答题卡与 GB/T 15834 规范，将句末/分句点号+闭合标号（`。”`/`！”`/`？”`/`，”`/`。）`/`。》` 等）与闭合标号+后续点号（`”。`/`”，`/`”、`/`）。` 等）合占 1 格并保留行首避头点挤入上行末格；引出点号+前引号（`：“`/`，“`/`：‘` 等）行中合占 1 格、行末/行首自动按避头避尾拆分；配套 `is-punct-pair` / `is-pair` 紧凑字距与字号样式，精准维护并格字符间光标坐标与拖动选区
+- **判断推理「一拖五」整组锁死、残题/污染组拦截与模考连排（`src/main/services/study.ts`、`exam-handlers.ts`）**：将 2～5 题判断推理共用材料组与资料分析 5 题套一同纳入不可拆散锁组（`isLockedReasoningGroupUnit` / `isLockedMaterialUnit`），抽题凑数绝不截断；新增 `isOrphanReasoningGroupQuestion` 与 `normalizePracticeUnits`，常规抽题（`strict=true`）自动拦截缺失共用材料的残缺孤题及 >6 题的材料串污染异常组，保留错题复盘与关键词搜索访问；新增 `orderExamQuestionsByModule` 让行测自定义模考按五大模块标准顺序连排且材料组内 `1→N` 连续；Vitest 单元测试扩充至 607 项全量通过
+
 ## 1.0.55 - 2026-11-28
 
 ### 申论真考评分标准体系升级与批改换行渲染修复

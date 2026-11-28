@@ -5,7 +5,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   buildQuestionUnits,
+  isLockedReasoningGroupUnit,
+  isOrphanReasoningGroupQuestion,
   normalizeDataAnalysisUnits,
+  normalizePracticeUnits,
+  orderExamQuestionsByModule,
   StudyService,
   takeUnits
 } from '../src/main/services/study'
@@ -622,5 +626,197 @@ describe('StudyService.getDiagnosis（强弱项门槛与严格互斥）', () => 
     const diagnosis = study.getDiagnosis()
     expect(diagnosis.strengths).toEqual([])
     expect(diagnosis.weaknesses.map((item) => item.category)).toEqual(['资料分析'])
+  })
+})
+
+describe('判断推理「一拖五」防拆散、残题/污染组拦截与自定义模考按模块连排', () => {
+  it('isOrphanReasoningGroupQuestion 精准识别缺失共用材料的一拖五孤题，不误伤常规判断推理题', () => {
+    const orphanSnack = question('kg-235952', undefined, undefined, {
+      category: '判断推理',
+      stem: '（2022国考·行政执法）（单选题）如果零食类排在第 1 排，那么下列哪项中的两类商品不可能是相邻的两排？',
+      explanation: '根据条件（1）与条件（3），粮油类在零食类之后间隔 2 排。'
+    })
+    const orphanDept = question('kg-235439', undefined, undefined, {
+      category: '判断推理-逻辑判断',
+      stem: '如果销售部安排在戊字楼，则以下哪项安排是不可能的？',
+      explanation: '代入选项排查各个部门所在办公楼位置即可。'
+    })
+    expect(isOrphanReasoningGroupQuestion(orphanSnack)).toBe(true)
+    expect(isOrphanReasoningGroupQuestion(orphanDept)).toBe(true)
+
+    const withMaterial = question('oe-q109', undefined, undefined, {
+      category: '判断推理-逻辑判断',
+      material: '某超市从前到后整齐排列着7排货架，放置着7类商品。已知：（1）酒类在调料前。',
+      stem: '如果零食类排在第 1 排，那么下列哪项中的两类商品不可能是相邻的两排？',
+      explanation: '根据条件（1）与条件（3）推理。'
+    })
+    const standaloneLogic = question('xz-logic', undefined, undefined, {
+      category: '判断推理',
+      stem: '只要抢救及时并且方法得当，这头大象就不会死亡，但目前这头大象死亡了。根据以上论述，下列哪项一定为真？',
+      explanation: '根据条件P→Q的否后推否前推理。'
+    })
+    const definitionJudge = question('kg-def', undefined, undefined, {
+      category: '判断推理',
+      stem: '海选，指一种不提名候选人的直接选举。下列不属于海选的是：',
+      explanation: '根据条件分析定义要件。'
+    })
+    const analogy = question('kg-analogy', undefined, undefined, {
+      category: '判断推理',
+      stem: '青铜器物：商朝礼器：文化遗产',
+      explanation: '分析概念间逻辑关系。'
+    })
+    const eventOrder = question('kg-order', undefined, undefined, {
+      category: '判断推理',
+      stem: '①连降大雪 ②形成雪灾 ③家园被毁 ④家园重建 ⑤奋起自救',
+      explanation: '观察首句从①⑤选择。'
+    })
+    const graphic = question('kg-graphic', undefined, undefined, {
+      category: '判断推理',
+      stem: '从所给的四个选项中，选择最合适的一个填入问号处：\n![](assets/g1.png)',
+      explanation: '根据条件特征观察笔画数。'
+    })
+
+    for (const q of [
+      withMaterial,
+      standaloneLogic,
+      definitionJudge,
+      analogy,
+      eventOrder,
+      graphic
+    ]) {
+      expect(isOrphanReasoningGroupQuestion(q)).toBe(false)
+    }
+  })
+
+  it('判断推理一拖五与一拖二锁定整组，在 count 不足或边界处绝不拆散截断且保持 1→5 顺序', () => {
+    const group5 = [1, 2, 3, 4, 5].map((order) =>
+      question(`pd5-${order}`, 'oe-logic-5', order, {
+        category: '判断推理-逻辑判断',
+        material: '某超市从前到后整齐排列着7排货架，已知（1）…'
+      })
+    )
+    const group2 = [1, 2].map((order) =>
+      question(`pd2-${order}`, 'oe-logic-2', order, {
+        category: '判断推理',
+        material: '某餐馆菜单上有4道菜，甲乙丙丁各点2道，已知（1）…'
+      })
+    )
+    expect(isLockedReasoningGroupUnit(group5)).toBe(true)
+    expect(isLockedReasoningGroupUnit(group2)).toBe(true)
+
+    const singles = [1, 2, 3].map((n) => [
+      question(`yy-${n}`, undefined, undefined, { category: '言语理解与表达' })
+    ])
+
+    // count=3 遇到混合池中的 5 题一拖五时跳过整组，使用后续单题填满而不截断
+    expect(takeUnits([group5, ...singles], 3).map((q) => q.id)).toEqual(['yy-1', 'yy-2', 'yy-3'])
+    // 若仅有 5 题一拖五组且 count=3，宁可完整交付 5 题也不拆成残组
+    expect(takeUnits([group5], 3).map((q) => q.id)).toEqual([
+      'pd5-1',
+      'pd5-2',
+      'pd5-3',
+      'pd5-4',
+      'pd5-5'
+    ])
+    // 2 题一拖二在边界位置也不被劈成 1 题
+    expect(takeUnits([singles[0]!, singles[1]!, group2, singles[2]!], 3).map((q) => q.id)).toEqual([
+      'yy-1',
+      'yy-2',
+      'yy-3'
+    ])
+  })
+
+  it('normalizePracticeUnits 在严格模式过滤孤题与串污染超大非资料分析组，非严格模式保留', () => {
+    const orphanUnit = [
+      question('orphan-1', undefined, undefined, {
+        category: '判断推理',
+        stem: '如果零食类排在第 1 排，下列哪项不可能相邻？',
+        explanation: '结合条件（1）与条件（3）排除选项。'
+      })
+    ]
+    const pollutedUnit = Array.from({ length: 12 }, (_, idx) =>
+      question(`pol-${idx + 1}`, 'xz-mat-polluted', idx + 1, {
+        category: '判断推理',
+        material: '错误挂载到整卷 35 题的超市货架材料'
+      })
+    )
+    const cleanGroup = [1, 2, 3, 4, 5].map((order) =>
+      question(`clean-${order}`, 'oe-logic-clean', order, {
+        category: '判断推理-逻辑判断',
+        material: '独立干净的一拖五共享材料'
+      })
+    )
+
+    const strict = normalizePracticeUnits([orphanUnit, pollutedUnit, cleanGroup], true)
+    expect(strict).toHaveLength(1)
+    expect(strict[0]!.map((q) => q.id)).toEqual([
+      'clean-1',
+      'clean-2',
+      'clean-3',
+      'clean-4',
+      'clean-5'
+    ])
+
+    const relaxed = normalizePracticeUnits([orphanUnit, pollutedUnit, cleanGroup], false)
+    expect(relaxed).toHaveLength(3)
+
+    // 全池只剩孤题或污染组时兜底保留，避免返回空池
+    expect(normalizePracticeUnits([orphanUnit], true)).toHaveLength(1)
+    expect(normalizePracticeUnits([pollutedUnit], true)).toHaveLength(1)
+  })
+
+  it('orderExamQuestionsByModule 按行测五大模块顺序重排并保持材料组内 1→5 连续', () => {
+    const mixed = [
+      question('pd-5', 'oe-logic-a', 5, {
+        category: '判断推理-逻辑判断',
+        material: '一拖五共用材料'
+      }),
+      question('da-3', 'da-grp-a', 3, {
+        category: '资料分析',
+        material: '资料分析材料A'
+      }),
+      question('cs-1', undefined, undefined, { category: '常识判断' }),
+      question('pd-1', 'oe-logic-a', 1, {
+        category: '判断推理-逻辑判断',
+        material: '一拖五共用材料'
+      }),
+      question('yy-1', undefined, undefined, { category: '言语理解与表达' }),
+      question('pd-3', 'oe-logic-a', 3, {
+        category: '判断推理-逻辑判断',
+        material: '一拖五共用材料'
+      }),
+      question('da-1', 'da-grp-a', 1, {
+        category: '资料分析',
+        material: '资料分析材料A'
+      }),
+      question('sl-1', undefined, undefined, { category: '数量关系' }),
+      question('pd-2', 'oe-logic-a', 2, {
+        category: '判断推理-逻辑判断',
+        material: '一拖五共用材料'
+      }),
+      question('da-2', 'da-grp-a', 2, {
+        category: '资料分析',
+        material: '资料分析材料A'
+      }),
+      question('pd-4', 'oe-logic-a', 4, {
+        category: '判断推理-逻辑判断',
+        material: '一拖五共用材料'
+      })
+    ]
+
+    const ordered = orderExamQuestionsByModule(mixed)
+    expect(ordered.map((q) => q.id)).toEqual([
+      'cs-1',
+      'yy-1',
+      'sl-1',
+      'pd-1',
+      'pd-2',
+      'pd-3',
+      'pd-4',
+      'pd-5',
+      'da-1',
+      'da-2',
+      'da-3'
+    ])
   })
 })

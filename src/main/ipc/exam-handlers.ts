@@ -1,3 +1,4 @@
+import { orderExamQuestionsByModule } from '../services/study'
 import type { IpcContext, IpcHandlerMap } from './types'
 
 type ExamHandlerKeys =
@@ -25,11 +26,14 @@ export function createExamHandlers(ctx: IpcContext): Pick<IpcHandlerMap, ExamHan
             ...params.filter,
             subject: params.subject
           })
-        : study.selectPractice({
-            mode: 'random',
-            count: params.questionCount,
-            filter: { ...params.filter, subject: params.subject }
-          })
+        : (() => {
+            const picked = study.selectPractice({
+              mode: 'random',
+              count: params.questionCount,
+              filter: { ...params.filter, subject: params.subject }
+            })
+            return params.subject === 'xingce' ? orderExamQuestionsByModule(picked) : picked
+          })()
       return database.createExam(params, questions)
     },
     'exam.active': () => database.getActiveExam(),

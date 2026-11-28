@@ -175,6 +175,18 @@
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
+.shenlun-sheet-cell.is-punct-pair {
+  font-size: 12px;
+  letter-spacing: -0.18em;
+  padding-left: 0.14em;
+  white-space: nowrap;
+}
+.shenlun-sheet.is-official-doc .shenlun-sheet-cell.is-punct-pair {
+  font-size: 13.5px;
+  letter-spacing: -0.18em;
+  padding-left: 0.14em;
+  white-space: nowrap;
+}
 .shenlun-sheet-cell.is-squeezed .shenlun-sheet-char {
   transform: translate(-1.5px, -1px);
 }
@@ -186,6 +198,11 @@
   line-height: 1;
   color: inherit;
   pointer-events: none;
+}
+.shenlun-sheet-squeeze.is-pair {
+  font-size: 8.5px;
+  letter-spacing: -0.22em;
+  white-space: nowrap;
 }
 .shenlun-sheet-cell.is-limit-boundary {
   box-shadow: inset -2px 0 0 #c93b31;
