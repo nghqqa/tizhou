@@ -35,6 +35,36 @@ if [ -n "${DEPLOY_SSH_KEY:-}" ]; then
   SSH_OPTS+=(-i "$DEPLOY_SSH_KEY")
 fi
 
+TMP_DIR="$(mktemp -d)"
+trap 'rm -rf "$TMP_DIR"' EXIT
+
+# 仅在 SSH 握手/连接中断（退出码 255）时重试，远端命令本身报错立即失败
+ssh_retry_file() {
+  local input_file="$1"
+  local remote_cmd="$2"
+  local attempt=1
+  local max_attempts=5
+  local rc=0
+  while [ "$attempt" -le "$max_attempts" ]; do
+    set +e
+    ssh "${SSH_OPTS[@]}" "$DEPLOY_USER@$DEPLOY_HOST" "$remote_cmd" < "$input_file"
+    rc=$?
+    set -e
+    if [ "$rc" -eq 0 ]; then
+      return 0
+    fi
+    if [ "$rc" -ne 255 ]; then
+      return "$rc"
+    fi
+    if [ "$attempt" -lt "$max_attempts" ]; then
+      echo "[deploy] SSH 连接被远端断开（255），2s 后重试（${attempt}/${max_attempts}）…" >&2
+      sleep 2
+    fi
+    attempt=$((attempt + 1))
+  done
+  return "$rc"
+}
+
 if [ "${1:-}" != "--no-build" ]; then
   echo "[deploy] 构建官网…"
   (cd "$WEBSITE_DIR" && npm run build)
@@ -48,23 +78,26 @@ if [ ! -f "$WEBSITE_DIR/dist/index.html" ]; then
 fi
 
 echo "[deploy] 发布静态站点到 $DEPLOY_TARGET …"
-# 打包上传到临时目录 → 原子替换：失败时线上站点不受影响
-ssh "${SSH_OPTS[@]}" "$DEPLOY_USER@$DEPLOY_HOST" "rm -rf ${DEPLOY_TARGET}.incoming && mkdir -p ${DEPLOY_TARGET}.incoming"
-tar czf - -C "$WEBSITE_DIR/dist" . | ssh "${SSH_OPTS[@]}" "$DEPLOY_USER@$DEPLOY_HOST" \
-  "tar xzf - -C ${DEPLOY_TARGET}.incoming"
-ssh "${SSH_OPTS[@]}" "$DEPLOY_USER@$DEPLOY_HOST" "
+# 提前打包本地归档并在单次 SSH 会话内完成解压 + 原子替换，支持 255 断连幂等重试
+tar czf "$TMP_DIR/site.tar.gz" -C "$WEBSITE_DIR/dist" .
+ssh_retry_file "$TMP_DIR/site.tar.gz" "
   set -e
-  if [ -d \"$DEPLOY_TARGET\" ]; then
-    rm -rf \"$DEPLOY_TARGET.old\"
-    mv \"$DEPLOY_TARGET\" \"$DEPLOY_TARGET.old\"
+  TARGET='$DEPLOY_TARGET'
+  rm -rf \"\${TARGET}.incoming\"
+  mkdir -p \"\${TARGET}.incoming\"
+  tar xzf - -C \"\${TARGET}.incoming\"
+  if [ -d \"\$TARGET\" ]; then
+    rm -rf \"\${TARGET}.old\"
+    mv \"\$TARGET\" \"\${TARGET}.old\"
   fi
-  mv \"$DEPLOY_TARGET.incoming\" \"$DEPLOY_TARGET\"
-  rm -rf \"$DEPLOY_TARGET.old\"
+  mv \"\${TARGET}.incoming\" \"\$TARGET\"
+  rm -rf \"\${TARGET}.old\"
 "
 
 if [ -n "$DEPLOY_NGINX_REDIRECTS_FILE" ] && [ "$DEPLOY_NGINX_REDIRECTS_FILE" != "none" ]; then
   echo "[deploy] 同步 Nginx 302 跳转片段到 $DEPLOY_NGINX_REDIRECTS_FILE …"
-  node "$WEBSITE_DIR/scripts/gen-nginx-redirects.mjs" | ssh "${SSH_OPTS[@]}" "$DEPLOY_USER@$DEPLOY_HOST" "
+  node "$WEBSITE_DIR/scripts/gen-nginx-redirects.mjs" > "$TMP_DIR/redirects.conf"
+  ssh_retry_file "$TMP_DIR/redirects.conf" "
     set -e
     TARGET='$DEPLOY_NGINX_REDIRECTS_FILE'
     mkdir -p \"\$(dirname \"\$TARGET\")\"
@@ -88,20 +121,23 @@ if [ -n "$DEPLOY_NGINX_REDIRECTS_FILE" ] && [ "$DEPLOY_NGINX_REDIRECTS_FILE" != 
   echo "[deploy] Nginx 302 跳转已校验并重载生效"
 fi
 
-# 如服务器已安装线上私有看板服务，顺带同步后端与模板并平滑重启
+# 如服务器已安装线上私有看板服务，在单次 SSH 会话内同步后端与模板并平滑重启
 if [ -f "$SCRIPT_DIR/stats-server.py" ] && [ -f "$SCRIPT_DIR/stats-dashboard.html" ]; then
-  if ssh "${SSH_OPTS[@]}" "$DEPLOY_USER@$DEPLOY_HOST" "[ -d /opt/tizhou-stats ]"; then
+  tar czf "$TMP_DIR/stats.tar.gz" -C "$SCRIPT_DIR" stats-server.py stats-dashboard.html
+  ssh_retry_file "$TMP_DIR/stats.tar.gz" '
+    set -e
+    if [ ! -d /opt/tizhou-stats ]; then
+      cat >/dev/null
+      exit 0
+    fi
     echo "[deploy] 同步线上可视化看板 /opt/tizhou-stats …"
-    tar czf - -C "$SCRIPT_DIR" stats-server.py stats-dashboard.html | ssh "${SSH_OPTS[@]}" "$DEPLOY_USER@$DEPLOY_HOST" "
-      set -e
-      tar xzf - -C /opt/tizhou-stats
-      chmod 755 /opt/tizhou-stats/stats-server.py
-      if systemctl is-enabled tizhou-stats >/dev/null 2>&1; then
-        systemctl restart tizhou-stats
-      fi
-    "
+    tar xzf - -C /opt/tizhou-stats
+    chmod 755 /opt/tizhou-stats/stats-server.py
+    if systemctl is-enabled tizhou-stats >/dev/null 2>&1; then
+      systemctl restart tizhou-stats
+    fi
     echo "[deploy] 线上可视化看板已更新并重启"
-  fi
+  '
 fi
 
 echo "[deploy] 发布完成：$DEPLOY_TARGET"
